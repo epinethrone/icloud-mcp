@@ -12,7 +12,6 @@ import logging
 import re
 import threading
 import time
-import unicodedata
 import uuid
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
@@ -21,6 +20,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from .config import Settings
+from .matching import fuzzy_match_all, norm as _norm_shared
 
 log = logging.getLogger(__name__)
 
@@ -167,9 +167,7 @@ def parse_vcard(text: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # search
 # ---------------------------------------------------------------------------
-def _norm(s: str) -> str:
-    """Case- and accent-insensitive form; keeps non-Latin scripts intact."""
-    return "".join(ch for ch in unicodedata.normalize("NFKD", s) if not unicodedata.combining(ch)).casefold()
+_norm = _norm_shared      # case- and accent-insensitive form; keeps non-Latin scripts intact
 
 
 def _digits(s: str) -> str:
@@ -204,6 +202,11 @@ def _score(c: dict[str, Any], tokens: list[str], full: str) -> int:
             return 0                                     # every word of the query must match something
         total += best
     return total
+
+
+def _name_words(c: dict[str, Any]) -> list[str]:
+    """Every word of a contact's name, nickname and organisation, for approximate matching."""
+    return [w for field in (c["name"], c["given_name"], c["family_name"], c["nickname"], c["organization"]) for w in _norm(field).split()]
 
 
 def _brief(c: dict[str, Any]) -> dict[str, Any]:
@@ -444,11 +447,33 @@ class ContactsService:
         offset = max(0, int(offset))
         page = [_brief(c) for c in hits[offset:offset + limit]]
         out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "total_matches": len(hits), "offset": offset, "returned": len(page), "contacts": page}
+        if not hits and tokens:
+            similar = self._similar(contacts, tokens, with_email)
+            if similar:
+                out["similar"] = similar
+                out["did_you_mean"] = [c["name"] for c in similar]
+                out["note"] = (f"No contact matches '{query.strip()}' exactly, but these have similar names. Ask the user which person they "
+                               "meant and wait for their answer before sending, inviting or changing anything; do not assume. "
+                               "If none is right, try mail_find_correspondent.")
+                return out
         if not hits:
-            out["hint"] = "No contact matched. Try fewer or shorter words, or search the mailbox with mail_search."
+            out["hint"] = "No contact matched. Try fewer or shorter words, or look for the person in the mailbox with mail_find_correspondent."
         elif any(not c["has_email"] for c in page):
             out["note"] = NO_EMAIL_NOTE
         return out
+
+    @staticmethod
+    def _similar(contacts: list[dict[str, Any]], tokens: list[str], with_email: bool, limit: int = 5) -> list[dict[str, Any]]:
+        """Contacts whose names merely SOUND like the query (misspellings, variant spellings). Never treated as a real match."""
+        scored = []
+        for c in contacts:
+            if with_email and not c["has_email"]:
+                continue
+            sim = fuzzy_match_all(tokens, _name_words(c))
+            if sim > 0:
+                scored.append((sim, c))
+        scored.sort(key=lambda x: (-x[0], _norm(x[1]["name"])))
+        return [{**_brief(c), "similarity": round(sim, 2)} for sim, c in scored[:limit]]
 
     def get(self, uid: str) -> dict[str, Any]:
         for c in self._all():

@@ -74,6 +74,8 @@ class Settings:
     data_dir: str
     host: str
     port: int
+    stateless_http: bool          # no server-side MCP sessions: a restart never invalidates a client's connection
+    tool_timeout: int             # seconds before a tool call is abandoned with an error instead of hanging
     allowed_redirect_hosts: tuple[str, ...]
     access_token_ttl: int
     refresh_token_ttl: int
@@ -122,6 +124,8 @@ class Settings:
             data_dir=_str("DATA_DIR", "./data"),
             host=_str("MCP_HOST", "0.0.0.0"),
             port=_int("MCP_PORT", 8000),
+            stateless_http=_bool("MCP_STATELESS", True),
+            tool_timeout=_int("TOOL_TIMEOUT_SECONDS", 90),
             allowed_redirect_hosts=tuple(
                 h.lower() for h in _list("OAUTH_ALLOWED_REDIRECT_HOSTS", "claude.ai,claude.com,localhost,127.0.0.1")
             ),

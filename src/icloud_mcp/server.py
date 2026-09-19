@@ -87,9 +87,23 @@ def _owner_block(s: Settings) -> str:
             f"(times without an offset are interpreted in it; pass timezone= to override). New events go to {cal} unless a calendar is named.\n\n")
 
 
-_LOOKUP_CONTACTS = ("with contacts_search (the user's address book; a contact may have several emails, so pick the fitting one or ask, "
-                    "and if the contact has no email, or there is no contact, try mail_search (from_address / to_address) instead)")
-_LOOKUP_MAIL = "with mail_search (from_address / to_address)"
+_LOOKUP_CONTACTS = ("with contacts_search (the user's address book; a contact may have several emails, so pick the fitting one or ask). "
+                    "If there is no contact, or it has no email, use mail_find_correspondent, which finds people the user has emailed with "
+                    "and tolerates misspelled names and company names (retry with search_all_history=true if nothing is found)")
+_LOOKUP_MAIL = ("with mail_find_correspondent, which finds people the user has emailed with and tolerates misspelled names and company names "
+                "(retry with search_all_history=true if nothing is found)")
+
+def _confirm_rule(s: Settings) -> str:
+    sources = []
+    if s.enable_contacts:
+        sources.append("contacts_search returns 'similar' / 'did_you_mean'")
+    if s.enable_mail:
+        sources.append("mail_find_correspondent returns match 'similar'")
+    if not sources:
+        return ""
+    return (f"APPROXIMATE MATCHES: names are often misspelled. {' and '.join(sources)} when a person's name only resembles the one asked "
+            "for. Before sending mail, inviting someone or changing a contact on such a match, tell the user exactly who you found "
+            "(name and address) and wait for them to confirm. Never assume. If one exact match exists, use it without asking.\n")
 
 
 def build_instructions(s: Settings) -> str:
@@ -98,7 +112,8 @@ def build_instructions(s: Settings) -> str:
     send = _SEND_APPROVAL if s.require_approval else _SEND_DIRECT
     rules = _UNTRUSTED_RULES + ("" if s.allow_calendar_invites else _CAL_INVITES_OFF)
     cal = (_CAL_WORKFLOW + ("\n" + _CAL_INVITES_ON.replace("{LOOKUP}", lookup) if s.allow_calendar_invites else "")) if s.enable_calendar else ""
-    return _owner_block(s) + _BASE_INSTRUCTIONS + mail + (send + "\n" if s.allow_send else "") + rules + cal
+    confirm = ("\n" + _confirm_rule(s)) if _confirm_rule(s) else ""
+    return _owner_block(s) + _BASE_INSTRUCTIONS + mail + (send + "\n" if s.allow_send else "") + rules + confirm + cal
 
 _READ = ToolAnnotations(read_only_hint=True, open_world_hint=True)
 _WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True)
@@ -145,13 +160,23 @@ class Attachment(BaseModel):
     content_type: str | None = None
 
 
+_tool_timeout = 90.0     # set from TOOL_TIMEOUT_SECONDS in create_server()
+
+
 def _guard(fn):
-    """Run a blocking service call in a worker thread and convert domain errors into tool errors."""
+    """Run a blocking service call in a worker thread and convert domain errors into tool errors.
+    A call that runs longer than the tool timeout is abandoned with an error, so a client never waits on a hang."""
 
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         try:
-            return await asyncio.to_thread(fn, *args, **kwargs)
+            return await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=_tool_timeout)
+        except asyncio.TimeoutError as e:
+            raise ToolError(
+                f"{getattr(fn, '__name__', 'The tool')} took longer than {_tool_timeout:g}s and was abandoned. Try again; if it keeps "
+                "happening the server or iCloud is slow. The operation may still have completed, so check before repeating a write "
+                "(for example look in Sent before sending again)."
+            ) from e
         except (MailError, CalendarError, ContactsError) as e:
             raise ToolError(str(e)) from e
         except ToolError:
@@ -168,6 +193,8 @@ def _atts(items: list[Attachment] | None) -> list[dict[str, Any]] | None:
 
 
 def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
+    global _tool_timeout
+    _tool_timeout = float(s.tool_timeout)
     provider = OwnerOAuthProvider(s)
     auth = AuthSettings(
         issuer_url=s.public_url,
@@ -247,6 +274,19 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
                 folder, from_=from_address, to=to_address, subject=subject, text=text, since=since, before=before,
                 unread=True if unread_only else None, flagged=True if flagged_only else None, limit=limit, offset=offset,
             )
+
+        @mcp.tool(annotations=_READ)
+        @_guard
+        def mail_find_correspondent(
+            query: Annotated[str, _d("Name, email address or company/domain of a person you have emailed with: 'laura', 'l.jansen', 'acme'. Misspellings and variant spellings are tolerated.")],
+            limit: Annotated[int, _d("Max people to return (1-25).")] = 10,
+            search_all_history: Annotated[bool, _d("false = the most recent ~3,000 received and ~1,500 sent messages (fast). true = the whole mailbox (slower, up to ~20 seconds).")] = False,
+        ) -> dict[str, Any]:
+            """Find people the user has exchanged email with, by approximate name, address or company. Use it when contacts_search finds
+            nobody, or to find the address a person actually writes from. Returns each person's address, the names they use, how many
+            messages went each way and the date of the last one. match 'similar' means only similar in spelling or sound: ask the user
+            to confirm which person they meant before sending anything. Only message headers are read, never the bodies."""
+            return mail.find_correspondents(query, limit=limit, search_all_history=search_all_history)
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -473,7 +513,8 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
             calendar event or writing to them. Best matches first. Each contact has name, nickname, organization, job_title, emails
             (address + label such as home/work), phones and has_email. A contact can have several emails: pick the one that fits
             (e.g. 'work' for a work event) or ask. If has_email is false do not guess an address: ask the user. If several
-            different people match the name, ask which one. Notes and photos are never returned."""
+            different people match the name, ask which one. When nobody matches exactly it returns similar-sounding names under
+            'similar' (misspellings): ask the user which one they meant before acting. Notes and photos are never returned."""
             return contacts.search(query, with_email=with_email, limit=limit, offset=offset)
 
         @mcp.tool(annotations=_READ)
@@ -536,6 +577,20 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
     return mcp, provider
 
 
+def build_app(s: Settings, mcp: MCPServer):
+    """The ASGI app exactly as served in production (used by main() and by the tests)."""
+    extra_hosts = [h.strip() for h in os.environ.get("MCP_EXTRA_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    return mcp.streamable_http_app(
+        host=s.host,
+        stateless_http=s.stateless_http,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[s.public_host, "localhost:*", "127.0.0.1:*", *extra_hosts],
+            allowed_origins=[s.public_url, "https://claude.ai", "https://claude.com"],
+        ),
+    )
+
+
 def main() -> None:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     s = Settings.from_env()
@@ -548,15 +603,7 @@ def main() -> None:
     except OSError as e:
         raise SystemExit(f"DATA_DIR '{s.data_dir}' is not writable ({e}); OAuth tokens could not be stored.") from e
     mcp, _ = create_server(s)
-    extra_hosts = [h.strip() for h in os.environ.get("MCP_EXTRA_ALLOWED_HOSTS", "").split(",") if h.strip()]
-    app = mcp.streamable_http_app(
-        host=s.host,
-        transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=[s.public_host, "localhost:*", "127.0.0.1:*", *extra_hosts],
-            allowed_origins=[s.public_url, "https://claude.ai", "https://claude.com"],
-        ),
-    )
+    app = build_app(s, mcp)
     log.info("iCloud MCP listening on %s:%s, public URL %s/mcp", s.host, s.port, s.public_url)
     uvicorn.run(app, host=s.host, port=s.port, log_level="info")
 
