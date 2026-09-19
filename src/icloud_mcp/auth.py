@@ -70,6 +70,9 @@ class OwnerOAuthProvider:
         self.codes: dict[str, AuthorizationCode] = {}
         self.pending: dict[str, dict[str, Any]] = {}
         self.failures: list[float] = []
+        # Diagnostics only, never persisted: fingerprints (hashes) of tokens that were rotated, and log rate limiting.
+        self._rotated: dict[str, float] = {}
+        self._last_logged: dict[str, tuple[float, int]] = {}
         self._load()
 
     # -- persistence ----------------------------------------------------------
@@ -106,9 +109,38 @@ class OwnerOAuthProvider:
         self.codes = {k: v for k, v in self.codes.items() if v.expires_at > now}
         self.pending = {k: v for k, v in self.pending.items() if v["expires_at"] > now}
 
+    # -- diagnostics (never log token values; only short client ids, reasons and ages) ---------
+    @staticmethod
+    def _cid(client_id: str | None) -> str:
+        return (client_id or "?")[:8]
+
+    def _note_rotated(self, hashes: list[str]) -> None:
+        now = time.time()
+        for h in hashes:
+            self._rotated[h] = now
+        if len(self._rotated) > 1000:
+            cutoff = now - 24 * 3600
+            self._rotated = {k: v for k, v in self._rotated.items() if v > cutoff}
+
+    def _rotated_ago(self, token_hash: str) -> float | None:
+        when = self._rotated.get(token_hash)
+        return None if when is None else time.time() - when
+
+    def _log_limited(self, key: str, level: int, msg: str, *args: Any) -> None:
+        """Log at most once a minute per key (unauthenticated callers must not be able to flood the log)."""
+        now = time.time()
+        last, suppressed = self._last_logged.get(key, (0.0, 0))
+        if now - last < 60:
+            self._last_logged[key] = (last, suppressed + 1)
+            return
+        log.log(level, msg + (f" (+{suppressed} more like this in the last minute)" if suppressed else ""), *args)
+        self._last_logged[key] = (now, 0)
+
     # -- client registration ----------------------------------------------------
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         rec = self.clients.get(client_id)
+        if not rec:
+            self._log_limited("unknown-client", logging.WARNING, "oauth: request from unknown client_id %s (not registered here)", self._cid(client_id))
         return OAuthClientInformationFull.model_validate(rec) if rec else None
 
     def _redirect_ok(self, uri: str) -> bool:
@@ -168,16 +200,23 @@ class OwnerOAuthProvider:
         code = self.codes.get(authorization_code)
         if code and code.client_id == client.client_id and code.expires_at > time.time():
             return code
+        if not code:
+            reason = "code not recognised (already used, expired and cleaned up, or never issued here)"
+        elif code.client_id != client.client_id:
+            reason = f"code was issued to a different client ({self._cid(code.client_id)})"
+        else:
+            reason = "code expired"
+        log.warning("oauth: authorization_code refused for client %s: %s", self._cid(client.client_id), reason)
         return None
 
     async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode) -> OAuthToken:
         with self._lock:
             if self.codes.pop(authorization_code.code, None) is None:
                 raise TokenError("invalid_grant", "authorization code already used or expired")
-            return self._issue(client.client_id, authorization_code.scopes, authorization_code.resource)
+            return self._issue(client.client_id, authorization_code.scopes, authorization_code.resource, "authorization_code")
 
     # -- tokens ----------------------------------------------------------------------
-    def _issue(self, client_id: str, scopes: list[str], resource: str | None) -> OAuthToken:
+    def _issue(self, client_id: str, scopes: list[str], resource: str | None, grant: str = "?") -> OAuthToken:
         now = int(time.time())
         access, refresh, pair = secrets.token_urlsafe(48), secrets.token_urlsafe(48), secrets.token_hex(8)
         self.access[_h(access)] = {"client_id": client_id, "scopes": scopes, "resource": resource, "pair": pair,
@@ -186,12 +225,27 @@ class OwnerOAuthProvider:
                                      "expires_at": now + self.s.refresh_token_ttl}
         self._prune()
         self._save()
+        log.info("oauth: issued tokens to client %s via %s (%d refresh tokens stored)", self._cid(client_id), grant, len(self.refresh))
         return OAuthToken(access_token=access, token_type="Bearer", expires_in=self.s.access_token_ttl,
                           scope=" ".join(scopes), refresh_token=refresh)
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
-        rec = self.refresh.get(_h(refresh_token))
+        h = _h(refresh_token)
+        rec = self.refresh.get(h)
         if not rec or rec["client_id"] != client.client_id or rec["expires_at"] <= time.time():
+            cid = self._cid(client.client_id)
+            if not rec:
+                ago = self._rotated_ago(h)
+                if ago is not None:
+                    log.warning("oauth: refresh refused for client %s: this refresh token was already used %.0fs ago and rotated. "
+                                "Another client or a retry is holding a stale copy of the sign-in.", cid, ago)
+                else:
+                    log.warning("oauth: refresh refused for client %s: token not recognised (never issued here, revoked, cleaned up "
+                                "after expiry, or rotated before the last server restart). %d refresh tokens are stored.", cid, len(self.refresh))
+            elif rec["client_id"] != client.client_id:
+                log.warning("oauth: refresh refused: presented by client %s but issued to client %s", cid, self._cid(rec["client_id"]))
+            else:
+                log.warning("oauth: refresh refused for client %s: refresh token expired %.1f h ago", cid, (time.time() - rec["expires_at"]) / 3600)
             return None
         return RefreshToken(token=refresh_token, client_id=rec["client_id"], scopes=rec["scopes"],
                             expires_at=int(rec["expires_at"]), resource=rec.get("resource"), subject="owner")
@@ -204,12 +258,23 @@ class OwnerOAuthProvider:
             granted = scopes or rec["scopes"]
             if not set(granted) <= set(rec["scopes"]):
                 raise TokenError("invalid_scope", "requested scope exceeds original grant")
+            self._note_rotated([_h(refresh_token.token)] + [k for k, v in self.access.items() if v["pair"] == rec["pair"]])
             self._drop_pair(rec["pair"])  # rotate
-            return self._issue(client.client_id, granted, rec.get("resource"))
+            return self._issue(client.client_id, granted, rec.get("resource"), "refresh_token")
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        rec = self.access.get(_h(token))
+        h = _h(token)
+        rec = self.access.get(h)
         if not rec or rec["expires_at"] <= time.time():
+            if rec:
+                self._log_limited("access-expired", logging.INFO, "oauth: access token of client %s expired %.0fs ago (client should refresh)",
+                                  self._cid(rec["client_id"]), time.time() - rec["expires_at"])
+            elif self._rotated_ago(h) is not None:
+                self._log_limited("access-rotated", logging.WARNING, "oauth: access token refused: it was replaced by a refresh %.0fs ago "
+                                  "(a client is still using the old copy)", self._rotated_ago(h))
+            else:
+                self._log_limited("access-unknown", logging.INFO, "oauth: access token not recognised (never issued here, expired and cleaned up, "
+                                  "revoked, or from before the last restart)")
             return None
         return AccessToken(token=token, client_id=rec["client_id"], scopes=rec["scopes"], expires_at=int(rec["expires_at"]),
                            resource=rec.get("resource"), subject="owner")
