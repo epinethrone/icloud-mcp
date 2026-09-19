@@ -125,6 +125,7 @@ Everything is an environment variable; see [`.env.example`](.env.example) for co
 
 * iCloud credentials exist only in the server environment. Clients hold short-lived bearer tokens for *this* server.
 * Clients may register dynamically, but nothing is authorized without the owner password. Redirect hosts are restricted. Tokens are stored as SHA-256 hashes (file mode 600). The approval and outbox pages lock after 10 wrong passwords in 15 minutes (server-wide; existing tokens keep working).
+* Every refused sign-in renewal is logged with its reason (already rotated, expired, wrong client, not recognised), never with token values, and unauthenticated callers cannot flood the log. Read them with `docker compose logs icloud-mcp | grep 'oauth:'`.
 * The MCP endpoint validates `Host` and `Origin`. Tool results carry an untrusted-content notice. HTTP-client request logging is disabled so account identifiers do not reach the logs.
 * This is a single-owner design: one deployment serves one iCloud account. It is not multi-tenant, and storing other people's app-specific passwords is deliberately out of scope.
 
