@@ -24,11 +24,11 @@ An MCP connector that can read mail and act on your behalf is a prompt-injection
 
 In Claude you can additionally set the send, reply, forward and delete tools to "ask before use". Anyone who obtains the app-specific password has **full mail, calendar and contact access** (Apple offers no narrower scope), so protect the server and its `.env` accordingly.
 
-## Tools (23)
+## Tools (24)
 
 | Area | Tools |
 |---|---|
-| Mail, read | `mail_list_folders`, `mail_search`, `mail_get_message`, `mail_get_thread`, `mail_get_attachment` |
+| Mail, read | `mail_list_folders`, `mail_search`, `mail_find_correspondent`, `mail_get_message`, `mail_get_thread`, `mail_get_attachment` |
 | Mail, write | `mail_send`, `mail_reply` (incl. reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder` |
 | Calendar | `calendar_list_calendars`, `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event` |
 | Contacts | `contacts_search`, `contacts_get`, `contacts_create`, `contacts_update`, `contacts_delete` (notes and photos are never returned) |
@@ -39,6 +39,7 @@ Behaviour worth knowing:
 * Reading a message does not mark it read. Bcc recipients receive the mail but the header is stripped on the wire.
 * Calendar: multiple calendars, recurring events expanded when listing, all-day events, reminders, links, notes, attendees (invitations are emailed by iCloud itself, see the security table). Editing a recurring event changes the whole series.
 * Contacts are fetched whole, cached, and searched locally (name, nickname, company, email, phone; accent-insensitive). A contact with no email is returned with `has_email: false` so an agent asks instead of guessing. When the connector is writable, agents can create and update contacts; updates retain fields outside the changed subset and use ETags to refuse stale overwrites.
+* **Misspelled names are handled.** `contacts_search` offers similar-sounding names (`similar` / `did_you_mean`) when nothing matches exactly, and `mail_find_correspondent` finds people you have emailed with by approximate name, address or company, reading only message headers. Approximate matches are labelled, and the agent instructions require asking you to confirm before sending, inviting or editing on one.
 * Recipients and attendees accept `a@b.com`, `Name <a@b.com>` or `mailto:a@b.com`. Anything else is rejected with an actionable error and never silently dropped.
 
 ## Requirements
@@ -113,6 +114,8 @@ Everything is an environment variable; see [`.env.example`](.env.example) for co
 | `MAX_BODY_CHARS`, `MAX_ATTACHMENT_BYTES` | 30000, 5 MiB | Result size caps |
 | `MCP_PUBLIC_URL`, `MCP_OWNER_PASSWORD` | required | Public https address; owner password (12+ chars) |
 | `MCP_HOST`, `MCP_PORT`, `MCP_EXTRA_ALLOWED_HOSTS` | 0.0.0.0, 8000, empty | Bind address and extra allowed Host headers |
+| `MCP_STATELESS` | true | No server-side MCP sessions, so restarting the server never breaks a connected client ("Missing session ID") |
+| `TOOL_TIMEOUT_SECONDS` | 90 | A tool call running longer is abandoned with an error instead of hanging |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
