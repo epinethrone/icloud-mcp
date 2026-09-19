@@ -1,0 +1,26 @@
+services:
+  icloud-mcp:
+    build: .
+    image: icloud-mcp:local
+    container_name: icloud-mcp
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - icloud_mcp_data:/data          # OAuth client registrations and hashed tokens
+    ports:
+      - "127.0.0.1:8000:8000"          # loopback only, for local debugging; the public path is the tunnel below
+
+  # Optional Cloudflare Tunnel: point your tunnel's public hostname (the host in MCP_PUBLIC_URL) at http://icloud-mcp:8000.
+  # Token is in .tunnel.env (TUNNEL_TOKEN) so the app container never sees it.
+  # Do NOT put Cloudflare Access on this hostname: Claude's servers cannot pass an email-OTP login.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]          # opt in: `docker compose --profile tunnel up -d` (or COMPOSE_PROFILES=tunnel)
+    container_name: icloud-mcp-cloudflared
+    command: tunnel --no-autoupdate run
+    env_file: .tunnel.env
+    depends_on: [icloud-mcp]
+    restart: unless-stopped
+
+volumes:
+  icloud_mcp_data:

@@ -1,0 +1,42 @@
+# Deny by default: nothing is tracked unless it is listed below, so secrets, local config, caches and build output
+# cannot be committed by accident (even with `git add -A`).
+*
+!.gitignore
+!LICENSE
+!README.md
+!.env.example
+!Dockerfile
+!docker-compose.yml
+!pyproject.toml
+!configure.sh
+!src/
+!src/icloud_mcp/
+!src/icloud_mcp/*.py
+!src/icloud_mcp/static/
+!src/icloud_mcp/static/README.md
+!tests/
+!tests/*.py
+!tests/integration/
+!tests/integration/*.py
+!dev/
+!dev/*.py
+!dev/*.conf
+!dev/*.sh
+
+# Belt and braces: these must never be tracked, whatever the rules above say.
+.env
+.env.*
+!.env.example
+.tunnel.env
+*.pem
+*.key
+data/
+oauth_state.json
+outbox.json
+src/icloud_mcp/static/*.png
+src/icloud_mcp/static/*.ico
+__pycache__/
+*.egg-info/
+build/
+.venv/
+.pytest_cache/
