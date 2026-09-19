@@ -294,9 +294,9 @@ def test_tools_exist_only_when_enabled_and_carry_descriptions(env):
 def test_instructions_send_agents_to_contacts_first_then_mail(env):
     s, *_ = env
     text = build_instructions(dataclasses.replace(s, allow_calendar_invites=True))
-    assert text.count("contacts_search") >= 2 and "try mail_search" in text                     # calendar invites and mail both say so
+    assert text.count("contacts_search") >= 2 and "mail_find_correspondent" in text             # calendar invites and mail both say so
     off = build_instructions(dataclasses.replace(s, allow_calendar_invites=True, enable_contacts=False))
-    assert "contacts_search" not in off and "with mail_search (from_address / to_address)" in off
+    assert "contacts_search" not in off and "with mail_find_correspondent" in off
 
 
 def test_http_client_request_urls_are_not_logged_at_info():
