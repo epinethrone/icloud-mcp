@@ -24,7 +24,7 @@ An MCP connector that can read mail and act on your behalf is a prompt-injection
 
 In Claude you can additionally set the send, reply, forward and delete tools to "ask before use". Anyone who obtains the app-specific password has **full mail, calendar and contact access** (Apple offers no narrower scope), so protect the server and its `.env` accordingly.
 
-## Tools (24)
+## Tools (24, plus 11 with the optional Mac helper)
 
 | Area | Tools |
 |---|---|
@@ -32,6 +32,9 @@ In Claude you can additionally set the send, reply, forward and delete tools to 
 | Mail, write | `mail_send`, `mail_reply` (incl. reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder` |
 | Calendar | `calendar_list_calendars`, `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event` |
 | Contacts | `contacts_search`, `contacts_get`, `contacts_create`, `contacts_update`, `contacts_delete` (notes and photos are never returned) |
+| Reminders (Mac helper) | `reminders_lists`, `reminders_list` (active reminders only), `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete` |
+| Notes (Mac helper) | `notes_folders`, `notes_list`, `notes_read`, `notes_create` (create only: existing notes are never edited or deleted) |
+| Helper status | `mac_helper_status` (is the Mac helper online?) |
 
 Behaviour worth knowing:
 
@@ -41,6 +44,14 @@ Behaviour worth knowing:
 * Contacts are fetched whole, cached, and searched locally (name, nickname, company, email, phone; accent-insensitive). A contact with no email is returned with `has_email: false` so an agent asks instead of guessing. When the connector is writable, agents can create and update contacts; updates retain fields outside the changed subset and use ETags to refuse stale overwrites.
 * **Misspelled names are handled.** `contacts_search` offers similar-sounding names (`similar` / `did_you_mean`) when nothing matches exactly, and `mail_find_correspondent` finds people you have emailed with by approximate name, address or company, reading only message headers. Approximate matches are labelled, and the agent instructions require asking you to confirm before sending, inviting or editing on one.
 * Recipients and attendees accept `a@b.com`, `Name <a@b.com>` or `mailto:a@b.com`. Anything else is rejected with an actionable error and never silently dropped.
+
+## Reminders and Notes (optional, through your Mac)
+
+Apple exposes Reminders and Notes only through their own apps. They are scriptable on a Mac, so a small helper ([`mac-helper/`](mac-helper/README.md)) runs there and does the work when the server asks. The helper connects *out* to a **private HTTPS port** of the server (never the public one, never the tunnel) and long-polls for jobs, so the Mac opens no listening port. The server never sends script text: only an operation name and validated arguments from a fixed list, each backed by a static script that receives its arguments as JSON. The channel is TLS with a self-signed certificate the helper pins by fingerprint, plus a bearer token. It works while the Mac is on and reachable (home network or VPN); when it is not, the tools say so. Due dates are validated as real calendar dates (a bare date means 09:00 local time that day); locked notes are never read; `READ_ONLY=true` hides every write tool.
+
+**Large Reminders lists.** Reminders scans a whole list for almost every scripted request, about 15 ms per item, so a list holding a thousand completed reminders takes 15 to 70 seconds per request even to return four open ones (measured on a real Mac; filtering does not help, and neither does AppleScript). The helper therefore returns only *active* reminders, reads each list once at start-up (one scan of the completed flags, then only the open items by position), serves big lists from a cache it refreshes in the background (small lists are re-read live), and says how old cached data is (`cached` in the answer; `refresh=true` re-reads one list on demand). Edits go straight to the reminder by its remembered position, verified against its id before every read or write, with a one-list scan as the fallback. List names are not unique across accounts, so tools accept `list_id` and refuse an ambiguous name. Clearing completed reminders in the Reminders app makes everything instant, but nothing requires it.
+
+Enable it in `.env` with `ENABLE_REMINDERS=true` (and/or `ENABLE_NOTES=true`), a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs, and writes to `bridge_fingerprint.txt` in its data folder, the certificate fingerprint to give the installer. The operation scripts are adapted from [MrGo2/icloud-mcp](https://github.com/MrGo2/icloud-mcp) (MIT), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Requirements
 
@@ -139,7 +150,7 @@ These only showed up against the real service, not against local test servers:
 
 ## Limits
 
-* Reminders, Notes and iCloud Drive are not reachable over these protocols. Contact photos and notes are deliberately not exposed to agents; contact deletion is permanent.
+* Reminders, Notes and iCloud Drive are not reachable over these protocols (Reminders and Notes are covered by the optional Mac helper; iCloud Drive is not). Contact photos and notes are deliberately not exposed to agents; contact deletion is permanent.
 * One identity; aliases as From are not supported. Attachments other than text return base64 and are size-capped.
 * Each tool call opens a fresh connection (about 1.5 to 5 seconds per call against iCloud).
 * Claude currently shows no custom icon for custom connectors, whatever the server advertises ([open request](https://github.com/anthropics/claude-ai-mcp/issues/152)). Optional icon files placed in `src/icloud_mcp/static/` are served and advertised anyway; none ship with the source.

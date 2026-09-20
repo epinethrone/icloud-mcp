@@ -9,6 +9,13 @@
 !docker-compose.yml
 !pyproject.toml
 !configure.sh
+!THIRD_PARTY_NOTICES.md
+!mac-helper/
+!mac-helper/*.py
+!mac-helper/*.sh
+!mac-helper/README.md
+!mac-helper/ops/
+!mac-helper/ops/*.js
 !src/
 !src/icloud_mcp/
 !src/icloud_mcp/*.py
@@ -16,6 +23,7 @@
 !src/icloud_mcp/static/README.md
 !tests/
 !tests/*.py
+!tests/*.js
 !tests/integration/
 !tests/integration/*.py
 !dev/
