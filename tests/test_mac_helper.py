@@ -22,7 +22,8 @@ spec.loader.exec_module(helper)
 # ------------------------------------------------------------------ the two copies of the rules cannot drift apart
 def test_helper_and_server_agree_on_the_operations():
     assert helper.OPS == bridge_mod.OPS
-    assert set(helper.OP_FILES) | {"reminders_list"} == set(helper.OPS)          # reminders_list is answered from the cache, not by a script
+    assert set(helper.OP_FILES) | helper.EVENTKIT_OPS == set(helper.OPS)         # Reminders through EventKit, Notes through a script
+    assert not set(helper.OP_FILES) & helper.EVENTKIT_OPS
     for op, filename in helper.OP_FILES.items():
         assert (HELPER_PATH.parent / "ops" / filename).is_file(), op
 
@@ -49,25 +50,34 @@ def test_helper_source_stays_valid_for_the_python_that_ships_with_macos():
     ast.parse(HELPER_PATH.read_text(), feature_version=(3, 9))
 
 
-# ------------------------------------------------------------------ how a command is built: static script + one JSON argument
+# ------------------------------------------------------------------ how a command is built: fixed program + one JSON argument
 def test_the_command_is_a_static_script_file_plus_one_json_argument():
-    cmd = helper.build_command("reminder_lists", {})
+    cmd = helper.build_command("note_folders", {})
     assert cmd[:3] == ["osascript", "-l", "JavaScript"] and "-e" not in cmd and len(cmd) == 5
     assert pathlib.Path(cmd[3]).parent == HELPER_PATH.parent / "ops" and cmd[4] == "{}"
+
+
+def test_every_reminders_operation_runs_the_eventkit_binary_and_never_a_jxa_script():
+    for op in helper.EVENTKIT_OPS:
+        cmd = helper.build_command(op, {})
+        assert cmd == [helper.EVENTKIT_BIN, op, "{}"], op
+    assert helper.EVENTKIT_BIN == str(HELPER_PATH.parent / "bin" / "reminders-eventkit")
 
 
 def test_hostile_text_only_ever_appears_inside_the_json_argument(monkeypatch):
     ops = {"demo": {"title": ("str", True, 100)}}
     monkeypatch.setattr(helper, "OPS", ops)
-    monkeypatch.setattr(helper, "OP_FILES", {"demo": "reminder_lists.js"})
+    monkeypatch.setattr(helper, "OP_FILES", {"demo": "note_folders.js"})
     evil = '"); do shell script "rm -rf ~"; ("'
     cmd = helper.build_command("demo", {"title": evil})
     assert len(cmd) == 5 and json.loads(cmd[4]) == {"title": evil}      # one argv element, parsed as data
     assert all(evil not in part for part in cmd[:4])
+    cmd = helper.build_command("reminder_create", {"title": evil})
+    assert len(cmd) == 3 and json.loads(cmd[2]) == {"title": evil} and all(evil not in part for part in cmd[:2])
 
 
 def test_an_operation_name_can_never_select_an_arbitrary_file():
-    for bad in ("../../etc/passwd", "reminder_lists.js", "selftest_echo", "", "REMINDER_LISTS", "reminder_lists; ls"):
+    for bad in ("../../etc/passwd", "reminder_lists.js", "selftest_echo", "", "REMINDER_LISTS", "reminder_lists; ls", "reminders_snapshot"):
         ok, result, error = helper.run_op(bad, {})
         assert ok is False and error == "unknown operation"
 
@@ -98,13 +108,21 @@ def test_a_successful_script_result_is_parsed(monkeypatch):
 
 
 def test_failures_become_short_actionable_messages(monkeypatch):
-    fake_run(monkeypatch, returncode=1, stderr=b"execution error: Not authorized to send Apple events to Reminders. (-1743)")
-    ok, _, error = helper.run_op("reminder_lists", {})
+    fake_run(monkeypatch, returncode=1, stderr=b"execution error: Not authorized to send Apple events to Notes. (-1743)")
+    ok, _, error = helper.run_op("note_folders", {})
     assert not ok and "Privacy & Security > Automation" in error
-    fake_run(monkeypatch, exc=subprocess.TimeoutExpired("osascript", 5))
+    fake_run(monkeypatch, exc=subprocess.TimeoutExpired("reminders-eventkit", 5))
     assert "did not finish within" in helper.run_op("reminder_lists", {}, timeout=5)[2]
     fake_run(monkeypatch, exc=FileNotFoundError())
-    assert "only runs on macOS" in helper.run_op("reminder_lists", {})[2]
+    assert "only runs on macOS" in helper.run_op("note_folders", {})[2]
+    assert "run install.sh again" in helper.run_op("reminder_lists", {})[2]           # no silent fallback to the JXA scripts
+    fake_run(monkeypatch, exc=PermissionError())
+    assert "run install.sh again" in helper.run_op("reminders_list", {})[2]
+    denied = b'Full Access to Reminders is not granted (currently: denied). Enable "iCloud Mac Helper (Reminders)" in System Settings.\n'
+    fake_run(monkeypatch, returncode=1, stderr=denied)
+    assert helper.run_op("reminder_lists", {})[2].startswith("Full Access to Reminders is not granted (currently: denied)")
+    fake_run(monkeypatch, returncode=1, stderr=b"reminder not found (-1728)\n")
+    assert "not found" in helper.run_op("reminder_complete", {"id": "x"})[2]
     fake_run(monkeypatch, stdout=b"not json")
     assert "not JSON" in helper.run_op("reminder_lists", {})[2]
     fake_run(monkeypatch, stdout=b"x" * (helper.MAX_OUTPUT + 1))
@@ -193,17 +211,15 @@ def test_the_installer_prefers_apples_python_and_still_passes_a_syntax_check():
 
 
 def test_write_selftest_cleans_up_even_when_a_step_fails(monkeypatch, capsys):
-    calls = []
+    calls, seen_args = [], []
 
-    def fake_run_op(op, args, timeout=60, extra=None, internal=False):
+    def fake_run_op(op, args, timeout=60, extra=None):
         calls.append(op)
+        seen_args.append((op, dict(args)))
         if op == "reminder_create":
-            return True, {"id": "x-apple-reminder://T1", "list_id": "L1", "title": args["title"], "notes": "", "due": None, "priority": 0}, ""
-        if op == "reminder_lists":
-            return True, [{"id": "L1", "name": "Home", "account": "iCloud"}], ""
-        if op == "reminders_snapshot":
-            return True, {"list_id": "L1", "list": "Home", "account": "iCloud", "count": 1,
-                          "items": [{"id": "x-apple-reminder://T1", "title": "t", "notes": "", "due": None, "priority": 0, "position": 0}]}, ""
+            return True, {"id": "T1", "list_id": "L1", "title": args["title"], "notes": "", "due": None, "priority": 0}, ""
+        if op == "reminders_list":
+            return True, {"reminders": [{"id": "T1"}]}, ""
         if op == "reminder_update":
             return False, None, "boom"                                               # a failure mid-way must not skip the cleanup
         if op == "note_create":
@@ -222,173 +238,99 @@ def test_write_selftest_cleans_up_even_when_a_step_fails(monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         helper.selftest_write()
     assert "reminder_delete" in calls                                                # the temporary reminder was removed anyway
+    assert ("reminder_update", {"id": "x-apple-reminder://T1", "notes": "edited through an old-style id"}) in seen_args   # old ids are exercised
     assert deleted and "selftest_note_delete.js" in deleted[0][-2] and "x-coredata://N1" in deleted[0][-1]   # so was the temporary note
 
 
-# ------------------------------------------------------------------ the Reminders cache
-class FakeMac:
-    """A fake Reminders behind the helper's call interface. Each snapshot costs simulated seconds, like a big list on a real Mac."""
-
-    def __init__(self):
-        self.now = 1000.0
-        self.lists = [{"id": "L-small", "name": "Small", "account": "iCloud"}, {"id": "L-big", "name": "Big", "account": "iCloud"},
-                      {"id": "L-big2", "name": "Big", "account": "Exchange"}]
-        self.cost = {"L-small": 0.2, "L-big": 16.0, "L-big2": 0.3}
-        self.items = {
-            "L-small": [{"id": "s1", "title": "Milk", "notes": "", "due": "2026-09-22T10:00:00.000Z", "priority": 0, "position": 0}],
-            "L-big": [{"id": "b1", "title": "Printer paper", "notes": "A4, 500 sheets", "due": None, "priority": 0, "position": 0},
-                      {"id": "b2", "title": "Batteries", "notes": "", "due": "2026-09-21T09:00:00.000Z", "priority": 1, "position": 900},
-                      {"id": "b3", "title": "Light bulbs", "notes": "", "due": None, "priority": 0, "position": 1002}],
-            "L-big2": []}
-        self.calls = []
-
-    def clock(self):
-        return self.now
-
-    def call(self, op, args, timeout, extra=None, internal=False):
-        self.calls.append((op, dict(args), extra))
-        if op == "reminder_lists":
-            return True, [dict(x) for x in self.lists], ""
-        if op == "reminders_snapshot":
-            lid = args["list_id"]
-            self.now += self.cost[lid]
-            return True, {"list_id": lid, "list": next(x["name"] for x in self.lists if x["id"] == lid), "account": "iCloud",
-                          "count": 1000 + len(self.items[lid]), "items": [dict(i) for i in self.items[lid]]}, ""
-        if op == "reminder_update":
-            return True, {"id": args["id"], "title": args.get("title", "t"), "notes": args.get("notes", ""), "completed": False, "due": None,
-                          "priority": args.get("priority", 0), "position": 900}, ""
-        if op == "reminder_complete":
-            return True, {"id": args["id"], "title": "t", "completed": args.get("completed", True), "position": 900}, ""
-        if op == "reminder_delete":
-            return True, {"deleted": args["id"], "title": "t", "position": 0}, ""
-        if op == "reminder_create":
-            return True, {"id": "new1", "title": args["title"], "notes": "", "list": "Big", "list_id": args.get("list_id", "L-big"), "due": None, "priority": 0}, ""
-        return False, None, "unexpected " + op
-
-    def snapshots(self):
-        return [c for c in self.calls if c[0] == "reminders_snapshot"]
+# ------------------------------------------------------------------ Reminders through EventKit
+EVENTKIT_DIR = HELPER_PATH.parent / "eventkit"
 
 
-@pytest.fixture
-def mac():
-    m = FakeMac()
-    m.cache = helper.ReminderCache(call=m.call, clock=m.clock, debounce=0, background=False)
-    m.kicked = []
-    m.cache._kick = lambda list_id, delay=0.0: m.kicked.append(list_id)
-    return m
-
-
-def read(mac, **args):
-    return mac.cache.read(helper.validate_args("reminders_list", args))
-
-
-def test_first_read_scans_each_list_once_and_returns_only_active_reminders_soonest_first(mac):
-    out = read(mac)
-    assert [r["id"] for r in out["reminders"]] == ["b2", "s1", "b1", "b3"]                # soonest due first, undated last
-    assert {r["list_id"] for r in out["reminders"]} == {"L-small", "L-big"} and "position" not in out["reminders"][0]
-    assert len(mac.snapshots()) == 3 and "cached" not in out
-
-
-def test_a_big_list_is_served_from_the_cache_and_a_small_one_is_re_read_live(mac):
-    read(mac)
-    mac.calls.clear(); mac.now += 30                                                        # 30 s later: small list is old, the big one is fine
-    out = read(mac)
-    assert [c[1]["list_id"] for c in mac.snapshots()] == ["L-small", "L-big2"]              # only the cheap lists were scanned again
-    assert [(c["list_id"], c["refreshing"]) for c in out["cached"]] == [("L-big", False)]        # the big one is labelled with its age
-    assert 25 <= out["cached"][0]["age_seconds"] <= 60
-    assert mac.kicked == []                                                                # not old enough for a background refresh
-
-
-def test_an_old_big_list_is_still_served_at_once_and_refreshed_in_the_background(mac):
-    read(mac)
-    mac.calls.clear(); mac.now += 400
-    out = read(mac, list="Big")
-    assert mac.kicked.count("L-big") == 1 and not [c for c in mac.snapshots() if c[1]["list_id"] == "L-big"]     # served stale, refresh queued
-    assert any(c["list_id"] == "L-big" and c["refreshing"] for c in out["cached"])
-
-
-def test_filters_limit_and_list_selection(mac):
-    read(mac)
-    assert [r["id"] for r in read(mac, query="A4")["reminders"]] == ["b1"]           # matches notes, case-insensitively
-    assert [r["id"] for r in read(mac, list_id="L-small")["reminders"]] == ["s1"]
-    assert len(read(mac, limit=2)["reminders"]) == 2
-    assert {r["account"] for r in read(mac, list="Big")["reminders"]} <= {"iCloud", "Exchange"}   # two lists named Big are BOTH searched by name
-    with pytest.raises(helper.HelperError, match="not found"):
-        read(mac, list="Nope")
-    with pytest.raises(helper.HelperError, match="needs list"):
-        read(mac, refresh=True)
-
-
-def test_refresh_rereads_the_named_list_even_when_cached(mac):
-    read(mac); mac.calls.clear()
-    read(mac, list_id="L-big", refresh=True)
-    assert [c[1]["list_id"] for c in mac.snapshots()] == ["L-big"]
-
-
-def test_reads_time_out_with_a_clear_message_instead_of_hanging(mac):
-    mac.cost["L-big"] = 100.0
-    with pytest.raises(helper.HelperError, match="still loading"):
-        mac.cache.read({}, budget=30)
-
-
-def test_edits_use_the_remembered_position_and_never_send_a_hint_the_server_supplied(mac):
-    read(mac); mac.calls.clear()
-    ok, result, _ = mac.cache.write("reminder_update", {"id": "b2", "title": "Batteries AA"}, 60)
-    assert ok and mac.calls[0][2] == {"hint": {"list_id": "L-big", "index": 900}}
-    assert "position" not in result                                                        # internal detail, never shown to the agent
-    ok, _, _ = mac.cache.write("reminder_complete", {"id": "unknown"}, 60)
-    assert mac.calls[1][2] is None                                                         # not cached: no hint, the script scans
-    ok, _, error = mac.cache.write("reminder_update", {"id": "b2", "title": "x", "hint": {"list_id": "L-small", "index": 0}}, 60)
-    assert ok is False and "does not take 'hint'" in error
-
-
-def test_writes_keep_the_cache_truthful(mac):
-    read(mac)
-    mac.cache.write("reminder_update", {"id": "b1", "title": "Renamed", "priority": 5}, 60)
-    assert next(r for r in read(mac, list_id="L-big")["reminders"] if r["id"] == "b1")["title"] == "Renamed"
-    mac.cache.write("reminder_complete", {"id": "b2"}, 60)
-    assert "b2" not in [r["id"] for r in read(mac, list_id="L-big")["reminders"]]           # done: gone from the active list at once
-    mac.cache.write("reminder_delete", {"id": "b1"}, 60)                                     # was at position 0: everything after shifts up by one
-    positions = {i["id"]: i["position"] for i in mac.cache._snaps["L-big"]["items"]}
-    assert positions == {"b3": 1001}
-    ok, created, _ = mac.cache.write("reminder_create", {"title": "Fresh", "list_id": "L-big"}, 60)
-    assert created["id"] == "new1" and "new1" in [r["id"] for r in read(mac, list_id="L-big")["reminders"]]
-    assert set(mac.kicked) == {"L-big"}                                                    # every write schedules a re-read of that list to refresh positions
-
-
-def test_reopening_marks_every_list_dirty(mac):
-    read(mac)
-    mac.cache.write("reminder_complete", {"id": "nobody", "completed": False}, 60)
-    assert all(s["dirty"] for s in mac.cache._snaps.values())
-
-
-def test_a_busy_mac_gives_a_clear_error_not_a_hang(mac):
-    with mac.cache._mac:
-        with pytest.raises(helper.HelperError, match="busy"):
-            mac.cache._locked(0.1)
-
-
-def test_dispatch_routes_operations(mac, monkeypatch):
-    seen = []
-    monkeypatch.setattr(helper, "run_op", lambda op, args, timeout=60, extra=None, internal=False: seen.append(op) or (True, {"note": 1}, ""))
-    assert mac.cache.dispatch("reminders_list", {"list_id": "L-small"}, 60)[1]["reminders"][0]["id"] == "s1"
-    assert mac.cache.dispatch("reminders_list", {"bogus": 1}, 60)[0] is False                # validation applies here too
-    assert mac.cache.dispatch("note_folders", {}, 60) == (True, {"note": 1}, "") and seen == ["note_folders"]
-
-
-def test_the_position_hint_is_added_after_validation_and_internal_scripts_are_not_remote_operations(monkeypatch):
+def test_the_server_cannot_smuggle_extra_arguments_and_extra_is_added_only_after_validation(monkeypatch):
     commands = []
 
     class Done:
         returncode, stdout, stderr = 0, b"{}", b""
 
     monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: commands.append(cmd) or Done())
-    helper.run_op("reminder_update", {"id": "a", "title": "t"}, extra={"hint": {"list_id": "L", "index": 3}})
-    assert json.loads(commands[-1][-1])["hint"] == {"list_id": "L", "index": 3}
-    assert helper.run_op("reminder_update", {"id": "a", "hint": {"index": 3}})[0] is False   # the server cannot smuggle one in
-    assert helper.run_op("reminders_snapshot", {"list_id": "L"}, internal=False)[0] is False  # not in the fixed remote table
-    assert helper.run_op("reminders_snapshot", {"list_id": "L"}, internal=True)[0] is True
-    assert helper.run_op("reminder_update", {"id": "a"}, internal=True)[0] is False
+    ok, _, error = helper.run_op("reminder_update", {"id": "a", "hint": {"list_id": "L", "index": 3}})
+    assert ok is False and "does not take 'hint'" in error and not commands
+    helper.run_op("reminder_update", {"id": "a", "title": "t"}, extra={"note": 1})
+    assert json.loads(commands[-1][-1]) == {"id": "a", "title": "t", "note": 1}
+
+
+def test_the_embedded_info_plist_and_the_installer_agree_on_the_bundle_id_and_usage_strings():
+    import plistlib
+    info = plistlib.loads((EVENTKIT_DIR / "Info.plist").read_bytes())
+    assert info["NSRemindersFullAccessUsageDescription"] and info["NSRemindersUsageDescription"]   # without these macOS shows no prompt at all
+    script = (HELPER_PATH.parent / "install.sh").read_text()
+    assert 'EK_ID="%s"' % info["CFBundleIdentifier"] in script
+    assert "-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist" in script and '--identifier "$EK_ID"' in script
+    assert info["CFBundleName"] in helper.REMINDERS_GRANT
+
+
+def test_the_selftest_reads_the_permission_state_from_the_binarys_own_wording():
+    swift = (EVENTKIT_DIR / "reminders-eventkit.swift").read_text()
+    for phrase, status in (("not yet asked", "notDetermined"), ("denied", "denied"), ("device policy", "restricted"), ("write-only", "writeOnly")):
+        assert phrase in swift, phrase                                                 # the binary still says it this way
+        assert helper._access_status("Full Access to Reminders is not granted (currently: %s)" % phrase) == status
+    assert swift.count('fail("Full Access to Reminders is not granted') == 2          # every refusal names the grant
+    assert helper._access_status("something else") == "unknown"
+
+
+def test_old_style_reminder_ids_are_accepted_by_the_binary():
+    swift = (EVENTKIT_DIR / "reminders-eventkit.swift").read_text()
+    assert 'let jxaIdPrefix = "x-apple-reminder://"' in swift
+    assert "calendarItem(withIdentifier: bareId(id))" in swift and '"id": bareId(r.calendarItemIdentifier)' in swift
+
+
+def test_a_selftest_started_outside_launchd_reruns_itself_through_launchd(monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(helper.platform, "system", lambda: "Darwin")
+    monkeypatch.delenv(helper.IN_LAUNCHD, raising=False)
+    monkeypatch.setattr(helper, "run_in_launchd", lambda args: seen.append(args) or (1, '{"overall": "fail"}\n'))
+    monkeypatch.setattr(helper.sys, "argv", ["helper", "--selftest", "--config", "/c.json"])
+    assert helper.main() == 1 and seen == [["--selftest", "--config", "/c.json"]]
+    assert json.loads(capsys.readouterr().out) == {"overall": "fail"}
+    monkeypatch.setenv("ICLOUD_MAC_HELPER_CONFIG", "/env.json")                     # launchd will not pass this environment on
+    monkeypatch.setattr(helper.sys, "argv", ["helper", "--selftest-write"])
+    helper.main()
+    assert seen[-1] == ["--selftest-write", "--config", "/env.json"]
+
+
+def test_inside_launchd_the_selftest_runs_and_leaves_its_report_in_the_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(helper.platform, "system", lambda: "Darwin")
+    monkeypatch.setenv(helper.IN_LAUNCHD, "1")
+    monkeypatch.setattr(helper, "selftest_write", lambda: print('{"overall": "pass"}') or 0)
+    out = tmp_path / "result.json"
+    monkeypatch.setattr(helper.sys, "argv", ["helper", "--selftest-write", "--agent-out", str(out)])
+    assert helper.main() == 0
+    assert json.loads(out.read_text()) == {"exit": 0, "stdout": '{"overall": "pass"}\n'}
+
+
+def test_the_launchd_job_uses_the_agents_python_and_is_always_removed(monkeypatch):
+    import plistlib
+    calls = []
+
+    class R:
+        returncode, stdout, stderr = 0, b"", b""
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:2] == ["launchctl", "bootstrap"]:
+            job = plistlib.loads(pathlib.Path(cmd[3]).read_bytes())
+            calls.append(job)
+            out = job["ProgramArguments"][job["ProgramArguments"].index("--agent-out") + 1]
+            pathlib.Path(out).write_text(json.dumps({"exit": 0, "stdout": "report"}))
+        return R()
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    monkeypatch.setenv("ICLOUD_MAC_HELPER_PYTHON", "/usr/bin/python3")
+    assert helper.run_in_launchd(["--selftest"], timeout=5) == (0, "report")
+    job = next(c for c in calls if isinstance(c, dict))
+    assert job["Label"] == helper.PROBE_LABEL and "KeepAlive" not in job and job["EnvironmentVariables"] == {helper.IN_LAUNCHD: "1"}
+    assert job["ProgramArguments"][:3] == ["/usr/bin/python3", str(HELPER_PATH), "--selftest"]
+    assert calls[-1][:2] == ["launchctl", "bootout"] and calls[-1][2].endswith("/" + helper.PROBE_LABEL)
 
 
 def test_script_errors_are_shown_without_osascript_wrapping():

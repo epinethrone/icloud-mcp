@@ -16,6 +16,9 @@
 !mac-helper/README.md
 !mac-helper/ops/
 !mac-helper/ops/*.js
+!mac-helper/eventkit/
+!mac-helper/eventkit/*.swift
+!mac-helper/eventkit/Info.plist
 !src/
 !src/icloud_mcp/
 !src/icloud_mcp/*.py
