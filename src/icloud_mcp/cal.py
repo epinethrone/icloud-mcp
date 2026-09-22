@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import re
+import threading
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -80,6 +82,17 @@ def _addr(v: Any) -> dict[str, str | None]:
         "status": str(params["PARTSTAT"]) if "PARTSTAT" in params else None,
         "role": str(params["ROLE"]) if "ROLE" in params else None,
     }
+
+
+def _attendee_email(v: Any) -> str | None:
+    """Lower-cased address of an ATTENDEE line, or None when iCloud rewrote it into a principal path."""
+    raw = str(v)
+    params = getattr(v, "params", {}) or {}
+    if re.match(r"^mailto:", raw, flags=re.I):
+        return raw[len("mailto:"):].strip().lower() or None
+    if "EMAIL" in params:
+        return str(params["EMAIL"]).strip().lower() or None
+    return None
 
 
 def _as_list(v: Any) -> list[Any]:
@@ -175,6 +188,52 @@ def _apply_attendees(ev: icalendar.Event, attendees: list[str], organizer_email:
         ev.add("attendee", addr)
 
 
+def _merge_attendees(ev: icalendar.Event, attendees: list[str], organizer_email: str | None, organizer_name: str = "") -> None:
+    """Set the guest list on an EXISTING event without disturbing the people already on it.
+
+    Everyone already on the event keeps their own ATTENDEE line untouched, so PARTSTAT (their RSVP), RSVP, CN and any
+    delegation parameters survive. Only addresses that are not yet on the event are added, as NEEDS-ACTION. An attendee
+    whose address iCloud rewrote into a principal path is always kept, and so is the account owner's own line, because
+    dropping either rewrites the organiser's own participation in the meeting. An existing ORGANIZER is left as it is.
+
+    Passing an empty list still means "remove everyone", which is the one case where existing lines are meant to go.
+    """
+    wanted = parse_attendees(attendees)
+    if not wanted:
+        for k in ("attendee", "organizer"):
+            if k in ev:
+                del ev[k]
+        return
+
+    want = {a.lower() for _, a in wanted}
+    owner = (organizer_email or "").strip().lower()
+    keep = []
+    for item in _as_list(ev.get("attendee")):
+        email = _attendee_email(item)
+        if email is None or email in want or (owner and email == owner):
+            keep.append(item)
+    kept_emails = {e for e in (_attendee_email(i) for i in keep) if e}
+
+    if "attendee" in ev:
+        del ev["attendee"]
+    if "organizer" not in ev and organizer_email:
+        org = icalendar.vCalAddress(f"mailto:{organizer_email}")
+        if organizer_name:
+            org.params["CN"] = organizer_name
+        ev.add("organizer", org)
+    for item in keep:
+        ev.add("attendee", item)
+    for name, a in wanted:
+        if a.lower() in kept_emails:
+            continue
+        addr = icalendar.vCalAddress(f"mailto:{a}")
+        if name:
+            addr.params["CN"] = name
+        addr.params["PARTSTAT"] = "NEEDS-ACTION"
+        addr.params["RSVP"] = "TRUE"
+        ev.add("attendee", addr)
+
+
 def _apply_alarms(ev: icalendar.Event, minutes: list[int], summary: str) -> None:
     ev.subcomponents[:] = [c for c in ev.subcomponents if c.name != "VALARM"]
     for m in minutes:
@@ -251,20 +310,101 @@ def build_event(
 _CACHE_SECONDS = 600  # calendar names / event support change rarely; a rename in the iCloud app shows up within this time
 
 
+_PRINCIPAL_TTL_SECONDS = 240.0
+
+_TRANSPORT_ERRORS = {
+    "ConnectionError", "ConnectTimeout", "ConnectTimeoutError", "ReadTimeout", "ReadTimeoutError", "ReadError",
+    "RemoteProtocolError", "Timeout", "TimeoutError", "SSLError", "SSLEOFError", "ProtocolError",
+    "ChunkedEncodingError", "IncompleteRead", "BrokenPipeError", "ConnectionResetError", "ConnectionAbortedError",
+    "NewConnectionError", "MaxRetryError",
+}
+
+
+def _is_transport_error(exc: BaseException | None) -> bool:
+    """True when the failure is the connection rather than the request: a reused socket that died, a dropped TLS
+    session, a timeout. Those are worth reconnecting for. A 404 or a bad date is not."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if type(exc).__name__ in _TRANSPORT_ERRORS or isinstance(exc, (OSError, caldav.error.AuthorizationError)):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+def _reconnecting(method):
+    """Retry once on a dead reused connection, and ONLY then.
+
+    A cached connection can be closed by the server between calls, and that failure surfaces on the next request
+    rather than at hand-out time. Retrying is safe only when the connection was a reused one AND nothing has been
+    written yet, so a PUT or DELETE is never replayed. A fresh connection that fails is a real failure and is raised.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        self._tl.mutated = False
+        try:
+            return method(self, *args, **kwargs)
+        except Exception as e:  # noqa: BLE001 - re-raised below unless it is a retryable dead socket
+            if getattr(self._tl, "reused", False) and not getattr(self._tl, "mutated", False) and _is_transport_error(e):
+                self._drop_client()
+                self._tl.mutated = False
+                return method(self, *args, **kwargs)
+            raise
+    return wrapper
+
+
 class CalendarService:
     def __init__(self, settings: Settings):
         self.s = settings
         self._vevent_cache: dict[str, tuple[bool, float]] = {}
         self._name_cache: dict[str, tuple[str, float]] = {}
+        self._uid_cache: dict[str, tuple[str, float]] = {}
+        # The CalDAV connection is held PER THREAD, never shared. Opening one costs a TLS handshake plus the two
+        # principal PROPFINDs, which was about 1.3 s on every single call. A requests session is not safe to drive
+        # from two threads at once, and this server can run tool calls concurrently, so a thread-local is the reuse
+        # that is actually correct here: each worker reuses its own socket and no state crosses a request boundary.
+        self._tl = threading.local()
+
+    def _drop_client(self) -> None:
+        tl = self._tl
+        client = getattr(tl, "client", None)
+        tl.client = None
+        tl.principal = None
+        tl.opened_at = 0.0
+        tl.reused = False
+        if client is not None:
+            with contextlib.suppress(Exception):
+                client.close()
 
     @contextlib.contextmanager
     def _principal(self) -> Iterator[Any]:
-        s = self.s
+        s, tl = self.s, self._tl
+        client = getattr(tl, "client", None)
+        principal = getattr(tl, "principal", None)
+        age = time.monotonic() - getattr(tl, "opened_at", 0.0)
+        if client is None or principal is None or age > _PRINCIPAL_TTL_SECONDS:
+            self._drop_client()
+            try:
+                client = caldav.DAVClient(url=s.caldav_url, username=s.caldav_username, password=s.app_password, require_tls=s.caldav_require_tls)
+                principal = client.principal()
+            except caldav.error.AuthorizationError as e:
+                self._drop_client()
+                raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
+            except Exception:
+                self._drop_client()
+                raise
+            tl.client, tl.principal, tl.opened_at, tl.reused = client, principal, time.monotonic(), False
+        else:
+            tl.reused = True
         try:
-            with caldav.DAVClient(url=s.caldav_url, username=s.caldav_username, password=s.app_password, require_tls=s.caldav_require_tls) as client:
-                yield client.principal()
+            yield principal
         except caldav.error.AuthorizationError as e:
+            self._drop_client()
             raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
+        except Exception as e:  # noqa: BLE001 - re-raised; this only decides whether the socket is still usable
+            if _is_transport_error(e):
+                self._drop_client()
+            raise
 
     def _cal_name(self, cal: Any) -> str:
         if cal is None:
@@ -307,10 +447,12 @@ class CalendarService:
             raise CalendarError(f"No calendar named '{calendar}'. Available: {', '.join(self._cal_name(c) for c in cals)}")
         return hit
 
+    @_reconnecting
     def list_calendars(self) -> list[dict[str, Any]]:
         with self._principal() as p:
             return [{"name": self._cal_name(c), "id": str(c.url)} for c in self._event_calendars(p)]
 
+    @_reconnecting
     def list_events(self, start: str, end: str, *, calendar: str | None = None, query: str | None = None, limit: int = 50) -> dict[str, Any]:
         tz = get_tz(self.s.default_timezone)
         s_val, _ = parse_when(start, tz)
@@ -367,10 +509,30 @@ class CalendarService:
         return None
 
     def _find(self, principal: Any, uid: str, calendar: str | None) -> tuple[Any, Any]:
-        for cal in self._pick(principal, calendar):
-            obj = self._by_href(cal, uid) or self._by_scan(cal, uid)
-            if obj is not None:
-                return cal, obj
+        """Resolve a uid to (calendar, object) without ever scanning a calendar it is not in.
+
+        The old order was per calendar: try the resource named after the uid, then read the WHOLE calendar when that
+        missed, then move on. With no calendar named, every calendar ahead of the right one paid a full scan, which
+        measured about 12 s. A targeted GET is cheap and a scan is not, so all the cheap lookups now run first and a
+        scan only happens when no calendar stores the event under its uid. The calendar a uid was last found in is
+        remembered and tried first, which makes the usual get-then-update pair a single request.
+        """
+        cals = self._pick(principal, calendar)
+        hit = self._uid_cache.get(uid)
+        if hit is not None:
+            url, at = hit
+            if time.monotonic() - at > _CACHE_SECONDS:
+                self._uid_cache.pop(uid, None)
+            else:
+                cals = [c for c in cals if str(c.url) == url] + [c for c in cals if str(c.url) != url]
+
+        for finder in (self._by_href, self._by_scan):
+            for cal in cals:
+                obj = finder(cal, uid)
+                if obj is not None:
+                    self._uid_cache[uid] = (str(cal.url), time.monotonic())
+                    return cal, obj
+        self._uid_cache.pop(uid, None)
         raise CalendarError(f"No event with uid '{uid}' found.")
 
     @staticmethod
@@ -380,6 +542,7 @@ class CalendarService:
             raise CalendarError("Stored object contains no VEVENT.")
         return next((e for e in events if "recurrence-id" not in e), events[0])
 
+    @_reconnecting
     def get_event(self, uid: str, calendar: str | None = None) -> dict[str, Any]:
         with self._principal() as p:
             cal, obj = self._find(p, uid, calendar)
@@ -408,6 +571,7 @@ class CalendarService:
                     return c
         return cals[0]
 
+    @_reconnecting
     def create_event(
         self, *, summary: str, start: str, end: str | None = None, calendar: str | None = None, timezone_name: str | None = None,
         location: str | None = None, description: str | None = None, rrule: str | None = None, attendees: list[str] | None = None,
@@ -435,6 +599,7 @@ class CalendarService:
                 out["note"] = "iCloud emails each invited person an invitation itself; there is no need to send a separate email."
             return out
 
+    @_reconnecting
     def update_event(
         self, uid: str, *, calendar: str | None = None, timezone_name: str | None = None, summary: str | None = None,
         start: str | None = None, end: str | None = None, location: str | None = None, description: str | None = None,
@@ -488,7 +653,7 @@ class CalendarService:
                     except Exception as e:  # noqa: BLE001
                         raise CalendarError(f"Invalid rrule '{rrule}': {e}") from e
             if attendees is not None:
-                _apply_attendees(ev, attendees, self.s.email_address, self.s.display_name)
+                _merge_attendees(ev, attendees, self.s.email_address, self.s.display_name)
             if alarms_minutes_before is not None:
                 _apply_alarms(ev, alarms_minutes_before, str(ev.get("summary") or ""))
 
@@ -499,14 +664,27 @@ class CalendarService:
             if isinstance(ev.get("dtstart").dt, datetime):
                 parsed.add_missing_timezones()
             obj.data = parsed.to_ical().decode()
-            obj.save()
+            self._tl.mutated = True
+            try:
+                obj.save()  # caldav sends If-Match/If-Schedule-Tag-Match from the etag cached when the object was read
+            except Exception as e:  # noqa: BLE001 - only the conflict case is rewritten
+                if type(e).__name__ in {"ETagMismatchError", "ScheduleTagMismatchError"}:
+                    self._uid_cache.pop(uid, None)
+                    raise CalendarError(
+                        "This event changed on the server since it was read, so nothing was written. "
+                        "Read it again and re-apply the change."
+                    ) from e
+                raise
             return {"updated": True, "uid": uid, "calendar": self._cal_name(cal), "event": event_to_dict(ev, self._cal_name(cal))}
 
+    @_reconnecting
     def delete_event(self, uid: str, calendar: str | None = None) -> dict[str, Any]:
         with self._principal() as p:
             cal, obj = self._find(p, uid, calendar)
             master = self._master(icalendar.Calendar.from_ical(obj.data))
             self._refuse_invites(existing=master)
             summary = str(master.get("summary") or "")
+            self._tl.mutated = True
             obj.delete()
+            self._uid_cache.pop(uid, None)
             return {"deleted": True, "uid": uid, "summary": summary, "calendar": self._cal_name(cal)}
