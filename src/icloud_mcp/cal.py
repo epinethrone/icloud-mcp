@@ -84,6 +84,190 @@ def _addr(v: Any) -> dict[str, str | None]:
     }
 
 
+_STRUCTURED_LOCATION = "X-APPLE-STRUCTURED-LOCATION"
+_TRAVEL_DURATION = "X-APPLE-TRAVEL-DURATION"
+_TRAVEL_START = "X-APPLE-TRAVEL-START"
+ROUTING_MODES = ("BICYCLE", "WALKING", "AUTOMOBILE", "TRANSIT")
+_ISO_DUR = re.compile(r"^P(?:(?P<d>\d+)D)?(?:T(?:(?P<h>\d+)H)?(?:(?P<m>\d+)M)?(?:(?P<s>\d+)S)?)?$", re.I)
+
+
+def parse_duration_minutes(v: Any) -> int | None:
+    """Minutes from an iCalendar DURATION, given either as a timedelta or as text like 'PT1H30M'."""
+    if v is None:
+        return None
+    if isinstance(v, timedelta):
+        return int(v.total_seconds() // 60)
+    inner = getattr(v, "dt", None)
+    if isinstance(inner, timedelta):
+        return int(inner.total_seconds() // 60)
+    m = _ISO_DUR.match(str(v).strip())
+    if not m or not any(m.groupdict().values()):
+        return None
+    d, h, mi, s = (int(m.group(k) or 0) for k in ("d", "h", "m", "s"))
+    return d * 1440 + h * 60 + mi + s // 60
+
+
+def minutes_to_duration(minutes: int) -> str:
+    """'PT1H30M' from 90. Apple writes hours and minutes only, never days."""
+    h, m = divmod(int(minutes), 60)
+    return "PT" + (f"{h}H" if h else "") + (f"{m}M" if m or not h else "")
+
+
+def _geo_pair(value: Any) -> tuple[float, float] | None:
+    m = re.match(r"^\s*geo:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$", str(value or ""), flags=re.I)
+    return (float(m.group(1)), float(m.group(2))) if m else None
+
+
+def _param(prop: Any, name: str) -> str | None:
+    params = getattr(prop, "params", {}) or {}
+    v = params.get(name)
+    return None if v is None else str(v)
+
+
+def location_view(ev: icalendar.Component) -> dict[str, Any] | None:
+    """The destination as Apple stores it, or None when the event only has a plain text location.
+
+    Apple Calendar draws its map card and routes travel time from X-APPLE-STRUCTURED-LOCATION, not from LOCATION.
+    An event with only a LOCATION string shows the text and nothing else. The MapKit handle is an opaque Apple Maps
+    place record that only Apple's own clients can mint; without it a place PIN is not expected, though coordinates
+    are enough for a map.
+    """
+    loc = ev.get(_STRUCTURED_LOCATION)
+    if loc is None:
+        return None
+    out: dict[str, Any] = {"title": _param(loc, "X-TITLE"), "address": _param(loc, "X-ADDRESS")}
+    geo = _geo_pair(loc)
+    if geo:
+        out["latitude"], out["longitude"] = geo
+    out["apple_maps_place"] = _param(loc, "X-APPLE-MAPKIT-HANDLE") is not None
+    return out
+
+
+def _apply_structured_location(ev: icalendar.Event, location: str | None, geo: str | None) -> None:
+    """Attach the destination Apple needs for the map card and for routing travel time.
+
+    Apple Calendar draws nothing from a bare LOCATION string: the map, the place and the route all come from
+    X-APPLE-STRUCTURED-LOCATION. So one is written for EVERY event that has a location. Coordinates are optional
+    and normally omitted, because Apple geocodes the address itself on first contact and writes the result back,
+    along with a MapKit place handle that only its own clients can mint.
+
+    That write-back is why an existing structured location is never replaced when the address has not changed:
+    doing so would throw away the coordinates and the place handle Apple filled in for us.
+    """
+    if geo == "":
+        if _STRUCTURED_LOCATION in ev:
+            del ev[_STRUCTURED_LOCATION]
+        return
+    title = location if location is not None else _text(ev, "location")
+    if not title:
+        if geo:
+            raise CalendarError("location_geo needs a location as well, so the map has something to label.")
+        return
+    flat = " ".join(str(title).replace("\r", " ").replace("\n", ", ").split())
+
+    value = ""
+    if geo:
+        g = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$", geo)
+        if not g:
+            raise CalendarError(f"location_geo must look like '52.5163,13.3777', got '{geo}'.")
+        value = f"geo:{g.group(1)},{g.group(2)}"
+
+    existing = ev.get(_STRUCTURED_LOCATION)
+    if existing is not None and not geo:
+        # Same place, already enriched by Apple. Leave its coordinates and place handle alone.
+        if (_param(existing, "X-ADDRESS") or "") == flat:
+            return
+    if _STRUCTURED_LOCATION in ev:
+        del ev[_STRUCTURED_LOCATION]
+    prop = icalendar.prop.vText(value)
+    prop.params["VALUE"] = "URI"
+    prop.params["X-ADDRESS"] = flat
+    if geo:
+        prop.params["X-APPLE-RADIUS"] = "100"
+        prop.params["X-APPLE-REFERENCEFRAME"] = "1"
+    prop.params["X-TITLE"] = flat
+    ev.add(_STRUCTURED_LOCATION, prop, encode=False)
+
+
+def travel_view(ev: icalendar.Component) -> dict[str, Any] | None:
+    """Apple's travel time as plain JSON, or None when the event carries none.
+
+    Apple stores it as two X- properties that no iCalendar library knows about: a DURATION, and an origin whose
+    value is a geo: URI and whose parameters hold the address, the title and the routing mode. Both are readable
+    and writable over CalDAV; they do not exist in public EventKit at all.
+    """
+    minutes = parse_duration_minutes(ev.get(_TRAVEL_DURATION))
+    start = ev.get(_TRAVEL_START)
+    if minutes is None and start is None:
+        return None
+    out: dict[str, Any] = {"minutes": minutes, "leave_by": None, "routing": None, "origin": None}
+    if start is not None:
+        out["routing"] = (_param(start, "ROUTING") or "").upper() or None
+        address, title = _param(start, "X-ADDRESS"), _param(start, "X-TITLE")
+        origin: dict[str, Any] = {"address": address.replace("\\n", ", ") if address else None, "title": title}
+        geo = _geo_pair(start)
+        if geo:
+            origin["latitude"], origin["longitude"] = geo
+        out["origin"] = origin
+    if minutes is not None:
+        with contextlib.suppress(Exception):
+            dt = ev.get("dtstart").dt
+            if isinstance(dt, datetime):
+                out["leave_by"] = (dt - timedelta(minutes=minutes)).isoformat()
+    return out
+
+
+def _apply_travel(ev: icalendar.Event, minutes: int | None, routing: str | None,
+                  origin: str | None, origin_geo: str | None) -> None:
+    """Set or clear Apple travel time. minutes=0 clears it; minutes=None means leave whatever is there alone.
+
+    A duration is what makes travel time exist. An origin and a routing mode on their own render as no travel time
+    at all, measured, so asking for one without the other is refused rather than quietly doing nothing.
+    """
+    if minutes is None:
+        if origin or origin_geo or routing:
+            raise CalendarError(
+                "travel_origin and travel_routing do nothing without travel_minutes: Apple shows no travel time "
+                "unless a duration is set. Take the duration from the measured row for this journey in the "
+                "life/travel memory table and pass it as travel_minutes. If that table has no row for the "
+                "journey, do not estimate one: leave travel_minutes, travel_origin and travel_routing all "
+                "unset and say so."
+            )
+        return
+    for k in (_TRAVEL_DURATION, _TRAVEL_START):
+        if k in ev:
+            del ev[k]
+    if minutes <= 0:
+        return
+    if minutes > 1440:
+        raise CalendarError("Travel time must be between 1 and 1440 minutes.")
+    dur = icalendar.prop.vText(minutes_to_duration(minutes))
+    dur.params["VALUE"] = "DURATION"
+    ev.add(_TRAVEL_DURATION, dur, encode=False)
+    if not origin:
+        return
+    mode = (routing or "BICYCLE").strip().upper()
+    if mode not in ROUTING_MODES:
+        raise CalendarError(f"routing must be one of {', '.join(ROUTING_MODES)}.")
+    value = ""
+    if origin_geo:
+        g = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$", origin_geo)
+        if not g:
+            raise CalendarError(f"travel_origin_geo must look like '52.5163,13.3777', got '{origin_geo}'.")
+        value = f"geo:{g.group(1)},{g.group(2)}"
+    # One line, comma separated. iCloud rewrites a newline escape in this parameter anyway, so do not send one.
+    flat = " ".join(str(origin).replace("\r", " ").replace("\n", ", ").split())
+    start = icalendar.prop.vText(value)
+    start.params["ROUTING"] = mode
+    start.params["VALUE"] = "URI"
+    start.params["X-ADDRESS"] = flat
+    start.params["X-TITLE"] = flat.split(",")[0].strip() or flat
+    if origin_geo:
+        start.params["X-APPLE-RADIUS"] = "100"
+        start.params["X-APPLE-REFERENCEFRAME"] = "1"
+    ev.add(_TRAVEL_START, start, encode=False)
+
+
 def _attendee_email(v: Any) -> str | None:
     """Lower-cased address of an ATTENDEE line, or None when iCloud rewrote it into a principal path."""
     raw = str(v)
@@ -132,6 +316,8 @@ def event_to_dict(comp: icalendar.Component, calendar_name: str | None) -> dict[
         "status": _text(comp, "status"),
         "organizer": _addr(comp["organizer"]) if comp.get("organizer") is not None else None,
         "attendees": [_addr(a) for a in _as_list(comp.get("attendee"))],
+        "travel": travel_view(comp),
+        "location_detail": location_view(comp),
         "rrule": rrule.to_ical().decode() if rrule is not None else None,
         "recurrence_id": _iso(comp.get("recurrence-id").dt) if comp.get("recurrence-id") is not None else None,
         "alarms_minutes_before": alarms,
@@ -254,6 +440,11 @@ def build_event(
     description: str | None = None,
     rrule: str | None = None,
     attendees: list[str] | None = None,
+    location_geo: str | None = None,
+    travel_minutes: int | None = None,
+    travel_routing: str | None = None,
+    travel_origin: str | None = None,
+    travel_origin_geo: str | None = None,
     alarms_minutes_before: list[int] | None = None,
     url: str | None = None,
     organizer_email: str | None = None,
@@ -296,6 +487,8 @@ def build_event(
             raise CalendarError(f"Invalid rrule '{rrule}': {e}") from e
     if attendees:
         _apply_attendees(ev, attendees, organizer_email, organizer_name)
+    _apply_structured_location(ev, location, location_geo)
+    _apply_travel(ev, travel_minutes, travel_routing, travel_origin, travel_origin_geo)
     if alarms_minutes_before:
         _apply_alarms(ev, alarms_minutes_before, summary)
     cal.add_component(ev)
@@ -310,7 +503,12 @@ def build_event(
 _CACHE_SECONDS = 600  # calendar names / event support change rarely; a rename in the iCloud app shows up within this time
 
 
-_PRINCIPAL_TTL_SECONDS = 240.0
+# iCloud closes an idle CalDAV connection somewhere between 20 and 40 seconds (measured). Reuse has to expire
+# BEFORE that, otherwise the next call meets a dead socket, blocks for the full read timeout of about 30 s and only
+# then retries, which is far worse than simply reconnecting. So reuse is for bursts, a get followed by an update,
+# and anything idler than this pays the ordinary handshake.
+_IDLE_TTL_SECONDS = 15.0
+_MAX_AGE_SECONDS = 240.0
 
 _TRANSPORT_ERRORS = {
     "ConnectionError", "ConnectTimeout", "ConnectTimeoutError", "ReadTimeout", "ReadTimeoutError", "ReadError",
@@ -371,6 +569,7 @@ class CalendarService:
         tl.client = None
         tl.principal = None
         tl.opened_at = 0.0
+        tl.last_used = 0.0
         tl.reused = False
         if client is not None:
             with contextlib.suppress(Exception):
@@ -381,8 +580,10 @@ class CalendarService:
         s, tl = self.s, self._tl
         client = getattr(tl, "client", None)
         principal = getattr(tl, "principal", None)
-        age = time.monotonic() - getattr(tl, "opened_at", 0.0)
-        if client is None or principal is None or age > _PRINCIPAL_TTL_SECONDS:
+        now = time.monotonic()
+        idle = now - getattr(tl, "last_used", 0.0)
+        age = now - getattr(tl, "opened_at", 0.0)
+        if client is None or principal is None or idle > _IDLE_TTL_SECONDS or age > _MAX_AGE_SECONDS:
             self._drop_client()
             try:
                 client = caldav.DAVClient(url=s.caldav_url, username=s.caldav_username, password=s.app_password, require_tls=s.caldav_require_tls)
@@ -396,8 +597,10 @@ class CalendarService:
             tl.client, tl.principal, tl.opened_at, tl.reused = client, principal, time.monotonic(), False
         else:
             tl.reused = True
+        tl.last_used = time.monotonic()
         try:
             yield principal
+            tl.last_used = time.monotonic()
         except caldav.error.AuthorizationError as e:
             self._drop_client()
             raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
@@ -575,6 +778,8 @@ class CalendarService:
     def create_event(
         self, *, summary: str, start: str, end: str | None = None, calendar: str | None = None, timezone_name: str | None = None,
         location: str | None = None, description: str | None = None, rrule: str | None = None, attendees: list[str] | None = None,
+        location_geo: str | None = None, travel_minutes: int | None = None, travel_routing: str | None = None,
+        travel_origin: str | None = None, travel_origin_geo: str | None = None,
         alarms_minutes_before: list[int] | None = None, url: str | None = None,
     ) -> dict[str, Any]:
         self._refuse_invites(attendees_given=bool(attendees))
@@ -582,6 +787,8 @@ class CalendarService:
         uid, ical = build_event(
             summary=summary, start=start, end=end, tz=tz, location=location, description=description, rrule=rrule,
             attendees=attendees, alarms_minutes_before=alarms_minutes_before, url=url,
+            location_geo=location_geo, travel_minutes=travel_minutes, travel_routing=travel_routing,
+            travel_origin=travel_origin, travel_origin_geo=travel_origin_geo,
             organizer_email=self.s.email_address, organizer_name=self.s.display_name,
         )
         with self._principal() as p:
@@ -604,7 +811,8 @@ class CalendarService:
         self, uid: str, *, calendar: str | None = None, timezone_name: str | None = None, summary: str | None = None,
         start: str | None = None, end: str | None = None, location: str | None = None, description: str | None = None,
         rrule: str | None = None, attendees: list[str] | None = None, alarms_minutes_before: list[int] | None = None,
-        url: str | None = None,
+        url: str | None = None, location_geo: str | None = None, travel_minutes: int | None = None,
+        travel_routing: str | None = None, travel_origin: str | None = None, travel_origin_geo: str | None = None,
     ) -> dict[str, Any]:
         tz = get_tz(timezone_name or self.s.default_timezone)
         with self._principal() as p:
@@ -656,6 +864,16 @@ class CalendarService:
                 _merge_attendees(ev, attendees, self.s.email_address, self.s.display_name)
             if alarms_minutes_before is not None:
                 _apply_alarms(ev, alarms_minutes_before, str(ev.get("summary") or ""))
+            if travel_minutes is not None and travel_origin is None and travel_minutes > 0:
+                # Keep the existing origin when only the duration is being changed.
+                existing = travel_view(ev) or {}
+                keep = existing.get("origin") or {}
+                travel_origin = keep.get("address")
+                travel_routing = travel_routing or existing.get("routing")
+                if travel_origin_geo is None and keep.get("latitude") is not None:
+                    travel_origin_geo = f"{keep['latitude']},{keep['longitude']}"
+            _apply_structured_location(ev, location, location_geo)
+            _apply_travel(ev, travel_minutes, travel_routing, travel_origin, travel_origin_geo)
 
             seq = int(ev.get("sequence", 0) or 0) + 1
             _replace(ev, "sequence", seq)
