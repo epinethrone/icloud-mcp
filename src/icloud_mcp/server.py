@@ -443,7 +443,7 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
             limit: Annotated[int, _d("Max events to return.")] = 50,
         ) -> dict[str, Any]:
             """List events in a date range, oldest first, with recurring events expanded into individual occurrences.
-            To look at one day pass the same date for start and end. Each event includes its uid, times, location,
+            To look at one day pass the same date for start and end. Each event includes its uid, times, travel (Apple travel time, or null), location, location_detail (the map destination, or null),
             notes, url, attendees and alarms. For all-day events the returned 'end' is exclusive (the day after)."""
             return cal.list_events(start, end, calendar=calendar, query=query, limit=limit)
 
@@ -469,6 +469,11 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
                 attendees: Annotated[list[str] | None, _d("People to invite: ['anna@example.org'] or ['Anna <anna@example.org>']. iCloud emails each one an invitation, so do not send a separate email. If you only know a name, look the address up first with mail_search.")] = None,
                 alarms_minutes_before: Annotated[list[int] | None, _d("Reminders, as minutes before the start: [60, 15]. Use 0 for at start time.")] = None,
                 url: Annotated[str | None, _d("A link to attach to the event.")] = None,
+                location_geo: Annotated[str | None, _d("Coordinates of the location as 'lat,lon'. NOT needed: a map is drawn from the location text alone, because Apple geocodes it and fills the coordinates in itself. Pass these only to pin an exact spot. '' removes the map entirely.")] = None,
+                travel_minutes: Annotated[int | None, _d("Apple travel time, in minutes before the start. The event then shows a travel block and its alarm fires at the leave-by moment, so there is no need to write a leave-by time into the notes or to start the event early. 0 removes it.")] = None,
+                travel_routing: Annotated[str | None, _d("How they travel: BICYCLE (default), WALKING, AUTOMOBILE or TRANSIT. Only used when travel_origin is given.")] = None,
+                travel_origin: Annotated[str | None, _d("Where they set off from, as an address: 'Unter den Linden 1, 10117 Berlin'. Optional; without it the travel time is still set, just with no starting point attached.")] = None,
+                travel_origin_geo: Annotated[str | None, _d("Coordinates of travel_origin as 'lat,lon', e.g. '52.5163,13.3777'. Optional, and only meaningful with travel_origin.")] = None,
             ) -> dict[str, Any]:
                 """Create a calendar event, and invite people, in ONE call. Example: summary='Lunch with Anna',
                 start='2026-09-21T12:30', end='2026-09-21T13:30', location='Cafe X', attendees=['anna@example.org'],
@@ -477,6 +482,8 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
                 return cal.create_event(
                     summary=summary, start=start, end=end, calendar=calendar, timezone_name=timezone, location=location,
                     description=description, rrule=rrule, attendees=attendees, alarms_minutes_before=alarms_minutes_before, url=url,
+                    location_geo=location_geo, travel_minutes=travel_minutes, travel_routing=travel_routing,
+                    travel_origin=travel_origin, travel_origin_geo=travel_origin_geo,
                 )
 
             @mcp.tool(annotations=_IDEMPOTENT_WRITE)
@@ -494,12 +501,19 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
                 attendees: Annotated[list[str] | None, _d("The COMPLETE guest list: it replaces the current one, so include everyone who should stay invited. iCloud emails newly added people.")] = None,
                 alarms_minutes_before: Annotated[list[int] | None, _d("The complete list of reminders, minutes before the start; replaces the current ones.")] = None,
                 url: Annotated[str | None, _d("New link. '' clears it.")] = None,
+                location_geo: Annotated[str | None, _d("Coordinates of the location as 'lat,lon'. Apple needs these for the map card and to route travel time. '' removes it; omit to leave it alone.")] = None,
+                travel_minutes: Annotated[int | None, _d("New Apple travel time in minutes before the start; 0 removes it. Omit to leave it alone. Changing only this keeps the existing starting point.")] = None,
+                travel_routing: Annotated[str | None, _d("BICYCLE, WALKING, AUTOMOBILE or TRANSIT.")] = None,
+                travel_origin: Annotated[str | None, _d("New starting address. Omit to keep the current one.")] = None,
+                travel_origin_geo: Annotated[str | None, _d("Coordinates of travel_origin as 'lat,lon'.")] = None,
             ) -> dict[str, Any]:
                 """Change an existing event. Only pass the fields to change. For recurring events this edits the whole series,
                 not one occurrence. Changing an event that has attendees makes iCloud email them the update."""
                 return cal.update_event(
                     uid, calendar=calendar, timezone_name=timezone, summary=summary, start=start, end=end, location=location,
                     description=description, rrule=rrule, attendees=attendees, alarms_minutes_before=alarms_minutes_before, url=url,
+                    location_geo=location_geo, travel_minutes=travel_minutes, travel_routing=travel_routing,
+                    travel_origin=travel_origin, travel_origin_geo=travel_origin_geo,
                 )
 
             @mcp.tool(annotations=_DESTRUCTIVE)
