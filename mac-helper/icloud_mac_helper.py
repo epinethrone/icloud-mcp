@@ -2,7 +2,8 @@
 """icloud-mac-helper: lets the icloud-mcp server use Reminders and Notes on this Mac.
 
 It connects OUT to the server's private HTTPS port and asks for work. It opens no listening port. It performs only the fixed
-operations in OPS, each backed by a static script in ops/ that receives its arguments as JSON in argv (never as script text).
+operations in OPS. Reminders operations run bin/reminders-eventkit (EventKit, built from eventkit/ by install.sh); Notes operations
+run a static script in ops/. Either way the arguments travel as ONE JSON argv entry, never as code.
 The server is identified by a pinned certificate fingerprint and authenticated with a bearer token.
 
 Portions of the ops/ scripts are adapted from MrGo2/icloud-mcp (MIT), see THIRD_PARTY_NOTICES.md.
@@ -11,13 +12,16 @@ Only the Python standard library is used, so it runs on the python3 that ships w
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import hashlib
 import hmac
 import http.client
+import io
 import json
 import os
 import platform
+import plistlib
 import re
 import shutil
 import socket
@@ -25,7 +29,6 @@ import ssl
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from urllib.parse import urlsplit
 
@@ -54,19 +57,17 @@ OPS = {
     "note_read": {"id": ("str", True, 500), "max_chars": ("int", False, 100000)},
     "note_create": {"title": ("str", True, 500), "body": ("str", False, 100000), "folder": ("str", False, 200)},
 }
+# Reminders: one EventKit binary, one process per operation (measured ~21 ms fixed cost, 20-40 ms per operation end to end, against
+# 0.5-22 s for the JXA scripts, which scan a whole list per request). There is deliberately NO fallback to the JXA Reminders scripts:
+# they use "x-apple-reminder://" ids and a position cache, so a silent fallback would reject ids handed out by EventKit and hide a broken
+# install behind 20-second requests. The JXA Reminders scripts stay in ops/ only as reference for what EventKit cannot do (subtasks, tags,
+# sections, attachments); nothing here runs them.
+EVENTKIT_BIN = os.path.join(HERE, "bin", "reminders-eventkit")
+EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete"})
+REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
 OP_FILES = {
-    "reminder_lists": "reminder_lists.js", "reminder_create": "reminder_create.js",            # reminders_list is answered from the cache, see ReminderCache
-    "reminder_update": "reminder_update.js", "reminder_complete": "reminder_complete.js", "reminder_delete": "reminder_delete.js",
     "note_folders": "note_folders.js", "notes_list": "notes_list.js", "note_read": "note_read.js", "note_create": "note_create.js",
 }
-
-# Scripts the helper runs for its own cache; the server can never ask for these.
-INTERNAL_FILES = {"reminders_snapshot": "reminders_snapshot.js"}
-CACHE_TTL = 300       # seconds a big list's cached reminders are served before a background refresh is started
-CHEAP_SCAN = 3.0      # a list that scans faster than this (seconds) is simply re-read live, at most every LIVE_MAX_AGE seconds
-LIVE_MAX_AGE = 10
-LISTS_TTL = 60        # how long the list of Reminders lists is reused
-REFRESH_DEBOUNCE = 2.0  # wait this long after a write before re-reading its list, so a burst of writes causes one re-read
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
 
@@ -151,31 +152,32 @@ def explain(e):
 
 
 def build_command(op, args):
-    """The exact command line: a static script file plus ONE JSON argument. No -e, no generated source."""
-    return ["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES.get(op) or INTERNAL_FILES[op]), json.dumps(args, separators=(",", ":"))]
+    """The exact command line: a fixed program (the EventKit binary, or osascript with a static script file) plus ONE JSON argument.
+    No -e, no generated source."""
+    payload = json.dumps(args, separators=(",", ":"))
+    if op in EVENTKIT_OPS:
+        return [EVENTKIT_BIN, op, payload]
+    return ["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
 
 
-def run_op(op, args, timeout=60, extra=None, internal=False):
+def run_op(op, args, timeout=60, extra=None):
     """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
-    `extra` is added AFTER validation and only by the helper itself (the position hint); `internal` runs one of the helper's own scripts."""
-    if internal:
-        if op not in INTERNAL_FILES:
-            return False, None, "unknown operation"
-        clean = dict(args)
-    else:
-        if op not in OPS or op not in OP_FILES:
-            return False, None, "unknown operation"
-        try:
-            clean = validate_args(op, args)
-        except HelperError as e:
-            return False, None, str(e)
+    `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
+    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS):
+        return False, None, "unknown operation"
+    try:
+        clean = validate_args(op, args)
+    except HelperError as e:
+        return False, None, str(e)
     if extra:
         clean = dict(clean, **extra)
     try:
         proc = subprocess.run(build_command(op, clean), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, None, "the script did not finish within %ds and was stopped" % timeout
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
+        if op in EVENTKIT_OPS:
+            return False, None, "the Reminders program (bin/reminders-eventkit) is missing or not executable; run install.sh again on this Mac"
         return False, None, "osascript was not found (this helper only runs on macOS)"
     if proc.returncode != 0:
         return False, None, _friendly(proc.stderr.decode("utf-8", "replace"))
@@ -185,249 +187,6 @@ def run_op(op, args, timeout=60, extra=None, internal=False):
         return True, json.loads(proc.stdout.decode("utf-8")), ""
     except ValueError:
         return False, None, "the script returned something that is not JSON"
-
-
-# ---------------------------------------------------------------------------
-# Reminders cache
-#
-# Measured on a real Mac: Reminders scans a WHOLE list for almost every request (about 15 ms per item, so 16 s for a list holding a thousand
-# completed reminders), even to return four open ones. Reading one item by POSITION is instant. So this cache
-#   * reads each list once (one scan for the completed flags, then only the open reminders by position) and keeps only the ACTIVE reminders,
-#   * re-reads small lists live (they take milliseconds) and big lists in the background, and says how old cached data is,
-#   * remembers each reminder's position so edits go straight to it (the scripts verify the id first and fall back to a scan if it moved).
-# Only one Reminders script runs at a time (Reminders handles requests one by one anyway, and it keeps the queue fair).
-# ---------------------------------------------------------------------------
-class ReminderCache(object):
-    def __init__(self, call=None, clock=time.time, debounce=None, background=True):
-        self._call_fn = call or (lambda op, args, timeout, extra=None, internal=False: run_op(op, args, timeout, extra, internal))
-        self._clock = clock
-        self._debounce = REFRESH_DEBOUNCE if debounce is None else debounce
-        self._background = background
-        self._state = threading.RLock()       # guards the dictionaries below
-        self._mac = threading.Lock()          # one Reminders script at a time
-        self._lists = []
-        self._lists_at = 0.0
-        self._snaps = {}                      # list id -> {"items", "count", "at", "took", "name", "account", "dirty"}
-        self._bg = set()                      # list ids being re-read in the background
-
-    # -- running scripts (serialised) ------------------------------------------------------------------------------------------------
-    def _locked(self, wait):
-        if not self._mac.acquire(timeout=max(0.1, wait)):
-            raise HelperError("Reminders is busy re-reading a large list; try again in a few seconds")
-
-    def _script(self, op, args, timeout, extra=None, internal=False, wait=30):
-        started = self._clock()
-        self._locked(wait)
-        try:
-            left = max(5, int(timeout - (self._clock() - started)))
-            return self._call_fn(op, args, left, extra, internal)
-        finally:
-            self._mac.release()
-
-    # -- lists -----------------------------------------------------------------------------------------------------------------------
-    def lists(self, force=False):
-        with self._state:
-            if self._lists and not force and self._clock() - self._lists_at < LISTS_TTL:
-                return list(self._lists)
-        ok, result, error = self._script("reminder_lists", {}, 30)
-        if not ok:
-            with self._state:
-                if self._lists:
-                    return list(self._lists)                # a stale list of lists beats none
-            raise HelperError(error)
-        with self._state:
-            self._lists, self._lists_at = result, self._clock()
-            return list(result)
-
-    # -- snapshots -------------------------------------------------------------------------------------------------------------------
-    def refresh(self, list_id, min_age=None, timeout=60, wait=30):
-        """Re-read one list. With min_age, does nothing if a snapshot that fresh (and not dirty) already exists (another caller may have
-        just made it while this one waited for its turn)."""
-        started = self._clock()
-        self._locked(wait)
-        try:
-            with self._state:
-                snap = self._snaps.get(list_id)
-            if min_age is not None and snap is not None and not snap.get("dirty") and self._clock() - snap["at"] < min_age:
-                return snap
-            t0 = self._clock()
-            ok, result, error = self._call_fn("reminders_snapshot", {"list_id": list_id}, max(5, int(timeout - (t0 - started))), None, True)
-            if not ok:
-                raise HelperError(error)
-            snap = {"items": result["items"], "count": result["count"], "at": self._clock(), "took": self._clock() - t0,
-                    "name": result["list"], "account": result.get("account"), "dirty": False}
-            with self._state:
-                self._snaps[list_id] = snap
-            return snap
-        finally:
-            self._mac.release()
-
-    def _kick(self, list_id, delay=0.0):
-        """Re-read a list in the background (at most one at a time per list)."""
-        if not self._background:
-            return
-        with self._state:
-            if list_id in self._bg:
-                return
-            self._bg.add(list_id)
-
-        def work():
-            try:
-                if delay:
-                    time.sleep(delay)
-                self.refresh(list_id, timeout=120, wait=120)
-            except HelperError as e:
-                print("reminders: background refresh failed: %s" % e, file=sys.stderr, flush=True)
-            finally:
-                with self._state:
-                    self._bg.discard(list_id)
-        threading.Thread(target=work, daemon=True).start()
-
-    def prewarm(self):
-        """Read every list once at start-up, in the background, so the first request is usually instant."""
-        def work():
-            try:
-                for lst in self.lists():
-                    self.refresh(lst["id"], min_age=CACHE_TTL, timeout=120, wait=300)
-            except HelperError as e:
-                print("reminders: could not pre-load: %s" % e, file=sys.stderr, flush=True)
-        threading.Thread(target=work, daemon=True).start()
-
-    # -- reading ---------------------------------------------------------------------------------------------------------------------
-    def read(self, args, budget=45):
-        want_id, want_name = args.get("list_id"), args.get("list")
-        lists = self.lists()
-        if want_id:
-            targets = [x for x in lists if x["id"] == want_id]
-        elif want_name:
-            targets = [x for x in lists if x["name"] == want_name]
-        else:
-            targets = lists
-        if (want_id or want_name) and not targets:
-            raise HelperError("list not found: use reminders_lists to see the names and ids")
-        force = args.get("refresh") is True
-        if force and not (want_id or want_name):
-            raise HelperError("refresh=true needs list or list_id (re-reading every list can take a minute or more)")
-        deadline = self._clock() + budget
-        items, cached = [], []
-        for lst in targets:
-            with self._state:
-                snap = self._snaps.get(lst["id"])
-            age = None if snap is None else self._clock() - snap["at"]
-            if snap is None or force:
-                sync, background = True, False
-            elif snap["took"] <= CHEAP_SCAN:
-                sync, background = (age > LIVE_MAX_AGE or snap.get("dirty")), False
-            else:
-                sync, background = False, (age > CACHE_TTL or snap.get("dirty"))
-            if sync:
-                left = deadline - self._clock()
-                if left <= 1:
-                    raise HelperError("still loading your reminders (a large list takes a while the first time); try again in a minute")
-                try:
-                    snap = self.refresh(lst["id"], min_age=None if force else LIVE_MAX_AGE, timeout=left, wait=left)
-                except HelperError as e:
-                    if snap is None:
-                        raise
-                    print("reminders: using cached data for a list that could not be re-read: %s" % e, file=sys.stderr, flush=True)
-                age = self._clock() - snap["at"]
-            elif background:
-                self._kick(lst["id"])
-            if not sync and age is not None and age > 15:
-                cached.append({"list": lst["name"], "list_id": lst["id"], "age_seconds": int(age), "refreshing": bool(background)})
-            for it in snap["items"]:
-                items.append({"id": it["id"], "title": it["title"], "notes": it["notes"], "due": it["due"], "priority": it["priority"],
-                              "list": lst["name"], "list_id": lst["id"], "account": lst.get("account")})
-        query = (args.get("query") or "").lower()
-        if query:
-            items = [i for i in items if query in i["title"].lower() or query in (i["notes"] or "").lower()]
-        items.sort(key=lambda i: (i["due"] is None, i["due"] or ""))
-        out = {"reminders": items[: args.get("limit") or 50]}
-        if cached:
-            out["cached"] = cached
-        return out
-
-    # -- writing ---------------------------------------------------------------------------------------------------------------------
-    def _find(self, rid):
-        with self._state:
-            for list_id, snap in self._snaps.items():
-                for it in snap["items"]:
-                    if it["id"] == rid:
-                        return list_id, snap, it
-        return None, None, None
-
-    def write(self, op, args, seconds):
-        try:
-            clean = validate_args(op, args)
-        except HelperError as e:
-            return False, None, str(e)
-        extra, list_id = None, None
-        if op != "reminder_create":
-            list_id, _snap, it = self._find(clean["id"])
-            if it is not None and it.get("position") is not None:
-                extra = {"hint": {"list_id": list_id, "index": it["position"]}}
-            elif list_id:
-                extra = {"hint": {"list_id": list_id}}
-        try:
-            ok, result, error = self._script(op, clean, seconds, extra, wait=max(5, seconds / 2.0))
-        except HelperError as e:
-            return False, None, str(e)
-        if ok and isinstance(result, dict):
-            position = result.pop("position", None)
-            self._patch(op, clean, result, list_id, position)
-        return ok, result, error
-
-    def _patch(self, op, clean, result, list_id, position):
-        """Keep the cache truthful after our own write, then re-read the affected list shortly."""
-        with self._state:
-            snap = self._snaps.get(list_id) if list_id else None
-            if op == "reminder_update" and snap is not None:
-                for it in snap["items"]:
-                    if it["id"] == clean["id"]:
-                        it.update(title=result["title"], notes=result["notes"], due=result["due"], priority=result["priority"])
-                        if position is not None:
-                            it["position"] = position
-            elif op == "reminder_complete":
-                if snap is not None and result.get("completed"):
-                    snap["items"] = [it for it in snap["items"] if it["id"] != clean["id"]]
-                elif not result.get("completed"):
-                    for other in self._snaps.values():          # re-opened: it is not in any snapshot, so every list may have changed
-                        other["dirty"] = True
-            elif op == "reminder_delete" and snap is not None:
-                gone = next((it.get("position") for it in snap["items"] if it["id"] == clean["id"]), None)
-                snap["items"] = [it for it in snap["items"] if it["id"] != clean["id"]]
-                snap["count"] = max(0, snap["count"] - 1)
-                if gone is not None:                            # later positions moved up by one
-                    for it in snap["items"]:
-                        if it.get("position") is not None and it["position"] > gone:
-                            it["position"] -= 1
-            elif op == "reminder_create":
-                snap = self._snaps.get(result.get("list_id"))
-                if snap is not None:
-                    snap["items"].append({"id": result["id"], "title": result["title"], "notes": result.get("notes") or "", "due": result["due"],
-                                          "priority": result.get("priority") or 0, "position": None})
-                    snap["count"] += 1
-                list_id = result.get("list_id")
-            if snap is not None:
-                snap["dirty"] = True
-        if list_id:
-            self._kick(list_id, self._debounce)
-
-    # -- entry point used by the poll loop ---------------------------------------------------------------------------------------------
-    def dispatch(self, op, args, seconds):
-        if op == "reminders_list":
-            try:
-                return True, self.read(validate_args(op, args)), ""
-            except HelperError as e:
-                return False, None, str(e)
-        if op in ("reminder_create", "reminder_update", "reminder_complete", "reminder_delete"):
-            return self.write(op, args, seconds)
-        if op == "reminder_lists":
-            try:
-                return True, self.lists(force=True), ""
-            except HelperError as e:
-                return False, None, str(e)
-        return run_op(op, args, seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -509,12 +268,10 @@ def handle_one(cfg, runner=run_op, wait=25):
 
 def run_forever(cfg_path=None):
     backoff = 2
-    cache = ReminderCache()
-    cache.prewarm()
     while True:
         try:
             cfg = load_config(cfg_path)
-            outcome = handle_one(cfg, runner=cache.dispatch)
+            outcome = handle_one(cfg, runner=run_op)
             backoff = 2
             if outcome == "refused":
                 print("the server refused the token; retrying in 60s", file=sys.stderr, flush=True)
@@ -556,26 +313,25 @@ def selftest(cfg_path=None):
     if os.path.exists(marker):
         os.unlink(marker)
 
+    # Reminders goes through EventKit, which needs its OWN grant (Full Access to Reminders for the helper's binary), separate from the
+    # Automation grant osascript uses for Notes. The binary reports every state other than "granted" as an error naming that grant.
+    checks["platform"]["reminders_binary"] = os.access(EVENTKIT_BIN, os.X_OK)
     t0 = time.time()
     ok, result, error = run_op("reminder_lists", {}, timeout=60)
     checks["reminders_access"] = {"ok": ok, "seconds": round(time.time() - t0, 2)}
     if ok:
         checks["reminders_access"]["lists"] = len(result)
     else:
-        checks["reminders_access"]["error"] = error
+        checks["reminders_access"].update(error=error, status=_access_status(error), needs=REMINDERS_GRANT)
 
-    # Reading reminders: time one scan of every list. Reminders scans a whole list per request, so big lists are slow (about 15 ms per item).
-    # Only counts and timings are reported, never names or content.
+    # Reading reminders: one live read of the active reminders in every list. Only counts and timings, never names or content.
     t0 = time.time()
-    try:
-        cache = ReminderCache(background=False)
-        details = []
-        for n, lst in enumerate(cache.lists(), 1):
-            snap = cache.refresh(lst["id"], timeout=180, wait=180)
-            details.append({"list": n, "seconds": round(snap["took"], 1), "open": len(snap["items"]), "total": snap["count"]})
-        checks["reminders_read"] = {"ok": True, "seconds": round(time.time() - t0, 1), "slowest_list_seconds": max([d["seconds"] for d in details] or [0]), "lists": details}
-    except HelperError as e:
-        checks["reminders_read"] = {"ok": False, "seconds": round(time.time() - t0, 1), "error": str(e)}
+    ok, result, error = run_op("reminders_list", {"limit": 200}, timeout=60) if checks["reminders_access"]["ok"] else (False, None, "skipped: no Reminders access")
+    checks["reminders_read"] = {"ok": ok, "seconds": round(time.time() - t0, 2)}
+    if ok:
+        checks["reminders_read"]["active"] = len(result["reminders"])
+    else:
+        checks["reminders_read"]["error"] = error
 
     # Notes is optional: it only matters if the server has ENABLE_NOTES on, so a refusal here is reported but does not fail the self-test.
     t0 = time.time()
@@ -600,30 +356,40 @@ def selftest(cfg_path=None):
     return 0 if report["overall"] == "pass" else 1
 
 
+def _access_status(error):
+    """Which Reminders permission state an EventKit failure reports (the binary's wording), for the self-test report."""
+    for phrase, status in (("not yet asked", "notDetermined"), ("denied", "denied"), ("device policy", "restricted"), ("write-only", "writeOnly")):
+        if phrase in (error or ""):
+            return status
+    return "unknown"
+
+
 def selftest_write():
-    """Round-trips a temporary reminder and a temporary note through the real scripts, then removes them. Touches your data, so it is opt-in."""
+    """Round-trips a temporary reminder and a temporary note through the real operations, then removes them. Touches your data, so it is
+    opt-in. It also proves that a reminder id in the old JXA form ("x-apple-reminder://...") still resolves."""
     stamp = "icloud-mac-helper selftest %d" % int(time.time())
     steps = []
     rid = nid = None
-    cache = ReminderCache(background=False)
 
     def step(name, ok, detail=None):
         steps.append({"step": name, "ok": bool(ok), **({"detail": detail} if detail else {})})
         return ok
 
     try:
-        ok, r, e = cache.dispatch("reminder_create", {"title": stamp, "notes": "temporary, safe to delete", "due": "2099-01-01"}, 120)
+        ok, r, e = run_op("reminder_create", {"title": stamp, "notes": "temporary, safe to delete", "due": "2099-01-01"}, 120)
         if step("reminder_create", ok, None if ok else e):
             rid = r["id"]
-            ok, r2, e = cache.dispatch("reminders_list", {"list_id": r["list_id"], "refresh": True, "query": stamp}, 120)
+            ok, r2, e = run_op("reminders_list", {"list_id": r["list_id"], "query": stamp}, 120)
             step("reminders_list finds it", ok and any(x["id"] == rid for x in r2["reminders"]), None if ok else e)
-            ok, r2, e = cache.dispatch("reminder_update", {"id": rid, "title": stamp + " (edited)", "priority": 1}, 120)
+            ok, r2, e = run_op("reminder_update", {"id": rid, "title": stamp + " (edited)", "priority": 1}, 120)
             step("reminder_update", ok, None if ok else e)
-            ok, r2, e = cache.dispatch("reminder_complete", {"id": rid}, 120)
+            ok, r2, e = run_op("reminder_update", {"id": "x-apple-reminder://" + rid, "notes": "edited through an old-style id"}, 120)
+            step("reminder_update with an old-style id", ok and r2["id"] == rid, None if ok else e)
+            ok, r2, e = run_op("reminder_complete", {"id": rid}, 120)
             step("reminder_complete", ok, None if ok else e)
     finally:
         if rid:
-            ok, r2, e = cache.dispatch("reminder_delete", {"id": rid}, 120)
+            ok, r2, e = run_op("reminder_delete", {"id": rid}, 120)
             step("reminder_delete (cleanup)", ok, None if ok else e)
 
     try:
@@ -645,6 +411,66 @@ def selftest_write():
     return 0 if overall == "pass" else 1
 
 
+# ---------------------------------------------------------------------------
+# Running the self-tests the way the LaunchAgent runs
+#
+# macOS attributes a privacy grant to the RESPONSIBLE process. Started from Terminal, the EventKit binary and osascript are judged as
+# Terminal: the prompt names Terminal and the grant does nothing for the LaunchAgent. Started by launchd, the EventKit binary is judged as
+# itself (verified on macOS 27), so the prompt names "iCloud Mac Helper (Reminders)" and the grant is the one the agent uses. So a
+# self-test started anywhere but launchd re-runs itself as a one-shot launchd job and prints that job's report.
+# ---------------------------------------------------------------------------
+AGENT_LABEL = "local.icloud-mac-helper"              # the LaunchAgent install.sh creates
+PROBE_LABEL = AGENT_LABEL + ".selftest"               # the one-shot job the self-tests run in
+IN_LAUNCHD = "ICLOUD_MAC_HELPER_IN_LAUNCHD"
+
+
+def _agent_python():
+    """The interpreter the LaunchAgent uses, so the self-test is judged exactly as the agent is (install.sh passes it before the agent exists)."""
+    if os.environ.get("ICLOUD_MAC_HELPER_PYTHON"):
+        return os.environ["ICLOUD_MAC_HELPER_PYTHON"]
+    try:
+        with open(os.path.expanduser("~/Library/LaunchAgents/%s.plist" % AGENT_LABEL), "rb") as f:
+            return plistlib.load(f)["ProgramArguments"][0]
+    except (OSError, ValueError, KeyError, IndexError, TypeError, plistlib.InvalidFileException):
+        return "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
+
+
+def run_in_launchd(helper_args, timeout=300):
+    """Run this helper once as a launchd job in the login session; returns (exit code, the job's stdout)."""
+    uid = os.getuid()
+    work = tempfile.mkdtemp(prefix="icloud-mac-helper-selftest-")
+    out, err = os.path.join(work, "result.json"), os.path.join(work, "stderr.log")
+    plist = os.path.join(work, PROBE_LABEL + ".plist")
+    with open(plist, "wb") as f:
+        plistlib.dump({"Label": PROBE_LABEL, "ProgramArguments": [_agent_python(), os.path.abspath(__file__)] + list(helper_args) + ["--agent-out", out],
+                       "EnvironmentVariables": {IN_LAUNCHD: "1"}, "RunAtLoad": True, "StandardErrorPath": err}, f)
+    target = "gui/%d/%s" % (uid, PROBE_LABEL)
+    subprocess.run(["launchctl", "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        boot = subprocess.run(["launchctl", "bootstrap", "gui/%d" % uid, plist], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if boot.returncode != 0:
+            raise HelperError("could not start the self-test through launchd: %s" % (boot.stderr.decode("utf-8", "replace").strip() or boot.returncode))
+        deadline = time.time() + timeout
+        while not os.path.exists(out):
+            state = subprocess.run(["launchctl", "print", target], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode("utf-8", "replace")
+            if re.search(r"last exit code = -?\d", state) and not os.path.exists(out):     # it ran and exited without a report
+                try:
+                    with open(err, errors="replace") as f:
+                        detail = f.read().strip()[-300:]
+                except OSError:
+                    detail = ""
+                raise HelperError("the self-test stopped without a report: %s" % (detail or "no output"))
+            if time.time() > deadline:
+                raise HelperError("the self-test did not finish within %ds" % timeout)
+            time.sleep(0.25)
+        with open(out) as f:
+            res = json.load(f)
+        return res["exit"], res["stdout"]
+    finally:
+        subprocess.run(["launchctl", "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description="icloud-mac-helper")
     ap.add_argument("--config", help="path to the config file")
@@ -653,14 +479,31 @@ def main():
     g.add_argument("--selftest", action="store_true", help="check this Mac and the connection, print a JSON report")
     g.add_argument("--selftest-write", action="store_true", help="also create, edit and delete a temporary reminder and note (touches your data)")
     ap.add_argument("--version", action="store_true")
+    ap.add_argument("--agent-out", help=argparse.SUPPRESS)          # internal: where a launchd-run self-test leaves its report
     a = ap.parse_args()
     if a.version:
         print(VERSION)
         return 0
-    if a.selftest:
-        return selftest(a.config)
-    if a.selftest_write:
-        return selftest_write()
+    if a.selftest or a.selftest_write:
+        if platform.system() == "Darwin" and os.environ.get(IN_LAUNCHD) != "1":
+            # The job gets launchd's environment, not this one: pass the config path as resolved HERE.
+            config = a.config or os.environ.get("ICLOUD_MAC_HELPER_CONFIG") or DEFAULT_CONFIG
+            args = ["--selftest" if a.selftest else "--selftest-write", "--config", config]
+            try:
+                code, text = run_in_launchd(args)
+            except HelperError as e:
+                print(json.dumps({"helper_version": VERSION, "overall": "fail", "error": str(e)}, indent=2))
+                return 1
+            sys.stdout.write(text)
+            return code
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf) if a.agent_out else contextlib.nullcontext():
+            code = selftest(a.config) if a.selftest else selftest_write()
+        if a.agent_out:
+            with open(a.agent_out + ".tmp", "w") as f:
+                json.dump({"exit": code, "stdout": buf.getvalue()}, f)
+            os.replace(a.agent_out + ".tmp", a.agent_out)
+        return code
     if a.run:
         run_forever(a.config)
         return 0

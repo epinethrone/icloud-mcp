@@ -20,6 +20,8 @@ if [ -x /usr/bin/python3 ] && xcode-select -p >/dev/null 2>&1; then PY=/usr/bin/
 echo "Using $PY ($("$PY" --version 2>&1))"
 case "$PY" in /usr/bin/python3) ;; *) echo "Note: this is not Apple's python3. If the connection fails with 'No route to host', run: xcode-select --install, then re-run this installer." ;; esac
 command -v osascript >/dev/null || { echo "osascript was not found." >&2; exit 1; }
+# Always through xcrun: the bare toolchain swiftc (what `xcrun --find` prints) does not know the SDK and cannot find the standard library.
+xcrun --sdk macosx --find swiftc >/dev/null 2>&1 || { echo "swiftc was not found (Reminders needs it to build the helper's EventKit program). Install the command line tools with: xcode-select --install" >&2; exit 1; }
 
 if [ -f "$CFG" ]; then
   echo "Keeping the existing config: $CFG"
@@ -38,14 +40,44 @@ PYEOF
   unset TOKEN
 fi
 
-mkdir -p "$DEST/ops" "$LOGDIR"
+mkdir -p "$DEST/ops" "$DEST/bin" "$LOGDIR"
 cp "$HERE/icloud_mac_helper.py" "$DEST/"
 cp "$HERE/ops/"*.js "$DEST/ops/"
 chmod 700 "$DEST/icloud_mac_helper.py"
 
+# Reminders goes through EventKit. The program is built HERE, on this Mac, from eventkit/: the package ships source only, so SHA256SUMS
+# covers exactly what gets compiled. Info.plist is embedded into the binary and the ad-hoc signature carries the same bundle id; without
+# that embedded usage string macOS 27 never shows the Reminders prompt at all. An ad-hoc grant is tied to the exact build, so the program is
+# rebuilt only when its source, its Info.plist or the compiler changes, and a reinstall keeps the permission already given.
+EK_ID="local.icloud-mac-helper.reminders-eventkit"
+EK_SRC="$HERE/eventkit/reminders-eventkit.swift"
+EK_PLIST="$HERE/eventkit/Info.plist"
+EK_BIN="$DEST/bin/reminders-eventkit"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$EK_PLIST")" = "$EK_ID" ] || { echo "eventkit/Info.plist must carry the bundle id $EK_ID" >&2; exit 1; }
+STAMP="$( { shasum -a 256 "$EK_SRC" "$EK_PLIST" | cut -d' ' -f1; xcrun --sdk macosx swiftc --version 2>&1 | head -1; } | shasum -a 256 | cut -d' ' -f1)"
+if [ -x "$EK_BIN" ] && [ "$(cat "$DEST/bin/.build-stamp" 2>/dev/null)" = "$STAMP" ] && codesign --verify "$EK_BIN" 2>/dev/null; then
+  echo "Keeping the Reminders program already built from this exact source (so it keeps its Reminders permission)."
+else
+  echo "Building the Reminders program (EventKit)..."
+  # Built under its final file name (in a scratch directory): the linker derives the binary's signature from the output name, so the same
+  # source then always gives the same binary, and even a rebuild keeps the permission.
+  TMP_DIR="$(mktemp -d "$DEST/bin/.build.XXXXXX")"
+  if ! xcrun --sdk macosx swiftc -O "$EK_SRC" -o "$TMP_DIR/reminders-eventkit" -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$EK_PLIST" \
+       || ! codesign --force --sign - --identifier "$EK_ID" "$TMP_DIR/reminders-eventkit"; then
+    rm -rf "$TMP_DIR"; echo "Building the Reminders program failed (see above)." >&2; exit 1
+  fi
+  chmod 755 "$TMP_DIR/reminders-eventkit"
+  mv -f "$TMP_DIR/reminders-eventkit" "$EK_BIN"
+  rm -rf "$TMP_DIR"
+  echo "$STAMP" > "$DEST/bin/.build-stamp"
+fi
+
 echo
-echo "Running the self-test (on a Mac with large Reminders lists this can take a minute). macOS may now ask whether to allow control of Reminders: click Allow."
-if ! "$PY" "$DEST/icloud_mac_helper.py" --selftest; then
+echo "Running the self-test. It runs through launchd exactly like the background service, so the permissions you grant now land on the"
+echo "service and not on Terminal. macOS may ask:"
+echo "  - \"iCloud Mac Helper (Reminders)\" would like full access to your Reminders: click Allow (the self-test waits 30 seconds for it)."
+echo "  - the first time Notes is used, whether python3 may control Notes: click Allow if you use Notes."
+if ! ICLOUD_MAC_HELPER_PYTHON="$PY" "$PY" "$DEST/icloud_mac_helper.py" --selftest; then
   echo
   echo "The self-test reported a problem (see the JSON above)."
   read -rp "Install the background service anyway? [y/N] " GO
@@ -83,4 +115,6 @@ echo "Installed. The helper now runs in the background and starts at login."
 echo "  Log:        $LOGDIR/helper.log"
 echo "  Status:     launchctl print gui/$UIDN/$LABEL | head -20"
 echo "  Uninstall:  $HERE/uninstall.sh"
-echo "If the first Reminders request is blocked, open System Settings > Privacy & Security > Automation and enable Reminders for python3."
+echo "If Reminders requests are refused: System Settings > Privacy & Security > Reminders, enable \"iCloud Mac Helper (Reminders)\","
+echo "then check again with: $PY \"$DEST/icloud_mac_helper.py\" --selftest"
+echo "If Notes requests are refused: System Settings > Privacy & Security > Automation, enable Notes for python3."
