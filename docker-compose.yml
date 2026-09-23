@@ -9,6 +9,9 @@ services:
       - icloud_mcp_data:/data          # OAuth client registrations and hashed tokens
     ports:
       - "127.0.0.1:8000:8000"          # loopback only, for local debugging; the public path is the tunnel below
+      # Private port the Mac helper polls (Reminders/Notes bridge). Never route it through the tunnel. Loopback by default; set
+      # BRIDGE_BIND in .env to this machine's LAN or VPN address to let your Mac reach it.
+      - "${BRIDGE_BIND:-127.0.0.1}:${BRIDGE_PORT:-8001}:${BRIDGE_PORT:-8001}"
 
   # Optional Cloudflare Tunnel: point your tunnel's public hostname (the host in MCP_PUBLIC_URL) at http://icloud-mcp:8000.
   # Token is in .tunnel.env (TUNNEL_TOKEN) so the app container never sees it.
