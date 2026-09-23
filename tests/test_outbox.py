@@ -97,7 +97,7 @@ def test_failed_send_stays_queued_and_can_retry(env, monkeypatch):
 def test_reply_flags_original_only_after_release(env, monkeypatch):
     s, fake, sent = env
     original = b"From: Alice <alice@example.org>\r\nTo: me@icloud.com\r\nSubject: Question\r\nMessage-ID: <1@example.org>\r\nDate: Tue, 1 Sep 2026 10:00:00 +0000\r\n\r\nCan you help?\r\n"
-    monkeypatch.setattr(MailService, "_fetch_raw", lambda self, c, folder, uid, readonly=True: (original, (), None))
+    monkeypatch.setattr(MailService, "_fetch_raw", lambda self, c, folder, uid, readonly=True, uidvalidity=None: (original, (), None, 7))
     mail = MailService(s)
     r = mail.reply("INBOX", 7, "Yes, happy to.")
     assert r["status"] == "queued_for_owner_approval" and fake.flags == []

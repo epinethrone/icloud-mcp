@@ -279,6 +279,56 @@ def _attendee_email(v: Any) -> str | None:
     return None
 
 
+def not_busy_reason(comp: icalendar.Component, own_addresses: set[str]) -> str | None:
+    """Why an event does NOT make the owner busy, or None when it does. Being on the calendar is not the same as being
+    occupied: an event marked free (TRANSP:TRANSPARENT), a cancelled one, and an invitation the owner declined all leave
+    the time open. An invitation not answered yet still counts as busy."""
+    if (_text(comp, "status") or "").upper() == "CANCELLED":
+        return "cancelled"
+    if (_text(comp, "transp") or "").upper() == "TRANSPARENT":
+        return "marked as free"
+    for a in _as_list(comp.get("attendee")):
+        addr = _attendee_email(a)
+        if addr and addr in own_addresses and str((getattr(a, "params", {}) or {}).get("PARTSTAT", "")).upper() == "DECLINED":
+            return "declined"
+    return None
+
+
+def free_slots(busy: list[tuple[datetime, datetime]], windows: list[tuple[datetime, datetime]],
+               duration: timedelta) -> list[tuple[datetime, datetime]]:
+    """Openings of at least `duration` inside each window, after removing the (possibly overlapping) busy intervals."""
+    merged: list[list[datetime]] = []
+    for s, e in sorted(busy):
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    out: list[tuple[datetime, datetime]] = []
+    for ws, we in windows:
+        cursor = ws
+        for bs, be in merged:
+            if be <= cursor or bs >= we:
+                continue
+            if bs - cursor >= duration:
+                out.append((cursor, bs))
+            cursor = max(cursor, be)
+            if cursor >= we:
+                break
+        if we - cursor >= duration:
+            out.append((cursor, we))
+    return out
+
+
+def _clock(value: str, name: str) -> tuple[int, int]:
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", value.strip())
+    if not m or int(m[1]) > 24 or int(m[2]) > 59 or (int(m[1]) == 24 and int(m[2]) != 0):
+        raise CalendarError(f"{name} must be a time like '09:00' (got {value!r}).")
+    return int(m[1]), int(m[2])
+
+
+_WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
 def _as_list(v: Any) -> list[Any]:
     if v is None:
         return []
@@ -428,6 +478,14 @@ def _apply_alarms(ev: icalendar.Event, minutes: list[int], summary: str) -> None
         al.add("description", summary or "Reminder")
         al.add("trigger", timedelta(minutes=-int(m)))
         ev.add_component(al)
+
+
+def retry_uid(account: str, request_id: str) -> str:
+    """The event/contact uid a request_id always maps to, so a retried create finds the first attempt instead of duplicating."""
+    rid = (request_id or "").strip()
+    if not rid or len(rid) > 200:
+        raise CalendarError("request_id must be 1 to 200 characters.")
+    return f"{uuid.uuid5(uuid.NAMESPACE_URL, f'icloud-mcp:{account.lower()}:{rid}')}@icloud-mcp"
 
 
 def build_event(
@@ -668,17 +726,14 @@ class CalendarService:
             raise CalendarError("Range too large; request at most ~2 years at a time.")
         results: list[tuple[datetime, dict[str, Any]]] = []
         with self._principal() as p:
-            for cal in self._pick(p, calendar):
-                for obj in cal.search(start=s_dt, end=e_dt, event=True, expand=True):
-                    parsed = icalendar.Calendar.from_ical(obj.data)
-                    for comp in parsed.walk("VEVENT"):
-                        d = event_to_dict(comp, self._cal_name(cal))
-                        if query:
-                            hay = " ".join(str(d.get(k) or "") for k in ("summary", "location", "description")).lower()
-                            if query.lower() not in hay:
-                                continue
-                        start_val = comp.get("dtstart").dt
-                        results.append((_as_dt(start_val, tz), d))
+            for name, comp in self._occurrences(p, calendar, s_dt, e_dt):
+                d = event_to_dict(comp, name)
+                if query:
+                    hay = " ".join(str(d.get(k) or "") for k in ("summary", "location", "description")).lower()
+                    if query.lower() not in hay:
+                        continue
+                start_val = comp.get("dtstart").dt
+                results.append((_as_dt(start_val, tz), d))
         results.sort(key=lambda t: t[0])
         limit = max(1, min(int(limit), 200))
         return {
@@ -686,6 +741,102 @@ class CalendarService:
             "range": {"start": s_dt.isoformat(), "end": e_dt.isoformat()},
             "total": len(results),
             "events": [d for _, d in results[:limit]],
+        }
+
+    def _occurrences(self, principal: Any, calendar: str | None, s_dt: datetime, e_dt: datetime) -> Iterator[tuple[str, icalendar.Component]]:
+        """Every event occurrence overlapping [s_dt, e_dt) in the chosen calendars, recurring events expanded."""
+        for cal in self._pick(principal, calendar):
+            name = self._cal_name(cal)
+            for obj in cal.search(start=s_dt, end=e_dt, event=True, expand=True):
+                for comp in icalendar.Calendar.from_ical(obj.data).walk("VEVENT"):
+                    if comp.get("dtstart") is not None:
+                        yield name, comp
+
+    @_reconnecting
+    def find_free_time(
+        self, start: str, end: str, duration_minutes: int, *, calendar: str | None = None, timezone_name: str | None = None,
+        day_start: str = "09:00", day_end: str = "18:00", weekdays: list[str] | None = None, include_travel: bool = True,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        tz = get_tz(timezone_name or self.s.default_timezone)
+        s_val, _ = parse_when(start, tz)
+        e_val, e_is_date = parse_when(end, tz)
+        s_dt = _as_dt(s_val, tz)
+        e_dt = _as_dt(e_val, tz) + (timedelta(days=1) if e_is_date else timedelta())
+        now = datetime.now(tz)
+        s_dt = max(s_dt, now.replace(second=0, microsecond=0))          # never offer a slot in the past
+        if e_dt <= s_dt:
+            raise CalendarError("The range is entirely in the past, or end is not after start.")
+        if e_dt - s_dt > timedelta(days=62):
+            raise CalendarError("Range too large; look at most about two months ahead at a time.")
+        if not 5 <= int(duration_minutes) <= 24 * 60:
+            raise CalendarError("duration_minutes must be between 5 and 1440.")
+        duration = timedelta(minutes=int(duration_minutes))
+        (sh, sm), (eh, em) = _clock(day_start, "day_start"), _clock(day_end, "day_end")
+        if (eh, em) <= (sh, sm):
+            raise CalendarError("day_end must be later than day_start.")
+        allowed = set(range(7))
+        if weekdays:
+            try:
+                allowed = {_WEEKDAYS[w.strip().lower()[:3]] for w in weekdays}
+            except KeyError as e:
+                raise CalendarError("weekdays must be names like ['mon', 'tue', 'sat'].") from e
+
+        own = {a.lower() for a in (self.s.email_address, self.s.username) if a}
+        busy: list[tuple[datetime, datetime]] = []
+        all_day: list[dict[str, Any]] = []
+        not_busy: list[dict[str, Any]] = []
+        with self._principal() as p:
+            for name, comp in self._occurrences(p, calendar, s_dt, e_dt):
+                dtstart = comp.get("dtstart").dt
+                summary = _text(comp, "summary") or "(no title)"
+                reason = not_busy_reason(comp, own)
+                if reason:
+                    not_busy.append({"summary": summary, "start": _iso(dtstart), "calendar": name, "reason": reason})
+                    continue
+                end_v = None
+                with contextlib.suppress(Exception):
+                    end_v = comp.end
+                if isinstance(dtstart, date) and not isinstance(dtstart, datetime):
+                    all_day.append({"summary": summary, "start": _iso(dtstart), "end": _iso(end_v), "calendar": name})
+                    continue
+                bs = _as_dt(dtstart, tz)
+                be = _as_dt(end_v, tz) if end_v is not None else bs
+                if include_travel:
+                    minutes = parse_duration_minutes(comp.get(_TRAVEL_DURATION))
+                    if minutes:
+                        bs -= timedelta(minutes=minutes)
+                if be > bs:
+                    busy.append((bs, be))
+
+        windows: list[tuple[datetime, datetime]] = []
+        day = s_dt.astimezone(tz).date()
+        while day <= e_dt.astimezone(tz).date():
+            if day.weekday() in allowed:
+                ws = datetime(day.year, day.month, day.day, sh, sm, tzinfo=tz)
+                we = (datetime(day.year, day.month, day.day, tzinfo=tz) + timedelta(days=1)) if (eh, em) == (24, 0) \
+                    else datetime(day.year, day.month, day.day, eh, em, tzinfo=tz)
+                ws, we = max(ws, s_dt), min(we, e_dt)
+                if we > ws:
+                    windows.append((ws, we))
+            day += timedelta(days=1)
+
+        slots = free_slots(busy, windows, duration)
+        limit = max(1, min(int(limit), 100))
+        return {
+            "notice": UNTRUSTED_NOTICE,
+            "timezone": str(tz),
+            "duration_minutes": int(duration_minutes),
+            "hours": f"{day_start}-{day_end}",
+            "free_slots": [{"start": a.isoformat(), "end": b.isoformat(), "minutes": int((b - a).total_seconds() // 60)}
+                           for a, b in slots[:limit]],
+            "more_slots": max(0, len(slots) - limit),
+            "busy_events_counted": len(busy),
+            "all_day_events": all_day,
+            "not_counted_as_busy": not_busy,
+            "rules": ("Busy = timed events, including Apple travel time before them. Not busy: events marked free, cancelled "
+                      "events and invitations you declined. All-day events are listed separately and do not block slots: check "
+                      "them yourself (a trip blocks the day, a birthday does not). Each slot is a whole opening; book any part of it."),
         }
 
     @staticmethod
@@ -780,22 +931,31 @@ class CalendarService:
         location: str | None = None, description: str | None = None, rrule: str | None = None, attendees: list[str] | None = None,
         location_geo: str | None = None, travel_minutes: int | None = None, travel_routing: str | None = None,
         travel_origin: str | None = None, travel_origin_geo: str | None = None,
-        alarms_minutes_before: list[int] | None = None, url: str | None = None,
+        alarms_minutes_before: list[int] | None = None, url: str | None = None, request_id: str | None = None,
     ) -> dict[str, Any]:
         self._refuse_invites(attendees_given=bool(attendees))
         tz = get_tz(timezone_name or self.s.default_timezone)
+        fixed_uid = retry_uid(self.s.username, request_id) if request_id else None
         uid, ical = build_event(
             summary=summary, start=start, end=end, tz=tz, location=location, description=description, rrule=rrule,
             attendees=attendees, alarms_minutes_before=alarms_minutes_before, url=url,
             location_geo=location_geo, travel_minutes=travel_minutes, travel_routing=travel_routing,
             travel_origin=travel_origin, travel_origin_geo=travel_origin_geo,
-            organizer_email=self.s.email_address, organizer_name=self.s.display_name,
+            organizer_email=self.s.email_address, organizer_name=self.s.display_name, uid=fixed_uid,
         )
         with self._principal() as p:
             cals = self._pick(p, calendar)
             if not cals:
                 raise CalendarError("No event calendars found on this account.")
             cal = cals[0] if calendar else self._default_calendar(cals)
+            if fixed_uid:
+                existing = self._by_href(cal, fixed_uid)
+                if existing is not None:   # a retry of a create that already went through: never make a second event
+                    name = self._cal_name(cal)
+                    master = self._master(icalendar.Calendar.from_ical(existing.data))
+                    return {"created": False, "already_existed": True, "uid": fixed_uid, "calendar": name,
+                            "event": event_to_dict(master, name),
+                            "note": "An event with this request_id was already created, so nothing new was added."}
             cal.save_event(ical)
             name = self._cal_name(cal)
             master = self._master(icalendar.Calendar.from_ical(ical))

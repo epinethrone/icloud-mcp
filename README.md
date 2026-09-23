@@ -17,7 +17,7 @@
 [![Model Context Protocol](https://img.shields.io/badge/MCP-server-6e56cf.svg)](https://modelcontextprotocol.io)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ed.svg?logo=docker&logoColor=white)](https://github.com/epinethrone/icloud-mcp/blob/main/docker-compose.yml)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20server-555.svg)](#quick-start)
-[![Tools](https://img.shields.io/badge/tools-47-f28b30.svg)](#tools)
+[![Tools](https://img.shields.io/badge/tools-48-f28b30.svg)](#tools)
 [![icloud-mcp MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/epinethrone/icloud-mcp/badges/score.svg)](https://glama.ai/mcp/servers/epinethrone/icloud-mcp)
 
 [Why](#why-icloud-mcp) · [What you can ask](#what-you-can-ask-claude) · [How it works](#how-it-works) · [Security](#security-first) · [Quick start](#quick-start) · [Run locally](#run-it-locally-claude-desktop-and-claude-code) · [Tools](#tools) · [Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
@@ -35,12 +35,12 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 
 | Feature | What it means for you |
 |---|---|
-| 🍎 **All of iCloud in one connector** | 47 tools across Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive, instead of a separate integration for each. |
+| 🍎 **All of iCloud in one connector** | 48 tools across Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive, instead of a separate integration for each. |
 | 🔐 **Your credentials never leave your server** | Apple offers no OAuth for these protocols, so an app-specific password lives only in your server's environment. Claude signs in to *your* server through its own single-owner OAuth and never sees it. |
 | ✋ **You approve what leaves** | Outgoing mail is queued for your approval in a browser by default. Invitations to other people are blocked unless you allow them. Deletes go to the Trash. |
 | 🛡️ **Built for prompt injection** | Every email, event, note and file is marked as untrusted data, and the dangerous actions are gated by configuration rather than by asking the model nicely. |
 | 💻 **Server or no server** | Host it once for Claude on the web and your phone, or run it locally for Claude Desktop and Claude Code with one command: no domain, tunnel or Docker needed. |
-| 🧪 **Tested against the real iCloud** | 269 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
+| 🧪 **Tested against the real iCloud** | 277 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
 
 ## What you can ask Claude
 
@@ -216,17 +216,20 @@ If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv
 
 - Replies keep the `Re:` subject, `In-Reply-To` and `References`, the right recipients and the quoted original in plain text and HTML. Sent mail is copied to Sent and the original is flagged Answered (forwards get `$Forwarded`). `draft=true` saves to Drafts instead of sending.
 - `mail_get_messages` reads a batch (a day's unread mail, a whole thread) in one IMAP round trip, about 7 times faster than one at a time.
+- **Stale ids are refused.** Every message comes with its folder's `uidvalidity`; tools that act on a uid accept it back and refuse if iCloud has renumbered the folder since, instead of touching a different message.
 - Reading a message does not mark it read. Bcc recipients receive the mail, but the header is stripped on the wire.
 - Recipients accept `a@b.com`, `Name <a@b.com>` or `mailto:a@b.com`. Anything else is rejected with a clear error and never silently dropped.
 
 </details>
 
 <details>
-<summary><b>📅 Calendar</b> (6)</summary>
+<summary><b>📅 Calendar</b> (7)</summary>
 
-`calendar_list_calendars`, `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`
+`calendar_list_calendars`, `calendar_list_events`, `calendar_find_free_time`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`
 
 - Multiple calendars, recurring events expanded when listing, all-day events, alerts, links, notes and attendees. Editing a recurring event changes the whole series.
+- **Finding free time is one call.** `calendar_find_free_time` returns openings of a given length within your hours and chosen weekdays. Travel time counts as busy; events marked free, cancelled events and invitations you declined do not; all-day events are listed separately instead of guessed about.
+- **Safe to retry.** `calendar_create_event` and `contacts_create` take an optional `request_id`: if a call times out and is retried with the same one, the first attempt is found instead of creating a duplicate.
 - **Apple travel time and map locations.** Events can carry Apple's travel time (by bike, on foot, by car or public transport) and a structured destination, which is what makes Apple draw the map card.
 - **Adding a guest leaves everyone else alone.** Updating the guest list merges instead of replacing, so existing guests keep their RSVP and aren't sent the invitation again. Invitations are emailed by iCloud itself and are off unless you allow them.
 
