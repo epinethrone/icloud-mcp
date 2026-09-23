@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded into the reminders-eventkit binary by install.sh (__TEXT,__info_plist). The usage strings are what makes macOS show the
+     Reminders permission prompt at all; CFBundleIdentifier must equal the codesign identifier install.sh signs with. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>local.icloud-mac-helper.reminders-eventkit</string>
+  <key>CFBundleName</key><string>iCloud Mac Helper (Reminders)</string>
+  <key>NSRemindersFullAccessUsageDescription</key><string>The iCloud Mac helper reads and edits your Reminders when your assistant asks it to.</string>
+  <key>NSRemindersUsageDescription</key><string>The iCloud Mac helper reads and edits your Reminders when your assistant asks it to.</string>
+</dict>
+</plist>
