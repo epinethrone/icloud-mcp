@@ -9,6 +9,8 @@
 **Give Claude your iCloud: Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive.**
 **Self-hosted, single-owner, and built around your approval, not the model's good behaviour.**
 
+[![PyPI](https://img.shields.io/pypi/v/icloud-mcp-server.svg?logo=pypi&logoColor=white)](https://pypi.org/project/icloud-mcp-server/)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.epinethrone%2Ficloud--mcp-6e56cf.svg)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.epinethrone/icloud-mcp)
 [![Tests](https://github.com/epinethrone/icloud-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/epinethrone/icloud-mcp/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](https://github.com/epinethrone/icloud-mcp/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg?logo=python&logoColor=white)](https://github.com/epinethrone/icloud-mcp/blob/main/pyproject.toml)
@@ -177,7 +179,7 @@ Any setting from [Configuration](#configuration) can go in this file. `MCP_PUBLI
 Claude Code:
 
 ```bash
-claude mcp add icloud -- uvx --from git+https://github.com/epinethrone/icloud-mcp icloud-mcp --local --env-file ~/.icloud-mcp/icloud.env
+claude mcp add icloud -- uvx icloud-mcp-server --local --env-file ~/.icloud-mcp/icloud.env
 ```
 
 Claude Desktop: Settings → Developer → Edit Config, then add this to `claude_desktop_config.json` and restart Claude:
@@ -187,14 +189,13 @@ Claude Desktop: Settings → Developer → Edit Config, then add this to `claude
   "mcpServers": {
     "icloud": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/epinethrone/icloud-mcp", "icloud-mcp", "--local",
-               "--env-file", "/Users/YOU/.icloud-mcp/icloud.env"]
+      "args": ["icloud-mcp-server", "--local", "--env-file", "/Users/YOU/.icloud-mcp/icloud.env"]
     }
   }
 }
 ```
 
-If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv, `pip install git+https://github.com/epinethrone/icloud-mcp` and use `icloud-mcp` as the command.
+If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv, `pip install icloud-mcp-server` and use `icloud-mcp` as the command.
 
 **How sending works locally.** There is no approval page, so with the default `SEND_REQUIRES_APPROVAL=true` every message Claude sends is saved to your **Drafts** folder instead, and the result says so. You review it in Mail and press Send yourself. Set `SEND_REQUIRES_APPROVAL=false` to let Claude send directly; your client's own "ask before use" setting is then the only check.
 
