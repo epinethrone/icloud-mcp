@@ -5,6 +5,7 @@ import asyncio
 import functools
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -893,17 +894,27 @@ def load_env_file(path: str) -> None:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip().removeprefix("export ").strip(), value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
+        os.environ.setdefault(key, _env_value(value))
+
+
+def _env_value(raw: str) -> str:
+    """A quoted value is taken literally up to its closing quote; an unquoted one ends at a ' #' comment, so that
+    'SEND_REQUIRES_APPROVAL=true  # keep drafts' reads as true. A '#' with no space before it stays part of the value."""
+    if raw[:1] in ("'", '"'):
+        end = raw.find(raw[0], 1)
+        if end > 0:
+            return raw[1:end]
+    for i, ch in enumerate(raw):
+        if ch == "#" and i > 0 and raw[i - 1] in " \t":
+            return raw[:i].rstrip()
+    return raw
 
 
 def _ensure_data_dir(s: Settings) -> None:
     try:
         os.makedirs(s.data_dir, mode=0o700, exist_ok=True)
-        probe = os.path.join(s.data_dir, ".write-test")
-        open(probe, "w").close()
-        os.unlink(probe)
+        with tempfile.NamedTemporaryFile(dir=s.data_dir, prefix=".write-test-"):
+            pass                                     # unique name: two clients starting at once cannot trip over each other
     except OSError as e:
         raise SystemExit(f"DATA_DIR '{s.data_dir}' is not writable ({e}).") from e
 

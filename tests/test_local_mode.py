@@ -109,6 +109,13 @@ def test_env_file_fills_gaps_but_never_overrides(tmp_path, monkeypatch):
     assert os.environ["ICLOUD_TEST_A"] == "from-file"
     assert os.environ["ICLOUD_TEST_B"] == "quoted value"
     assert os.environ["ICLOUD_TEST_C"] == "from-client"
+    f.write_text("ICLOUD_TEST_A=true  # keep drafts\nICLOUD_TEST_B='pa ss # word' # comment\nICLOUD_TEST_D=abc#def\n")
+    for k in ("ICLOUD_TEST_A", "ICLOUD_TEST_B", "ICLOUD_TEST_D"):
+        monkeypatch.delenv(k, raising=False)
+    load_env_file(str(f))
+    assert os.environ["ICLOUD_TEST_A"] == "true"         # an inline comment must not silently turn a switch off
+    assert os.environ["ICLOUD_TEST_B"] == "pa ss # word"
+    assert os.environ["ICLOUD_TEST_D"] == "abc#def"      # '#' inside a password stays
     with pytest.raises(SystemExit, match="Cannot read"):
         load_env_file(str(tmp_path / "missing.env"))
 
@@ -136,3 +143,14 @@ def test_stdio_end_to_end_lists_tools_over_a_clean_stdout(tmp_path):
     assert "Drafts" in (init.instructions or "")
     assert {"mail_search", "mail_send", "calendar_list_events", "contacts_search"} <= names
     assert os.path.isdir(tmp_path / "data")
+
+
+def test_data_dir_probe_leaves_nothing_behind_and_tolerates_parallel_starts(local_env, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from icloud_mcp.server import _ensure_data_dir
+
+    s = dataclasses.replace(local_env, data_dir=str(tmp_path / "d"))
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda _: _ensure_data_dir(s), range(40)))
+    assert os.listdir(tmp_path / "d") == []
