@@ -61,8 +61,44 @@ def test_phones_org_escapes_and_structure():
     assert c["organization"] == "Acme, Inc., Sales" and c["job_title"] == "Head of Sales"
     assert c["name"] == "Anna Rivera" and c["given_name"] == "Anna Maria" and c["family_name"] == "Rivera"
     assert c["birthday"] == "1990-04-01" and c["urls"] == ["https://acme.example"]
-    assert c["addresses"] == [{"address": "1 Main St;Apt 2, Springfield, 12345, Exampleland", "label": "home"}]   # \; unescaped, empty parts dropped
+    assert c["addresses"] == [{"address": "1 Main St;Apt 2, Springfield, 12345, Exampleland", "label": "home",   # \; unescaped, empty parts dropped
+                               "po_box": "", "extended": "", "street": "1 Main St;Apt 2", "city": "Springfield", "region": "",
+                               "postal_code": "12345", "country": "Exampleland"}]
     assert parse_vcard(CARDS[6])["name"] == "Doe, Jane"
+
+
+# ------------------------------------------------------------------ postal addresses
+def test_new_contact_addresses_round_trip_with_labels_and_escapes():
+    raw = build_vcard(uid="a-1", name="Ada", addresses=[
+        {"street": "Keizersgracht 1, 2nd floor\nBack door", "city": "Amsterdam", "postal_code": "1015 AA", "country": "Netherlands"},
+        {"street": "Main St 5; Unit B", "city": "Springfield", "label": "work"},
+        {"street": "Seaside 9", "city": "Zandvoort", "label": "Holiday house"},
+        {"street": " ", "city": ""},                                              # empty: skipped, not written as ;;;;;;
+    ])
+    assert "ADR;TYPE=HOME:;;Keizersgracht 1\\, 2nd floor\\nBack door;Amsterdam;;1015 AA;Netherlands" in raw
+    assert "item1.ADR:;;Seaside 9;Zandvoort;;;" in raw and "item1.X-ABLabel:Holiday house" in raw
+    got = parse_vcard(raw)["addresses"]
+    assert [(a["label"], a["street"], a["city"]) for a in got] == [
+        ("home", "Keizersgracht 1, 2nd floor\nBack door", "Amsterdam"), ("work", "Main St 5; Unit B", "Springfield"),
+        ("Holiday house", "Seaside 9", "Zandvoort")]
+    assert got[0]["postal_code"] == "1015 AA" and got[0]["country"] == "Netherlands"
+
+
+def test_replacing_addresses_drops_old_ones_with_their_labels_and_keeps_everything_else():
+    card = ANNA.replace("END:VCARD", "item7.ADR:;;Old 1;Oldtown;;;\r\nitem7.X-ABLabel:Old place\r\nitem7.X-ABADR:nl\r\nEND:VCARD")
+    raw = _replace_vcard_fields(card, addresses=[{"street": "New 2", "city": "Utrecht", "label": "Studio"}])
+    c = parse_vcard(raw)
+    assert [(a["label"], a["street"]) for a in c["addresses"]] == [("Studio", "New 2")]
+    assert "Old place" not in raw and "X-ABADR" not in raw and "item4." not in raw       # no orphaned labels
+    assert "item8.ADR" in raw and "item8.X-ABLabel:Studio" in raw                          # a fresh group number, no collision
+    assert "item1.X-ABLabel:_$!<Work>!$_" in raw and len(c["emails"]) == 3 and c["phones"][1]["label"] == "main"
+    assert "PHOTO;" in raw and "NOTE:" in raw
+    assert parse_vcard(_replace_vcard_fields(card, addresses=[]))["addresses"] == []
+
+
+def test_replacing_emails_takes_their_grouped_labels_along():
+    raw = _replace_vcard_fields(ANNA, emails=["new@example.org"])
+    assert "Side project" not in raw and "item1.X-ABLabel" not in raw and "item3.X-ABLabel:_$!<Main>!$_" in raw
 
 
 def test_notes_and_photos_never_reach_the_result():
@@ -289,6 +325,9 @@ def test_tools_exist_only_when_enabled_and_carry_descriptions(env):
     assert {"contacts_search", "contacts_get"} <= set(on)
     assert not any(n.startswith("contacts_") for n in asyncio.run(tools(dataclasses.replace(s, enable_contacts=False))))
     assert "email address" in on["contacts_search"].description and "do not guess" in on["contacts_search"].description
+    for name in ("contacts_create", "contacts_update"):
+        schema = json.dumps(on[name].input_schema)
+        assert "addresses" in schema and "postal_code" in schema and "Holiday house" in schema
 
 
 def test_instructions_send_agents_to_contacts_first_then_mail(env):

@@ -35,7 +35,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 | ✋ **You approve what leaves** | Outgoing mail is queued for your approval in a browser by default. Invitations to other people are blocked unless you allow them. Deletes go to the Trash. |
 | 🛡️ **Built for prompt injection** | Every email, event, note and file is marked as untrusted data, and the dangerous actions are gated by configuration rather than by asking the model nicely. |
 | 💻 **Server or no server** | Host it once for Claude on the web and your phone, or run it locally for Claude Desktop and Claude Code with one command: no domain, tunnel or Docker needed. |
-| 🧪 **Tested against the real iCloud** | 260 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
+| 🧪 **Tested against the real iCloud** | 263 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
 
 ## What you can ask Claude
 
@@ -234,6 +234,7 @@ If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv
 
 - Contacts are fetched whole, cached and searched locally by name, nickname, company, email or phone, ignoring accents. A contact with no email comes back with `has_email: false`, so an agent asks instead of guessing.
 - **Misspelled names are handled.** `contacts_search` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.
+- **Postal addresses** are read and written as street, city, region, postcode and country, with home, work or your own labels ("Holiday house"), stored the way Apple's Contacts app expects.
 - Updates keep every field outside the changed ones and use ETags to refuse stale overwrites. Contact photos and notes are never returned.
 
 </details>
