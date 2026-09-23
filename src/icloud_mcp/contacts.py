@@ -386,6 +386,14 @@ class ContactsService:
         if r.status_code == 401:
             raise ContactsError("CardDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password (or set CARDDAV_USERNAME).")
         if r.status_code == 412:
+            if create and data:
+                try:
+                    stored = client.get(url)
+                except httpx.HTTPError as e:
+                    raise ContactsError(f"CardDAV GET request failed: {e}") from e
+                if (stored.status_code == 200 and (requested := parse_vcard(data))
+                        and (card := parse_vcard(stored.text)) and card["uid"] == requested["uid"]):
+                    return r
             raise ContactsError("This contact changed since it was read. Search it again, review the latest version, then retry.")
         if r.status_code >= 400:
             raise ContactsError(f"CardDAV {method} failed with HTTP {r.status_code}.")
@@ -538,8 +546,11 @@ class ContactsService:
     def create(self, *, name: str = "", given_name: str = "", family_name: str = "", nickname: str = "",
                organization: str = "", job_title: str = "", emails: list[str] | None = None,
                phones: list[str] | None = None, birthday: str = "", urls: list[str] | None = None,
-               addresses: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        uid = str(uuid.uuid4())
+               addresses: list[dict[str, Any]] | None = None, request_id: str | None = None) -> dict[str, Any]:
+        if request_id is not None and not (0 < len(request_id.strip()) <= 200):
+            raise ContactsError("request_id must be 1 to 200 characters.")
+        uid = (str(uuid.uuid5(uuid.NAMESPACE_URL, f"icloud-mcp-contact:{self.s.username.lower()}:{request_id.strip()}"))
+               if request_id else str(uuid.uuid4()))
         raw = build_vcard(uid=uid, name=name, given_name=given_name, family_name=family_name, nickname=nickname,
                           organization=organization, job_title=job_title, emails=emails, phones=phones,
                           birthday=birthday, urls=urls, addresses=addresses)
@@ -547,7 +558,20 @@ class ContactsService:
             if not self._books:
                 self._books = self._discover(client)
             target = urljoin(self._books[0].rstrip("/") + "/", quote(uid, safe="") + ".vcf")
-            self._mutate(client, "PUT", target, data=raw, create=True)
+            if request_id:
+                self._check_url(target)
+                try:
+                    prior = client.get(target)
+                except httpx.HTTPError as e:
+                    raise ContactsError(f"CardDAV GET request failed: {e}") from e
+                if prior.status_code == 200 and (card := parse_vcard(prior.text)) and card["uid"] == uid:
+                    # a retry of a create that already went through: never make a second contact
+                    return {"created": False, "already_existed": True, "uid": uid, "name": card["name"],
+                            "note": "A contact with this request_id was already created, so nothing new was added."}
+            response = self._mutate(client, "PUT", target, data=raw, create=True)
+            if response.status_code == 412:
+                return {"created": False, "already_existed": True, "uid": uid, "name": parse_vcard(raw)["name"],
+                        "note": "A contact with this request_id was already created, so nothing new was added."}
             self._clear_cache()
         return {"created": True, "uid": uid, "name": parse_vcard(raw)["name"]}
 
