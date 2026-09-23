@@ -64,6 +64,7 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "notes_list": {"folder": ("str", False, 200), "query": ("str", False, 200), "search_body": ("bool", False, 0), "limit": ("int", False, 100)},
     "note_read": {"id": ("str", True, 500), "max_chars": ("int", False, 100000)},
     "note_create": {"title": ("str", True, 500), "body": ("str", False, 100000), "folder": ("str", False, 200)},
+    "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
