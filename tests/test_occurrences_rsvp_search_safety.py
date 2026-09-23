@@ -211,3 +211,23 @@ def test_event_results_carry_warnings():
     assert len(d["safety_warnings"]) >= 2
     assert "safety_warnings" not in event_to_dict(icalendar.Event.from_ical(
         "BEGIN:VEVENT\r\nUID:v\r\nSUMMARY:Dentist\r\nDTSTART:20300304T090000Z\r\nEND:VEVENT\r\n"), "Home")
+
+
+# ------------------------------------------------------------------ did the invitation actually go out?
+def test_delivery_report_reads_icloud_schedule_status():
+    from icloud_mcp.cal import _attach_delivery, delivery_report
+    ev = icalendar.Event()
+    for addr, status in (("me@icloud.com", "1.1"), ("anna@example.org", "1.1"), ("bob@example.org", "2.0"),
+                         ("typo@exmaple.org", "5.1"), ("carol@example.org", None)):
+        a = icalendar.vCalAddress(f"mailto:{addr}")
+        if status:
+            a.params["SCHEDULE-STATUS"] = status
+        ev.add("attendee", a)
+    rep = delivery_report(ev, {"me@icloud.com"})
+    assert [(r["address"], r["meaning"], r["ok"]) for r in rep] == [
+        ("anna@example.org", "sent", True), ("bob@example.org", "delivered", True),
+        ("typo@exmaple.org", "not delivered: the recipient's mail server refused it", False),
+        ("carol@example.org", "no status reported yet", None)]
+    out = {}
+    _attach_delivery(out, rep)
+    assert out["delivery"] == rep and "typo@exmaple.org" in out["delivery_warning"] and "anna" not in out["delivery_warning"]
