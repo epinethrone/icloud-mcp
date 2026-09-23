@@ -1,10 +1,24 @@
 [project]
-name = "icloud-mcp"
-version = "0.1.0"
-description = "Remote MCP server for iCloud Mail (IMAP/SMTP), Calendar (CalDAV) and Contacts (CardDAV), with built-in single-user OAuth for Claude custom connectors"
+name = "icloud-mcp-server"
+version = "0.2.0"
+description = "MCP server for iCloud Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive. Self-hosted or local, approval-first."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "epinethrone" }]
+keywords = ["mcp", "model-context-protocol", "icloud", "apple", "claude", "imap", "caldav", "carddav", "email", "calendar"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Email",
+]
 dependencies = [
     "mcp>=2.2,<3",
     "imapclient>=3.0",
@@ -19,8 +33,14 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.23", "aiosmtpd>=1.4", "radicale>=3.2"]
 
+[project.urls]
+Homepage = "https://github.com/epinethrone/icloud-mcp"
+Issues = "https://github.com/epinethrone/icloud-mcp/issues"
+Security = "https://github.com/epinethrone/icloud-mcp/security/policy"
+
 [project.scripts]
 icloud-mcp = "icloud_mcp.server:main"
+icloud-mcp-server = "icloud_mcp.server:main"          # so `uvx icloud-mcp-server` finds a command of the same name
 icloud-mcp-selftest = "icloud_mcp.selftest:main"
 
 [build-system]
