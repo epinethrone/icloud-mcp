@@ -15,7 +15,7 @@
 [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20server-555.svg)](#quick-start)
 [![Tools](https://img.shields.io/badge/tools-46-f28b30.svg)](#tools)
 
-[Why](#why-icloud-mcp) · [What you can ask](#what-you-can-ask-claude) · [How it works](#how-it-works) · [Security](#security-first) · [Quick start](#quick-start) · [Tools](#tools) · [Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
+[Why](#why-icloud-mcp) · [What you can ask](#what-you-can-ask-claude) · [How it works](#how-it-works) · [Security](#security-first) · [Quick start](#quick-start) · [Run locally](#run-it-locally-claude-desktop-and-claude-code) · [Tools](#tools) · [Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -34,7 +34,8 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 | 🔐 **Your credentials never leave your server** | Apple offers no OAuth for these protocols, so an app-specific password lives only in your server's environment. Claude signs in to *your* server through its own single-owner OAuth and never sees it. |
 | ✋ **You approve what leaves** | Outgoing mail is queued for your approval in a browser by default. Invitations to other people are blocked unless you allow them. Deletes go to the Trash. |
 | 🛡️ **Built for prompt injection** | Every email, event, note and file is marked as untrusted data, and the dangerous actions are gated by configuration rather than by asking the model nicely. |
-| 🧪 **Tested against the real iCloud** | 250 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
+| 💻 **Server or no server** | Host it once for Claude on the web and your phone, or run it locally for Claude Desktop and Claude Code with one command: no domain, tunnel or Docker needed. |
+| 🧪 **Tested against the real iCloud** | 260 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
 
 ## What you can ask Claude
 
@@ -59,7 +60,7 @@ flowchart TB
     class I,A apple
 ```
 
-The server runs anywhere Docker runs (a home server, a Raspberry Pi, a small VPS) behind a public HTTPS address such as a Cloudflare Tunnel. The Mac helper is only needed for Reminders, Notes and iCloud Drive. It connects *out* to the server, so your Mac never opens a port.
+The server runs anywhere Docker runs (a home server, a Raspberry Pi, a small VPS) behind a public HTTPS address such as a Cloudflare Tunnel. If you only use Claude Desktop or Claude Code, you can skip all of that and [run it locally](#run-it-locally-claude-desktop-and-claude-code) instead. The Mac helper is only needed for Reminders, Notes and iCloud Drive. It connects *out* to the server, so your Mac never opens a port.
 
 ## Security first
 
@@ -89,6 +90,9 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 ## Quick start
+
+> [!TIP]
+> Only using Claude Desktop or Claude Code on one computer? [Run it locally](#run-it-locally-claude-desktop-and-claude-code) instead: no server, domain or tunnel.
 
 **You need:**
 - Docker with the compose plugin (or Python 3.11+)
@@ -146,6 +150,53 @@ Then ask Claude to email yourself. With the default settings nothing is sent: th
 ### Approving outgoing mail
 
 With the default `SEND_REQUIRES_APPROVAL=true`, `mail_send`, `mail_reply` and `mail_forward` return `queued_for_owner_approval` and nothing leaves. Open `https://<your-host>/outbox` (bookmark it, and only type the password there, never on a link an agent gives you), enter the owner password, review the exact recipients and text, then approve or discard. Queued messages expire after `OUTBOX_TTL_SECONDS` (24 hours by default) and are released at most once.
+
+## Run it locally (Claude Desktop and Claude Code)
+
+The same server can run on your own computer as a local MCP server. Your desktop client starts it when it needs it and talks to it over stdio, so there is no public address, tunnel, Docker or OAuth. Claude on the web and on your phone cannot reach it, which is the trade-off.
+
+**1. Put your settings in a file only you can read**
+
+```bash
+mkdir -p ~/.icloud-mcp && chmod 700 ~/.icloud-mcp
+cat > ~/.icloud-mcp/icloud.env <<'END'
+ICLOUD_USERNAME=you@icloud.com
+ICLOUD_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+ICLOUD_DISPLAY_NAME=Your Name
+DEFAULT_TIMEZONE=Europe/Berlin
+END
+chmod 600 ~/.icloud-mcp/icloud.env
+```
+
+Any setting from [Configuration](#configuration) can go in this file. `MCP_PUBLIC_URL` and `MCP_OWNER_PASSWORD` are not needed.
+
+**2. Add it to your client** (needs [uv](https://docs.astral.sh/uv/))
+
+Claude Code:
+
+```bash
+claude mcp add icloud -- uvx --from git+https://github.com/epinethrone/icloud-mcp icloud-mcp --local --env-file ~/.icloud-mcp/icloud.env
+```
+
+Claude Desktop: Settings → Developer → Edit Config, then add this to `claude_desktop_config.json` and restart Claude:
+
+```json
+{
+  "mcpServers": {
+    "icloud": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/epinethrone/icloud-mcp", "icloud-mcp", "--local",
+               "--env-file", "/Users/YOU/.icloud-mcp/icloud.env"]
+    }
+  }
+}
+```
+
+If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv, `pip install git+https://github.com/epinethrone/icloud-mcp` and use `icloud-mcp` as the command.
+
+**How sending works locally.** There is no approval page, so with the default `SEND_REQUIRES_APPROVAL=true` every message Claude sends is saved to your **Drafts** folder instead, and the result says so. You review it in Mail and press Send yourself. Set `SEND_REQUIRES_APPROVAL=false` to let Claude send directly; your client's own "ask before use" setting is then the only check.
+
+**Reminders, Notes and iCloud Drive locally.** Add `ENABLE_REMINDERS=true` (and/or `ENABLE_NOTES`, `ENABLE_DRIVE`) and a `BRIDGE_TOKEN` to the env file, start your client once, then [install the Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) with server `https://127.0.0.1:8001` and the fingerprint from `~/.icloud-mcp/bridge_fingerprint.txt`. In local mode the bridge only listens on `127.0.0.1`. If two clients start the server at once, only the first gets the Mac tools; Mail, Calendar and Contacts work in both.
 
 ## Tools
 
@@ -265,6 +316,7 @@ Everything is an environment variable. [`.env.example`](.env.example) has a comm
 | `ENABLE_MAIL`, `ENABLE_CALENDAR`, `ENABLE_CONTACTS` | true | Switch whole areas off |
 | `ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE` | false | Areas that go through the Mac helper (need `BRIDGE_TOKEN`) |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
+| `BRIDGE_HOST` | 0.0.0.0 (127.0.0.1 in local mode) | Address the bridge binds to inside the process. Use 127.0.0.1 when the server runs directly on the helper's Mac |
 | `BRIDGE_JOB_TIMEOUT_SECONDS` | 60 | How long a tool call waits for the Mac |
 | `READ_ONLY` | false | No sending, moving, deleting, or calendar, contact, reminder, note or file changes |
 | `ALLOW_SEND` | true | false = agents can only save drafts |
