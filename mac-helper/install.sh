@@ -14,11 +14,19 @@ LOGDIR="$HOME/Library/Logs/icloud-mac-helper"
 [ "$(uname)" = "Darwin" ] || { echo "This helper only runs on macOS." >&2; exit 1; }
 # Prefer Apple's own python3. macOS lets Apple-signed programs reach the local network, but blocks a Homebrew or python.org python
 # ("No route to host") until it is granted Local Network access, which a background service cannot easily be given.
+# Best of all is the Command Line Tools Python started as its app program: macOS applies a Full Disk Access grant for "Python" (needed
+# for iCloud Drive) only to that executable, never to /usr/bin/python3, which is a launcher outside the app and is judged by its path.
+# It also does not depend on Xcode, which can move its own Python on an update.
 PY=""
-if [ -x /usr/bin/python3 ] && xcode-select -p >/dev/null 2>&1; then PY=/usr/bin/python3; else PY="$(command -v python3 || true)"; fi
+for c in /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/*/Resources/Python.app/Contents/MacOS/Python; do
+  [ -x "$c" ] && PY="$c"
+done
+if [ -z "$PY" ]; then
+  if [ -x /usr/bin/python3 ] && xcode-select -p >/dev/null 2>&1; then PY=/usr/bin/python3; else PY="$(command -v python3 || true)"; fi
+fi
 [ -n "$PY" ] || { echo "python3 is required. Install the command line tools with: xcode-select --install" >&2; exit 1; }
 echo "Using $PY ($("$PY" --version 2>&1))"
-case "$PY" in /usr/bin/python3) ;; *) echo "Note: this is not Apple's python3. If the connection fails with 'No route to host', run: xcode-select --install, then re-run this installer." ;; esac
+case "$PY" in /usr/bin/python3|/Library/Developer/CommandLineTools/*) ;; *) echo "Note: this is not Apple's python3. If the connection fails with 'No route to host', run: xcode-select --install, then re-run this installer." ;; esac
 command -v osascript >/dev/null || { echo "osascript was not found." >&2; exit 1; }
 # Always through xcrun: the bare toolchain swiftc (what `xcrun --find` prints) does not know the SDK and cannot find the standard library.
 xcrun --sdk macosx --find swiftc >/dev/null 2>&1 || { echo "swiftc was not found (Reminders needs it to build the helper's EventKit program). Install the command line tools with: xcode-select --install" >&2; exit 1; }
