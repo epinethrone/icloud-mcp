@@ -257,3 +257,26 @@ def test_creating_a_note_escapes_html_and_keeps_line_breaks():
 def test_the_selftest_only_note_delete_removes_exactly_one_note():
     _, state = ok("selftest_note_delete", {"id": "n1"})
     assert [n["id"] for f in state["notes"]["folders"] for n in f["notes"]] == ["n2", "n3", "n4"]
+
+
+def _note_ids(state):
+    return [n["id"] for f in state["notes"]["folders"] for n in f["notes"]]
+
+
+def test_note_delete_needs_the_matching_title_and_removes_exactly_one_note():
+    deleted, state = ok("note_delete", {"id": "n1", "title": "  shopping   IDEAS "})           # whitespace and case do not matter
+    assert deleted["deleted"] == "n1" and deleted["title"] == "Shopping ideas" and "30 days" in deleted["recoverable"]
+    assert _note_ids(state) == ["n2", "n3", "n4"]
+    r = fails("note_delete", {"id": "n2", "title": "Shopping ideas"}, "title does not match")  # right title, wrong id
+    assert "Trip plan" in r["error"]
+    fails("note_delete", {"id": "nope", "title": "x"}, "not found")
+
+
+def test_note_delete_never_touches_locked_notes_or_recently_deleted():
+    fails("note_delete", {"id": "n3", "title": "Secret"}, "locked")
+    fx = json.loads(json.dumps(FIXTURE))
+    fx["notes"]["accounts"][0]["folders"].append({"id": "f9", "name": "Recently Deleted", "notes": [
+        {"id": "d1", "name": "Gone soon", "plaintext": "Gone soon", "modificationDate": "2026-09-01T10:00:00Z", "creationDate": "2026-09-01T10:00:00Z"}]})
+    r = fails("note_delete", {"id": "d1", "title": "Gone soon"}, "already in Recently Deleted", fixture=fx)
+    fx["notes"]["accounts"][0]["folders"][-1]["name"] = "Onlangs verwijderd"                     # Dutch system language
+    fails("note_delete", {"id": "d1", "title": "Gone soon"}, "already in Recently Deleted", fixture=fx)
