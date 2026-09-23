@@ -1,0 +1,535 @@
+#!/usr/bin/env python3
+"""icloud-mac-helper: lets the icloud-mcp server use Reminders and Notes on this Mac.
+
+It connects OUT to the server's private HTTPS port and asks for work. It opens no listening port. It performs only the fixed
+operations in OPS. Reminders operations run bin/reminders-eventkit (EventKit, built from eventkit/ by install.sh); Notes operations
+run a static script in ops/. Either way the arguments travel as ONE JSON argv entry, never as code.
+The server is identified by a pinned certificate fingerprint and authenticated with a bearer token.
+
+Portions of the ops/ scripts are adapted from MrGo2/icloud-mcp (MIT), see THIRD_PARTY_NOTICES.md.
+Only the Python standard library is used, so it runs on the python3 that ships with the macOS command line tools.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime
+import hashlib
+import hmac
+import http.client
+import io
+import json
+import os
+import platform
+import plistlib
+import re
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+from urllib.parse import urlsplit
+
+VERSION = "0.2.0"
+HERE = os.path.dirname(os.path.abspath(__file__))
+OPS_DIR = os.path.join(HERE, "ops")
+DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
+MAX_OUTPUT = 2 * 1024 * 1024        # largest script result accepted
+MAX_RESPONSE = 1024 * 1024          # largest server response accepted
+
+# The fixed operations, identical to the server's table (tests keep them in sync): name -> {argument: (type, required, max)}.
+OPS = {
+    # Reminders
+    "reminder_lists": {},
+    "reminders_list": {"list": ("str", False, 200), "list_id": ("str", False, 200), "query": ("str", False, 200), "refresh": ("bool", False, 0),
+                       "limit": ("int", False, 200)},
+    "reminder_create": {"title": ("str", True, 500), "list": ("str", False, 200), "list_id": ("str", False, 200), "notes": ("str", False, 20000), "due": ("iso", False, 40),
+                        "priority": ("int", False, 9)},
+    "reminder_update": {"id": ("str", True, 500), "title": ("str", False, 500), "notes": ("str", False, 20000), "due": ("iso", False, 40),
+                        "clear_due": ("bool", False, 0), "priority": ("int", False, 9)},
+    "reminder_complete": {"id": ("str", True, 500), "completed": ("bool", False, 0)},
+    "reminder_delete": {"id": ("str", True, 500)},
+    # Notes
+    "note_folders": {},
+    "notes_list": {"folder": ("str", False, 200), "query": ("str", False, 200), "search_body": ("bool", False, 0), "limit": ("int", False, 100)},
+    "note_read": {"id": ("str", True, 500), "max_chars": ("int", False, 100000)},
+    "note_create": {"title": ("str", True, 500), "body": ("str", False, 100000), "folder": ("str", False, 200)},
+    "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
+    "note_folder_create": {"name": ("str", True, 200), "account": ("str", False, 200), "parent_id": ("str", False, 500)},
+    "note_move": {"id": ("str", True, 500), "title": ("str", True, 500), "folder_id": ("str", False, 500), "folder": ("str", False, 200)},
+    # iCloud Drive (paths are relative to the Drive; see ops/drive.py)
+    "drive_list": {"path": ("str", False, 1000), "include_hidden": ("bool", False, 0), "limit": ("int", False, 1000)},
+    "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
+    "drive_info": {"path": ("str", True, 1000)},
+    "drive_read": {"path": ("str", True, 1000), "max_chars": ("int", False, 200000), "offset": ("int", False, 50000000)},
+    "drive_write": {"path": ("str", True, 1000), "content": ("str", False, 500000), "overwrite": ("bool", False, 0)},
+    "drive_mkdir": {"path": ("str", True, 1000)},
+    "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
+    "drive_trash": {"path": ("str", True, 1000)},
+}
+# Reminders: one EventKit binary, one process per operation (measured ~21 ms fixed cost, 20-40 ms per operation end to end, against
+# 0.5-22 s for the JXA scripts, which scan a whole list per request). There is deliberately NO fallback to the JXA Reminders scripts:
+# they use "x-apple-reminder://" ids and a position cache, so a silent fallback would reject ids handed out by EventKit and hide a broken
+# install behind 20-second requests. The JXA Reminders scripts stay in ops/ only as reference for what EventKit cannot do (subtasks, tags,
+# sections, attachments); nothing here runs them.
+EVENTKIT_BIN = os.path.join(HERE, "bin", "reminders-eventkit")
+# iCloud Drive: plain file operations, run by Apple's own Python (the one running this helper) from a fixed script with one JSON argument.
+DRIVE_SCRIPT = os.path.join(OPS_DIR, "drive.py")
+DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
+EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete"})
+REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
+OP_FILES = {
+    "note_folders": "note_folders.js", "notes_list": "notes_list.js", "note_read": "note_read.js", "note_create": "note_create.js",
+    "note_delete": "note_delete.js", "note_folder_create": "note_folder_create.js", "note_move": "note_move.js",
+}
+
+_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
+
+
+def _iso_ok(value):
+    """A well-formed ISO 8601 date or date-time that is also a REAL date and time (identical to the server's check)."""
+    m = _ISO.match(value)
+    if not m:
+        return False
+    try:
+        datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return False
+    if m.group(4) is not None and not (int(m.group(4)) <= 23 and int(m.group(5)) <= 59 and (m.group(6) is None or int(m.group(6)) <= 59)):
+        return False
+    off = m.group(7)
+    return not (off and off != "Z" and (int(off[1:3]) > 23 or int(off[-2:]) > 59))
+
+
+class HelperError(Exception):
+    pass
+
+
+def validate_args(op, args):
+    spec = OPS.get(op)
+    if spec is None:
+        raise HelperError("unknown operation %r" % (op,))
+    args = {} if args is None else args
+    if not isinstance(args, dict):
+        raise HelperError("arguments must be an object")
+    clean = {}
+    for key, value in args.items():
+        if key not in spec:
+            raise HelperError("operation %s does not take %r" % (op, key))
+        kind, _required, limit = spec[key]
+        if value is None:
+            clean[key] = None
+        elif kind == "str":
+            if not isinstance(value, str) or len(value) > limit:
+                raise HelperError("%s must be text of at most %d characters" % (key, limit))
+            clean[key] = value
+        elif kind == "int":
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= limit:
+                raise HelperError("%s must be a whole number between 0 and %d" % (key, limit))
+            clean[key] = value
+        elif kind == "bool":
+            if not isinstance(value, bool):
+                raise HelperError("%s must be true or false" % key)
+            clean[key] = value
+        elif kind == "iso":
+            if not isinstance(value, str) or len(value) > 40 or not _iso_ok(value):
+                raise HelperError("%s must be an ISO 8601 date or date-time" % key)
+            clean[key] = value
+        else:
+            raise HelperError("unsupported argument type %s" % kind)
+    missing = [k for k, (_t, required, _m) in spec.items() if required and clean.get(k) is None]
+    if missing:
+        raise HelperError("operation %s needs: %s" % (op, ", ".join(missing)))
+    return clean
+
+
+def _friendly(stderr):
+    text = stderr.strip()
+    if "-1743" in text or "Not authorized" in text:
+        return ("macOS has not allowed this helper to control the app. Open System Settings > Privacy & Security > Automation and "
+                "enable it for the helper (python3 / osascript), then try again.")
+    if "-1728" in text or "-1719" in text:
+        return "the requested list, folder or item was not found"
+    # Our own scripts raise readable errors ("several lists are named ...", "invalid due date"): show that text without osascript's wrapping.
+    last = text.splitlines()[-1] if text else ""
+    m = re.search(r"execution error: (?:Error: )?(.+?)(?: \(-?\d+\))?\s*$", last)
+    return (m.group(1) if m else text)[:300] or "the script failed"
+
+
+def explain(e):
+    """Turn a low-level network error into something a person can act on."""
+    if isinstance(e, OSError) and getattr(e, "errno", None) in (65, 113):        # EHOSTUNREACH on macOS / Linux
+        return ("%s. On macOS this usually means the local network is blocked for this program (macOS does that to third-party Python). "
+                "Use Apple's own /usr/bin/python3 (install it with: xcode-select --install), or allow it in System Settings > Privacy & "
+                "Security > Local Network. Also check the server address and that this Mac is on the home network or VPN." % e)
+    return str(e)
+
+
+def build_command(op, args):
+    """The exact command line: a fixed program (the EventKit binary, or osascript with a static script file) plus ONE JSON argument.
+    No -e, no generated source."""
+    payload = json.dumps(args, separators=(",", ":"))
+    if op in EVENTKIT_OPS:
+        return [EVENTKIT_BIN, op, payload]
+    if op in DRIVE_OPS:
+        return [sys.executable, "-I", DRIVE_SCRIPT, op, payload]
+    return ["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
+
+
+def run_op(op, args, timeout=60, extra=None):
+    """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
+    `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
+    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS):
+        return False, None, "unknown operation"
+    try:
+        clean = validate_args(op, args)
+    except HelperError as e:
+        return False, None, str(e)
+    if op in DRIVE_OPS:                                                   # how long a read may wait for an offloaded file
+        clean = dict(clean, budget=max(1, timeout - 10))
+    if extra:
+        clean = dict(clean, **extra)
+    try:
+        proc = subprocess.run(build_command(op, clean), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, None, "the script did not finish within %ds and was stopped" % timeout
+    except (FileNotFoundError, PermissionError):
+        if op in EVENTKIT_OPS:
+            return False, None, "the Reminders program (bin/reminders-eventkit) is missing or not executable; run install.sh again on this Mac"
+        return False, None, "osascript was not found (this helper only runs on macOS)"
+    if proc.returncode != 0:
+        return False, None, _friendly(proc.stderr.decode("utf-8", "replace"))
+    if len(proc.stdout) > MAX_OUTPUT:
+        return False, None, "the result was too large"
+    try:
+        return True, json.loads(proc.stdout.decode("utf-8")), ""
+    except ValueError:
+        return False, None, "the script returned something that is not JSON"
+
+
+# ---------------------------------------------------------------------------
+# Talking to the server (TLS with a pinned certificate fingerprint + bearer token)
+# ---------------------------------------------------------------------------
+def load_config(path=None):
+    path = path or os.environ.get("ICLOUD_MAC_HELPER_CONFIG") or DEFAULT_CONFIG
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError) as e:
+        raise HelperError("cannot read the config file %s (%s). Run install.sh first." % (path, e))
+    for key in ("server", "token", "fingerprint"):
+        if not cfg.get(key):
+            raise HelperError("the config file is missing %r" % key)
+    try:
+        if os.stat(path).st_mode & 0o077:
+            print("warning: %s is readable by other users; run: chmod 600 %s" % (path, path), file=sys.stderr)
+    except OSError:
+        pass
+    return cfg
+
+
+def _norm_fp(value):
+    return re.sub(r"[^0-9a-f]", "", value.lower().replace("sha256:", ""))
+
+
+def _connect(cfg, timeout):
+    parts = urlsplit(cfg["server"])
+    if parts.scheme != "https" or not parts.hostname:
+        raise HelperError("the server address must start with https://")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE                                   # identity is checked by fingerprint below, not by a CA
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    conn = http.client.HTTPSConnection(parts.hostname, parts.port or 443, timeout=timeout, context=ctx)
+    conn.connect()
+    seen = hashlib.sha256(conn.sock.getpeercert(binary_form=True)).hexdigest()
+    if not hmac.compare_digest(seen, _norm_fp(cfg["fingerprint"])):
+        conn.close()
+        raise HelperError("the server's certificate does not match the pinned fingerprint. Nothing was sent. If you reinstalled the "
+                          "server, copy its new fingerprint into the config.")
+    return conn
+
+
+def request(cfg, method, path, payload=None, timeout=40):
+    conn = _connect(cfg, timeout)
+    try:
+        body = None if payload is None else json.dumps(payload).encode()
+        headers = {"Authorization": "Bearer " + cfg["token"], "Content-Type": "application/json", "User-Agent": "icloud-mac-helper/" + VERSION}
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        raw = resp.read(MAX_RESPONSE + 1)
+        if len(raw) > MAX_RESPONSE:
+            raise HelperError("the server response was too large")
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else None
+        except ValueError:
+            data = None
+        return resp.status, data
+    finally:
+        conn.close()
+
+
+def handle_one(cfg, runner=run_op, wait=25):
+    """One poll cycle. Returns 'idle', 'done' or 'refused'."""
+    meta = {"wait": wait, "host": socket.gethostname(), "version": VERSION, "os": "macOS " + platform.mac_ver()[0]}
+    status, job = request(cfg, "POST", "/bridge/poll", meta, timeout=wait + 15)
+    if status == 204:
+        return "idle"
+    if status in (401, 429):
+        return "refused"
+    if status != 200 or not isinstance(job, dict) or "id" not in job:
+        raise HelperError("unexpected answer from the server (HTTP %s)" % status)
+    ok, result, error = runner(str(job.get("op", "")), job.get("args") or {}, max(1, min(int(job.get("seconds", 60)), 120)))
+    request(cfg, "POST", "/bridge/result", {"job": job["id"], "ok": ok, "result": result, "error": error})
+    return "done"
+
+
+def run_forever(cfg_path=None):
+    backoff = 2
+    while True:
+        try:
+            cfg = load_config(cfg_path)
+            outcome = handle_one(cfg, runner=run_op)
+            backoff = 2
+            if outcome == "refused":
+                print("the server refused the token; retrying in 60s", file=sys.stderr, flush=True)
+                time.sleep(60)
+        except (HelperError, OSError, ssl.SSLError, http.client.HTTPException) as e:
+            print("cannot reach the server: %s (retrying in %ds)" % (explain(e), backoff), file=sys.stderr, flush=True)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+
+
+# ---------------------------------------------------------------------------
+# Self-test: prints ONE JSON document with pass/fail, counts and timings. No secrets and no reminder or note content.
+# ---------------------------------------------------------------------------
+HOSTILE = [
+    'plain', 'quote " and \\ backslash', "single ' quote", "line1\nline2\ttab", "unicode: café 日本語 \U0001F642",
+    '"); do shell script "touch {marker}"; ("', "'); $.system('touch {marker}'); ('", "${1+1} `date` $(date)", "\\u0022; throw 1; \\u0022",
+]
+
+
+def selftest(cfg_path=None):
+    report = {"helper_version": VERSION, "python": sys.version.split()[0], "macos": platform.mac_ver()[0], "checks": {}}
+    checks = report["checks"]
+    osa = shutil.which("osascript")
+    checks["platform"] = {"ok": platform.system() == "Darwin" and bool(osa), "osascript": bool(osa)}
+    if not checks["platform"]["ok"]:
+        print(json.dumps(report, indent=2))
+        return 1
+
+    marker = os.path.join(tempfile.gettempdir(), "icloud-helper-injection-marker-%d" % os.getpid())
+    payload = [s.replace("{marker}", marker) for s in HOSTILE]
+    try:
+        proc = subprocess.run(["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, "selftest_echo.js"), json.dumps(payload)],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        echoed = json.loads(proc.stdout.decode("utf-8")) if proc.returncode == 0 else None
+    except (subprocess.TimeoutExpired, ValueError):
+        echoed = None
+    checks["argument_passing"] = {"ok": echoed == payload and not os.path.exists(marker), "round_trip_exact": echoed == payload,
+                                  "injection_marker_created": os.path.exists(marker), "cases": len(payload)}
+    if os.path.exists(marker):
+        os.unlink(marker)
+
+    # Reminders goes through EventKit, which needs its OWN grant (Full Access to Reminders for the helper's binary), separate from the
+    # Automation grant osascript uses for Notes. The binary reports every state other than "granted" as an error naming that grant.
+    checks["platform"]["reminders_binary"] = os.access(EVENTKIT_BIN, os.X_OK)
+    t0 = time.time()
+    ok, result, error = run_op("reminder_lists", {}, timeout=60)
+    checks["reminders_access"] = {"ok": ok, "seconds": round(time.time() - t0, 2)}
+    if ok:
+        checks["reminders_access"]["lists"] = len(result)
+    else:
+        checks["reminders_access"].update(error=error, status=_access_status(error), needs=REMINDERS_GRANT)
+
+    # Reading reminders: one live read of the active reminders in every list. Only counts and timings, never names or content.
+    t0 = time.time()
+    ok, result, error = run_op("reminders_list", {"limit": 200}, timeout=60) if checks["reminders_access"]["ok"] else (False, None, "skipped: no Reminders access")
+    checks["reminders_read"] = {"ok": ok, "seconds": round(time.time() - t0, 2)}
+    if ok:
+        checks["reminders_read"]["active"] = len(result["reminders"])
+    else:
+        checks["reminders_read"]["error"] = error
+
+    # Notes is optional: it only matters if the server has ENABLE_NOTES on, so a refusal here is reported but does not fail the self-test.
+    t0 = time.time()
+    ok, result, error = run_op("note_folders", {}, timeout=60)
+    checks["notes_access"] = {"ok": True, "available": ok, "seconds": round(time.time() - t0, 2)}
+    if ok:
+        checks["notes_access"]["folders"] = len(result)
+    else:
+        checks["notes_access"]["note"] = "Notes is not available yet (%s). Only needed if you enable Reminders AND Notes on the server." % error
+
+    try:
+        cfg = load_config(cfg_path)
+        t0 = time.time()
+        status, data = request(cfg, "GET", "/bridge/ping", timeout=15)
+        checks["server"] = {"ok": status == 200, "http_status": status, "seconds": round(time.time() - t0, 2)}
+        if status == 401:
+            checks["server"]["error"] = "the server rejected the token"
+    except (HelperError, OSError, ssl.SSLError, http.client.HTTPException) as e:
+        checks["server"] = {"ok": False, "error": explain(e)}
+    report["overall"] = "pass" if all(c["ok"] for c in checks.values()) else "fail"
+    print(json.dumps(report, indent=2))
+    return 0 if report["overall"] == "pass" else 1
+
+
+def _access_status(error):
+    """Which Reminders permission state an EventKit failure reports (the binary's wording), for the self-test report."""
+    for phrase, status in (("not yet asked", "notDetermined"), ("denied", "denied"), ("device policy", "restricted"), ("write-only", "writeOnly")):
+        if phrase in (error or ""):
+            return status
+    return "unknown"
+
+
+def selftest_write():
+    """Round-trips a temporary reminder and a temporary note through the real operations, then removes them. Touches your data, so it is
+    opt-in. It also proves that a reminder id in the old JXA form ("x-apple-reminder://...") still resolves."""
+    stamp = "icloud-mac-helper selftest %d" % int(time.time())
+    steps = []
+    rid = nid = None
+
+    def step(name, ok, detail=None):
+        steps.append({"step": name, "ok": bool(ok), **({"detail": detail} if detail else {})})
+        return ok
+
+    try:
+        ok, r, e = run_op("reminder_create", {"title": stamp, "notes": "temporary, safe to delete", "due": "2099-01-01"}, 120)
+        if step("reminder_create", ok, None if ok else e):
+            rid = r["id"]
+            ok, r2, e = run_op("reminders_list", {"list_id": r["list_id"], "query": stamp}, 120)
+            step("reminders_list finds it", ok and any(x["id"] == rid for x in r2["reminders"]), None if ok else e)
+            ok, r2, e = run_op("reminder_update", {"id": rid, "title": stamp + " (edited)", "priority": 1}, 120)
+            step("reminder_update", ok, None if ok else e)
+            ok, r2, e = run_op("reminder_update", {"id": "x-apple-reminder://" + rid, "notes": "edited through an old-style id"}, 120)
+            step("reminder_update with an old-style id", ok and r2["id"] == rid, None if ok else e)
+            ok, r2, e = run_op("reminder_complete", {"id": rid}, 120)
+            step("reminder_complete", ok, None if ok else e)
+    finally:
+        if rid:
+            ok, r2, e = run_op("reminder_delete", {"id": rid}, 120)
+            step("reminder_delete (cleanup)", ok, None if ok else e)
+
+    try:
+        ok, r, e = run_op("note_create", {"title": stamp, "body": "temporary, safe to delete <b>& \"quotes\"</b>"}, timeout=60)
+        if step("note_create", ok, None if ok else e):
+            nid = r["id"]
+            ok, r, e = run_op("note_read", {"id": nid}, timeout=60)
+            step("note_read round trip", ok and stamp in json.dumps(r), None if ok else e)
+    finally:
+        if nid:
+            try:
+                proc = subprocess.run(["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, "selftest_note_delete.js"), json.dumps({"id": nid})],
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                step("note delete (cleanup)", proc.returncode == 0, None if proc.returncode == 0 else proc.stderr.decode("utf-8", "replace")[:200])
+            except subprocess.TimeoutExpired:
+                step("note delete (cleanup)", False, "timed out; delete the note called '%s' by hand" % stamp)
+    overall = "pass" if all(s["ok"] for s in steps) else "fail"
+    print(json.dumps({"helper_version": VERSION, "steps": steps, "overall": overall}, indent=2))
+    return 0 if overall == "pass" else 1
+
+
+# ---------------------------------------------------------------------------
+# Running the self-tests the way the LaunchAgent runs
+#
+# macOS attributes a privacy grant to the RESPONSIBLE process. Started from Terminal, the EventKit binary and osascript are judged as
+# Terminal: the prompt names Terminal and the grant does nothing for the LaunchAgent. Started by launchd, the EventKit binary is judged as
+# itself (verified on macOS 27), so the prompt names "iCloud Mac Helper (Reminders)" and the grant is the one the agent uses. So a
+# self-test started anywhere but launchd re-runs itself as a one-shot launchd job and prints that job's report.
+# ---------------------------------------------------------------------------
+AGENT_LABEL = "local.icloud-mac-helper"              # the LaunchAgent install.sh creates
+PROBE_LABEL = AGENT_LABEL + ".selftest"               # the one-shot job the self-tests run in
+IN_LAUNCHD = "ICLOUD_MAC_HELPER_IN_LAUNCHD"
+
+
+def _agent_python():
+    """The interpreter the LaunchAgent uses, so the self-test is judged exactly as the agent is (install.sh passes it before the agent exists)."""
+    if os.environ.get("ICLOUD_MAC_HELPER_PYTHON"):
+        return os.environ["ICLOUD_MAC_HELPER_PYTHON"]
+    try:
+        with open(os.path.expanduser("~/Library/LaunchAgents/%s.plist" % AGENT_LABEL), "rb") as f:
+            return plistlib.load(f)["ProgramArguments"][0]
+    except (OSError, ValueError, KeyError, IndexError, TypeError, plistlib.InvalidFileException):
+        return "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
+
+
+def run_in_launchd(helper_args, timeout=300):
+    """Run this helper once as a launchd job in the login session; returns (exit code, the job's stdout)."""
+    uid = os.getuid()
+    work = tempfile.mkdtemp(prefix="icloud-mac-helper-selftest-")
+    out, err = os.path.join(work, "result.json"), os.path.join(work, "stderr.log")
+    plist = os.path.join(work, PROBE_LABEL + ".plist")
+    with open(plist, "wb") as f:
+        plistlib.dump({"Label": PROBE_LABEL, "ProgramArguments": [_agent_python(), os.path.abspath(__file__)] + list(helper_args) + ["--agent-out", out],
+                       "EnvironmentVariables": {IN_LAUNCHD: "1"}, "RunAtLoad": True, "StandardErrorPath": err}, f)
+    target = "gui/%d/%s" % (uid, PROBE_LABEL)
+    subprocess.run(["launchctl", "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        boot = subprocess.run(["launchctl", "bootstrap", "gui/%d" % uid, plist], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if boot.returncode != 0:
+            raise HelperError("could not start the self-test through launchd: %s" % (boot.stderr.decode("utf-8", "replace").strip() or boot.returncode))
+        deadline = time.time() + timeout
+        while not os.path.exists(out):
+            state = subprocess.run(["launchctl", "print", target], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode("utf-8", "replace")
+            if re.search(r"last exit code = -?\d", state) and not os.path.exists(out):     # it ran and exited without a report
+                try:
+                    with open(err, errors="replace") as f:
+                        detail = f.read().strip()[-300:]
+                except OSError:
+                    detail = ""
+                raise HelperError("the self-test stopped without a report: %s" % (detail or "no output"))
+            if time.time() > deadline:
+                raise HelperError("the self-test did not finish within %ds" % timeout)
+            time.sleep(0.25)
+        with open(out) as f:
+            res = json.load(f)
+        return res["exit"], res["stdout"]
+    finally:
+        subprocess.run(["launchctl", "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="icloud-mac-helper")
+    ap.add_argument("--config", help="path to the config file")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--run", action="store_true", help="run until stopped (what the LaunchAgent does)")
+    g.add_argument("--selftest", action="store_true", help="check this Mac and the connection, print a JSON report")
+    g.add_argument("--selftest-write", action="store_true", help="also create, edit and delete a temporary reminder and note (touches your data)")
+    ap.add_argument("--version", action="store_true")
+    ap.add_argument("--agent-out", help=argparse.SUPPRESS)          # internal: where a launchd-run self-test leaves its report
+    a = ap.parse_args()
+    if a.version:
+        print(VERSION)
+        return 0
+    if a.selftest or a.selftest_write:
+        if platform.system() == "Darwin" and os.environ.get(IN_LAUNCHD) != "1":
+            # The job gets launchd's environment, not this one: pass the config path as resolved HERE.
+            config = a.config or os.environ.get("ICLOUD_MAC_HELPER_CONFIG") or DEFAULT_CONFIG
+            args = ["--selftest" if a.selftest else "--selftest-write", "--config", config]
+            try:
+                code, text = run_in_launchd(args)
+            except HelperError as e:
+                print(json.dumps({"helper_version": VERSION, "overall": "fail", "error": str(e)}, indent=2))
+                return 1
+            sys.stdout.write(text)
+            return code
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf) if a.agent_out else contextlib.nullcontext():
+            code = selftest(a.config) if a.selftest else selftest_write()
+        if a.agent_out:
+            with open(a.agent_out + ".tmp", "w") as f:
+                json.dump({"exit": code, "stdout": buf.getvalue()}, f)
+            os.replace(a.agent_out + ".tmp", a.agent_out)
+        return code
+    if a.run:
+        run_forever(a.config)
+        return 0
+    ap.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

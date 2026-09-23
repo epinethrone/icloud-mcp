@@ -60,6 +60,13 @@ class Settings:
     enable_mail: bool
     enable_calendar: bool
     enable_contacts: bool
+    enable_reminders: bool        # Reminders via the Mac helper (opt-in; needs BRIDGE_TOKEN)
+    enable_notes: bool            # Notes via the Mac helper (opt-in; needs BRIDGE_TOKEN)
+    enable_drive: bool            # iCloud Drive via the Mac helper (opt-in; needs BRIDGE_TOKEN)
+    bridge_token: str             # shared secret of the Mac helper
+    bridge_port: int              # private HTTPS port the Mac helper polls (never served on the public port)
+    bridge_tls_names: tuple[str, ...]
+    bridge_job_timeout: int       # seconds to wait for the Mac before a tool call fails
     carddav_url: str
     carddav_username: str
     read_only: bool
@@ -111,6 +118,13 @@ class Settings:
             enable_mail=_bool("ENABLE_MAIL", True),
             enable_calendar=_bool("ENABLE_CALENDAR", True),
             enable_contacts=_bool("ENABLE_CONTACTS", True),
+            enable_reminders=_bool("ENABLE_REMINDERS", False),
+            enable_notes=_bool("ENABLE_NOTES", False),
+            enable_drive=_bool("ENABLE_DRIVE", False),
+            bridge_token=_str("BRIDGE_TOKEN"),
+            bridge_port=_int("BRIDGE_PORT", 8001),
+            bridge_tls_names=tuple(_list("BRIDGE_TLS_NAMES")),
+            bridge_job_timeout=_int("BRIDGE_JOB_TIMEOUT_SECONDS", 60),
             carddav_url=_str("CARDDAV_URL", "https://contacts.icloud.com"),
             carddav_username=_str("CARDDAV_USERNAME", username),
             read_only=_bool("READ_ONLY", False),
@@ -134,6 +148,10 @@ class Settings:
         )
 
     # ------------------------------------------------------------------
+    @property
+    def bridge_enabled(self) -> bool:
+        return self.enable_reminders or self.enable_notes or self.enable_drive
+
     @property
     def public_host(self) -> str:
         return urlparse(self.public_url).netloc
@@ -159,5 +177,11 @@ class Settings:
             raise SystemExit("MCP_PUBLIC_URL must be the public https:// URL of this server (no trailing path).")
         if len(self.owner_password) < 12:
             raise SystemExit("MCP_OWNER_PASSWORD must be set and at least 12 characters long.")
+        if self.bridge_enabled:
+            if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
+                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE need BRIDGE_TOKEN: a random secret of at least 32 characters "
+                                 "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
+            if self.bridge_token == self.owner_password:
+                raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")
         if not (self.enable_mail or self.enable_calendar or self.enable_contacts):
             raise SystemExit("ENABLE_MAIL, ENABLE_CALENDAR and ENABLE_CONTACTS are all false; nothing to serve.")
