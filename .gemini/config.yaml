@@ -1,0 +1,16 @@
+# Gemini Code Assist review settings (https://docs.cloud.google.com/gemini/docs/code-review/customize-repo-review)
+have_fun: false
+memory_config:
+  disabled: false
+code_review:
+  disable: false
+  comment_severity_threshold: MEDIUM   # skip LOW-severity nitpicks
+  max_review_comments: 20
+  pull_request_opened:
+    help: false
+    summary: false                     # CodeRabbit already posts a summary
+    code_review: true
+    include_drafts: false
+ignore_patterns:
+  - "assets/**"
+  - "src/icloud_mcp/static/**"
