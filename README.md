@@ -25,7 +25,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 
 ## Why iCloud MCP
 
-| | |
+| Feature | What it means for you |
 |---|---|
 | 🍎 **All of iCloud in one connector** | 46 tools across Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive, instead of a separate integration for each. |
 | 🔐 **Your credentials never leave your server** | Apple offers no OAuth for these protocols, so an app-specific password lives only in your server's environment. Claude signs in to *your* server through its own single-owner OAuth and never sees it. |
@@ -45,11 +45,15 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 ## How it works
 
 ```mermaid
-flowchart LR
-    C["🤖 Claude<br/>(or any MCP client)"] -- "OAuth + MCP over HTTPS" --> S["🖥️ icloud-mcp<br/>your server"]
-    S -- "IMAP · SMTP · CalDAV · CardDAV" --> I["☁️ iCloud<br/>Mail · Calendar · Contacts"]
-    M["💻 Mac helper<br/>(optional)"] -- "polls out over pinned TLS" --> S
-    M -- "EventKit · AppleScript · files" --> A["Reminders · Notes · iCloud Drive"]
+flowchart TB
+    C["<b>Claude</b><br/>or any MCP client"] -->|"OAuth + MCP over HTTPS"| S["<b>icloud-mcp</b><br/>on your server"]
+    M["<b>Mac helper</b><br/>optional"] -->|"polls out over pinned TLS"| S
+    S -->|"IMAP · SMTP · CalDAV · CardDAV"| I["<b>iCloud</b><br/>Mail · Calendar · Contacts"]
+    M -->|"EventKit · scripts · files"| A["<b>On your Mac</b><br/>Reminders · Notes · iCloud Drive"]
+    classDef you fill:#eef6ff,stroke:#0969da,color:#0b1f33
+    classDef apple fill:#f6f8fa,stroke:#57606a,color:#1f2328
+    class S,M you
+    class I,A apple
 ```
 
 The server runs anywhere Docker runs (a home server, a Raspberry Pi, a small VPS) behind a public HTTPS address such as a Cloudflare Tunnel. The Mac helper is only needed for Reminders, Notes and iCloud Drive. It connects *out* to the server, so your Mac never opens a port.
@@ -136,7 +140,7 @@ With the default `SEND_REQUIRES_APPROVAL=true`, `mail_send`, `mail_reply` and `m
 <details>
 <summary><b>📧 Mail</b> (13)</summary>
 
-| | |
+| Kind | Tools |
 |---|---|
 | Read | `mail_list_folders`, `mail_search`, `mail_find_correspondent`, `mail_get_message`, `mail_get_thread`, `mail_get_attachment` |
 | Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder` |
