@@ -40,7 +40,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 | ✋ **You approve what leaves** | Outgoing mail is queued for your approval in a browser by default. Invitations to other people are blocked unless you allow them. Deletes go to the Trash. |
 | 🛡️ **Built for prompt injection** | Every email, event, note and file is marked as untrusted data, and the dangerous actions are gated by configuration rather than by asking the model nicely. |
 | 💻 **Server or no server** | Host it once for Claude on the web and your phone, or run it locally for Claude Desktop and Claude Code with one command: no domain, tunnel or Docker needed. |
-| 🧪 **Tested against the real iCloud** | 297 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
+| 🧪 **Tested against the real iCloud** | 298 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
 
 ## What you can ask Claude
 
@@ -231,6 +231,7 @@ If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv
 
 - Multiple calendars, recurring events expanded when listing, all-day events, alerts, links, notes and attendees. Editing or deleting a recurring event changes the whole series, or just one date when you pass `occurrence_start` (the rest of the series is left alone).
 - **Finding free time is one call.** `calendar_find_free_time` returns openings of a given length within your hours and chosen weekdays. Travel time counts as busy; events marked free, cancelled events and invitations you declined do not; all-day events are listed separately instead of guessed about.
+- **Know whether an invitation went out.** After inviting people, the result reports what iCloud recorded for each guest (sent, delivered, or refused, for example a mistyped address), so an agent never claims someone was invited when they were not.
 - **Answer invitations.** `calendar_rsvp` accepts, declines or marks tentative, for the whole series or one date; iCloud emails the organizer itself.
 - **Safe to retry.** `calendar_create_event` and `contacts_create` take an optional `request_id`: if a call times out and is retried with the same one, the first attempt is found instead of creating a duplicate.
 - **Apple travel time and map locations.** Events can carry Apple's travel time (by bike, on foot, by car or public transport) and a structured destination, which is what makes Apple draw the map card.
