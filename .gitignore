@@ -12,6 +12,7 @@
 !Dockerfile
 !docker-compose.yml
 !pyproject.toml
+!server.json
 !configure.sh
 !THIRD_PARTY_NOTICES.md
 !mac-helper/

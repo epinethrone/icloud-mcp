@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.epinethrone/icloud-mcp",
+  "title": "iCloud",
+  "description": "iCloud Mail, Calendar, Contacts, Reminders, Notes and Drive. Approval-first, self-hosted or local.",
+  "repository": {
+    "url": "https://github.com/epinethrone/icloud-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/epinethrone/icloud-mcp",
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "icloud-mcp-server",
+      "version": "0.2.0",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        { "type": "positional", "value": "--local", "description": "Run over stdio for a desktop client on this computer." }
+      ],
+      "environmentVariables": [
+        { "name": "ICLOUD_USERNAME", "description": "Your Apple Account email.", "isRequired": true },
+        { "name": "ICLOUD_APP_PASSWORD", "description": "An app-specific password from account.apple.com (not your Apple password).", "isRequired": true, "isSecret": true },
+        { "name": "ICLOUD_DISPLAY_NAME", "description": "Name shown on mail you send." },
+        { "name": "DEFAULT_TIMEZONE", "description": "IANA timezone for calendar times, e.g. Europe/Berlin.", "default": "UTC" },
+        { "name": "SEND_REQUIRES_APPROVAL", "description": "true: mail Claude sends is saved to Drafts for you to send. false: sent directly.", "default": "true", "choices": ["true", "false"] }
+      ]
+    }
+  ]
+}
