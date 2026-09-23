@@ -33,7 +33,7 @@ In Claude you can additionally set the send, reply, forward and delete tools to 
 | Calendar | `calendar_list_calendars`, `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event` |
 | Contacts | `contacts_search`, `contacts_get`, `contacts_create`, `contacts_update`, `contacts_delete` (notes and photos are never returned) |
 | Reminders (Mac helper) | `reminders_lists`, `reminders_list` (active reminders only), `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete` |
-| Notes (Mac helper) | `notes_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_delete` (existing notes are never edited; delete moves one note to Recently Deleted, needs its current title, and refuses locked notes and notes already in Recently Deleted) |
+| Notes (Mac helper) | `notes_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_create_folder`, `notes_move`, `notes_delete` (note text is never edited; move and delete act on one note at a time and need its current title; delete moves it to Recently Deleted and refuses locked notes and notes already there; nothing is ever moved into Recently Deleted) |
 | Helper status | `mac_helper_status` (is the Mac helper online?) |
 
 Behaviour worth knowing:

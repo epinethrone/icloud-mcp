@@ -740,6 +740,29 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
                     there would be permanent). One note per call: to clear several, call it once per note."""
                     return {"deleted": bridge.call("note_delete", {"id": id, "title": title})}
 
+                @mcp.tool(annotations=_WRITE)
+                @_guard
+                def notes_create_folder(
+                    name: Annotated[str, _d("The new folder's name.")],
+                    account: Annotated[str | None, _d("Account name from notes_folders (e.g. 'iCloud'). Omit for the default Notes account.")] = None,
+                    parent_folder_id: Annotated[str | None, _d("Folder id from notes_folders, to create a subfolder inside it.")] = None,
+                ) -> dict[str, Any]:
+                    """Create a Notes folder (or a subfolder). If one with that name already exists in the same place, that folder is
+                    returned with existed: true and nothing is created. Returns the folder id to use with notes_move."""
+                    return {"folder": bridge.call("note_folder_create", _given(name=name, account=account, parent_id=parent_folder_id))}
+
+                @mcp.tool(annotations=_IDEMPOTENT_WRITE)
+                @_guard
+                def notes_move(
+                    id: Annotated[str, _d("Note id from notes_list.")],
+                    title: Annotated[str, _d("The note's current title, exactly as notes_list returned it. A mismatch moves nothing.")],
+                    folder_id: Annotated[str | None, _d("Destination folder id from notes_folders or notes_create_folder (preferred).")] = None,
+                    folder: Annotated[str | None, _d("Destination folder name, if no id; refused when several folders share the name.")] = None,
+                ) -> dict[str, Any]:
+                    """Move one note into another folder. Give the destination as folder_id (preferred) or folder. Moving into Recently
+                    Deleted is refused: use notes_delete for that. One note per call."""
+                    return {"moved": bridge.call("note_move", _given(id=id, title=title, folder_id=folder_id, folder=folder))}
+
     return mcp, provider
 
 
