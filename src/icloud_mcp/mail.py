@@ -575,7 +575,21 @@ class MailService:
                 out.append({"name": name, "special_use": special, "total": total, "unseen": unseen})
             return out
 
-    def _summaries(self, c: IMAPClient, folder: str, uids: list[int]) -> list[dict[str, Any]]:
+    @staticmethod
+    def _select(c: IMAPClient, folder: str, *, readonly: bool = True, expect: int | None = None) -> int | None:
+        """Select a folder and return its UIDVALIDITY. A uid only means something together with the folder's UIDVALIDITY:
+        if the server renumbered the folder, an old uid can point at a different message. When the caller passes the value
+        it saw (`expect`) and it no longer matches, refuse instead of acting on the wrong mail."""
+        info = c.select_folder(folder, readonly=readonly) or {}
+        raw = info.get(b"UIDVALIDITY") if isinstance(info, dict) else None
+        current = int(raw) if raw is not None else None
+        if expect is not None and (current is None or int(expect) != current):
+            raise MailError(f"The uids for '{folder}' are out of date: the server renumbered this folder since they were read "
+                            f"(uidvalidity {expect} is now {current if current is not None else 'unavailable'}). "
+                            "Search again and use the new uids.")
+        return current
+
+    def _summaries(self, c: IMAPClient, folder: str, uids: list[int], uidvalidity: int | None = None) -> list[dict[str, Any]]:
         if not uids:
             return []
         items = ["FLAGS", "RFC822.SIZE", "INTERNALDATE", "BODYSTRUCTURE", f"BODY.PEEK[HEADER.FIELDS ({HEADER_FIELDS})]"]
@@ -592,6 +606,7 @@ class MailService:
                 {
                     "uid": uid,
                     "folder": folder,
+                    **({"uidvalidity": uidvalidity} if uidvalidity is not None else {}),
                     "message_id": _hdr(hdr, "Message-ID"),
                     "subject": _hdr(hdr, "Subject") or "(no subject)",
                     "from": addrs_json(parse_addrs(hdr.get_all("From", []))),
@@ -648,38 +663,41 @@ class MailService:
         limit = max(1, min(int(limit), 100))
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            c.select_folder(folder, readonly=True)
+            uv = self._select(c, folder)
             uids = sorted(c.search(crit, charset=charset), reverse=True)
             page = uids[offset : offset + limit]
             return {
                 "notice": UNTRUSTED_NOTICE,
                 "folder": folder,
+                **({"uidvalidity": uv} if uv is not None else {}),
                 "total_matches": len(uids),
                 "offset": offset,
                 "returned": len(page),
-                "messages": self._summaries(c, folder, page),
+                "messages": self._summaries(c, folder, page, uv),
             }
 
-    def _fetch_raw(self, c: IMAPClient, folder: str, uid: int, *, readonly: bool = True) -> tuple[bytes, tuple[Any, ...], datetime | None]:
-        c.select_folder(folder, readonly=readonly)
+    def _fetch_raw(self, c: IMAPClient, folder: str, uid: int, *, readonly: bool = True,
+                   uidvalidity: int | None = None) -> tuple[bytes, tuple[Any, ...], datetime | None, int | None]:
+        uv = self._select(c, folder, readonly=readonly, expect=uidvalidity)
         data = c.fetch([uid], ["BODY.PEEK[]", "FLAGS", "INTERNALDATE"])
         d = data.get(uid)
         if not d:
             raise MailError(f"No message with uid {uid} in '{folder}'.")
         raw = d.get(b"BODY[]") or b""
-        return raw, d.get(b"FLAGS", ()), d.get(b"INTERNALDATE")
+        return raw, d.get(b"FLAGS", ()), d.get(b"INTERNALDATE"), uv
 
-    def get_message(self, folder: str, uid: int, *, include_html: bool = False, mark_read: bool = False) -> dict[str, Any]:
+    def get_message(self, folder: str, uid: int, *, include_html: bool = False, mark_read: bool = False,
+                    uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            raw, flags, internal = self._fetch_raw(c, folder, uid, readonly=not mark_read)
+            raw, flags, internal, uv = self._fetch_raw(c, folder, uid, readonly=not mark_read, uidvalidity=uidvalidity)
             if mark_read:
                 c.add_flags([uid], [SEEN])
                 flags = tuple(flags) + (SEEN.encode(),)
-        return {"notice": UNTRUSTED_NOTICE,
-                **self._message_view(folder, uid, raw, flags, internal, body_chars=self.s.max_body_chars, include_html=include_html)}
+        return {"notice": UNTRUSTED_NOTICE, **self._message_view(folder, uid, raw, flags, internal, body_chars=self.s.max_body_chars,
+                                                                 include_html=include_html, uidvalidity=uv)}
 
-    def get_messages(self, folder: str, uids: list[int], *, body_chars: int | None = None) -> dict[str, Any]:
+    def get_messages(self, folder: str, uids: list[int], *, body_chars: int | None = None, uidvalidity: int | None = None) -> dict[str, Any]:
         """Several messages from one folder in a single IMAP FETCH, in the order asked for. Never marks anything read."""
         wanted = list(dict.fromkeys(int(u) for u in uids))
         if not wanted:
@@ -689,7 +707,7 @@ class MailService:
         limit = max(200, min(body_chars or DEFAULT_BULK_BODY_CHARS, self.s.max_body_chars))
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            c.select_folder(folder, readonly=True)
+            uv = self._select(c, folder, expect=uidvalidity)
             data = c.fetch(wanted, ["BODY.PEEK[]", "FLAGS", "INTERNALDATE"])
         messages, missing = [], []
         for uid in wanted:
@@ -698,8 +716,9 @@ class MailService:
                 missing.append(uid)
                 continue
             messages.append(self._message_view(folder, uid, d[b"BODY[]"] or b"", d.get(b"FLAGS", ()), d.get(b"INTERNALDATE"),
-                                               body_chars=limit))
-        out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "folder": folder, "returned": len(messages), "messages": messages}
+                                               body_chars=limit, uidvalidity=uv))
+        out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "folder": folder, **({"uidvalidity": uv} if uv is not None else {}),
+                               "returned": len(messages), "messages": messages}
         if missing:
             out["missing_uids"] = missing
         if any(m["text_truncated"] for m in messages):
@@ -707,7 +726,7 @@ class MailService:
         return out
 
     def _message_view(self, folder: str, uid: int, raw: bytes, flags: tuple[Any, ...], internal: datetime | None, *,
-                      body_chars: int, include_html: bool = False) -> dict[str, Any]:
+                      body_chars: int, include_html: bool = False, uidvalidity: int | None = None) -> dict[str, Any]:
         msg = email.message_from_bytes(raw, policy=policy.default)
         text, htm = extract_bodies(msg)
         truncated = False
@@ -716,6 +735,7 @@ class MailService:
         out: dict[str, Any] = {
             "uid": uid,
             "folder": folder,
+            **({"uidvalidity": uidvalidity} if uidvalidity is not None else {}),
             "message_id": _hdr(msg, "Message-ID"),
             "in_reply_to": _hdr(msg, "In-Reply-To"),
             "references": _hdr(msg, "References"),
@@ -734,10 +754,10 @@ class MailService:
             out["html"] = htm[: body_chars * 2]
         return out
 
-    def get_attachment(self, folder: str, uid: int, index: int) -> dict[str, Any]:
+    def get_attachment(self, folder: str, uid: int, index: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            raw, _, _ = self._fetch_raw(c, folder, uid)
+            raw, _, _, _ = self._fetch_raw(c, folder, uid, uidvalidity=uidvalidity)
         msg = email.message_from_bytes(raw, policy=policy.default)
         parts = iter_attachment_parts(msg)
         if not 0 <= index < len(parts):
@@ -756,16 +776,16 @@ class MailService:
                 return {**meta, "text": data.decode("utf-8", errors="replace")[: self.s.max_body_chars]}
         return {**meta, "content_base64": base64.b64encode(data).decode()}
 
-    def get_thread(self, folder: str, uid: int) -> dict[str, Any]:
+    def get_thread(self, folder: str, uid: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            raw, _, _ = self._fetch_raw(c, folder, uid)
+            raw, _, _, uv = self._fetch_raw(c, folder, uid, uidvalidity=uidvalidity)
             msg = email.message_from_bytes(raw, policy=policy.default)
             refs = (_hdr(msg, "References") or "").split()
             own = _hdr(msg, "Message-ID")
             root = (refs[0] if refs else None) or _hdr(msg, "In-Reply-To") or own
             if not root:
-                return {"root_message_id": None, "messages": self._summaries(c, folder, [uid])}
+                return {"root_message_id": None, "messages": self._summaries(c, folder, [uid], uv)}
             folders = [folder]
             for alias in ("INBOX", "sent"):
                 with contextlib.suppress(MailError):
@@ -774,9 +794,9 @@ class MailService:
                         folders.append(f)
             found: list[dict[str, Any]] = []
             for f in folders:
-                c.select_folder(f, readonly=True)
+                uv = self._select(c, f)
                 uids = c.search(["OR", ["HEADER", "References", root], ["HEADER", "Message-ID", root]])
-                found += self._summaries(c, f, sorted(uids))
+                found += self._summaries(c, f, sorted(uids), uv)
             seen_ids, unique = set(), []
             for m in sorted(found, key=lambda m: m.get("date") or ""):
                 key = m["message_id"] or (m["folder"], m["uid"])
@@ -965,13 +985,17 @@ class MailService:
             except Exception as e:  # noqa: BLE001
                 result["warning"] = f"Message was sent but could not be copied to the Sent folder: {e}"
         if followup:
-            with contextlib.suppress(Exception):
-                c.select_folder(followup["folder"])
+            try:
+                self._select(c, followup["folder"], readonly=False, expect=followup.get("uidvalidity"))
                 c.add_flags([followup["uid"]], [followup["flag"]])
                 if followup["flag"] == ANSWERED:
                     result["original_marked_answered"] = True
                 else:
                     result["original_flagged"] = followup["flag"]
+            except MailError as e:
+                result["original_flag_skipped"] = str(e)
+            except Exception:
+                pass
         return result
 
     def describe_queued(self, q: QueuedMessage) -> dict[str, Any]:
@@ -1013,24 +1037,27 @@ class MailService:
         with self.imap() as c:
             return self._deliver(c, msg, draft=draft)
 
-    def reply(self, folder: str, uid: int, body: str, *, body_html=None, reply_all=False, quote=True, to=None, cc=None, bcc=None, attachments=None, draft=False) -> dict[str, Any]:
+    def reply(self, folder: str, uid: int, body: str, *, body_html=None, reply_all=False, quote=True, to=None, cc=None, bcc=None, attachments=None, draft=False,
+              uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            raw, _, _ = self._fetch_raw(c, folder, uid, readonly=False)
+            raw, _, _, uv = self._fetch_raw(c, folder, uid, readonly=False, uidvalidity=uidvalidity)
             original = email.message_from_bytes(raw, policy=policy.default)
             msg = build_reply(
                 original, sender=self.sender, body=body, body_html=body_html, reply_all=reply_all, quote=quote,
                 to=parse_recipients(to, "to"), cc=parse_recipients(cc, "cc"), bcc=parse_recipients(bcc, "bcc"), signature=self.s.signature,
                 attachments=attachments, max_attachment_bytes=self.s.max_attachment_bytes,
             )
-            result = self._deliver(c, msg, draft=draft, followup={"folder": folder, "uid": uid, "flag": ANSWERED})
+            result = self._deliver(c, msg, draft=draft, followup={"folder": folder, "uid": uid, "flag": ANSWERED,
+                                                          "uidvalidity": uv})
             result["in_reply_to"] = str(msg["In-Reply-To"])
             return result
 
-    def forward(self, folder: str, uid: int, to, *, note: str = "", note_html=None, cc=None, bcc=None, include_attachments=True, attachments=None, draft=False) -> dict[str, Any]:
+    def forward(self, folder: str, uid: int, to, *, note: str = "", note_html=None, cc=None, bcc=None, include_attachments=True, attachments=None, draft=False,
+                uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            raw, _, _ = self._fetch_raw(c, folder, uid, readonly=False)
+            raw, _, _, uv = self._fetch_raw(c, folder, uid, readonly=False, uidvalidity=uidvalidity)
             original = email.message_from_bytes(raw, policy=policy.default)
             to_p = parse_recipients(to, "to")
             if not to_p and not draft:
@@ -1040,13 +1067,15 @@ class MailService:
                 signature=self.s.signature, include_attachments=include_attachments, attachments=attachments,
                 max_attachment_bytes=self.s.max_attachment_bytes,
             )
-            return self._deliver(c, msg, draft=draft, followup={"folder": folder, "uid": uid, "flag": "$Forwarded"})
+            return self._deliver(c, msg, draft=draft, followup={"folder": folder, "uid": uid, "flag": "$Forwarded",
+                                                        "uidvalidity": uv})
 
     # -- organising ----------------------------------------------------------------
-    def mark(self, folder: str, uids: list[int], *, read: bool | None = None, flagged: bool | None = None) -> dict[str, Any]:
+    def mark(self, folder: str, uids: list[int], *, read: bool | None = None, flagged: bool | None = None,
+             uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            c.select_folder(folder)
+            self._select(c, folder, readonly=False, expect=uidvalidity)
             for val, flag in ((read, SEEN), (flagged, FLAGGED)):
                 if val is True:
                     c.add_flags(uids, [flag])
@@ -1068,18 +1097,18 @@ class MailService:
         c.add_flags(uids, [DELETED], silent=True)
         c.expunge(uids)                         # UID EXPUNGE: only the copied messages
 
-    def move(self, folder: str, uids: list[int], destination: str) -> dict[str, Any]:
+    def move(self, folder: str, uids: list[int], destination: str, *, uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             src, dst = self.resolve_folder(c, folder), self.resolve_folder(c, destination)
-            c.select_folder(src)
+            self._select(c, src, readonly=False, expect=uidvalidity)
             self._move_messages(c, uids, dst)
         return {"moved": uids, "from": src, "to": dst}
 
-    def delete(self, folder: str, uids: list[int]) -> dict[str, Any]:
+    def delete(self, folder: str, uids: list[int], *, uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
             src = self.resolve_folder(c, folder)
             trash = self.resolve_folder(c, "trash")
-            c.select_folder(src)
+            self._select(c, src, readonly=False, expect=uidvalidity)
             if src == trash:
                 if not self.s.allow_permanent_delete:
                     raise MailError("Messages in Trash are not permanently deleted (ALLOW_PERMANENT_DELETE=false).")
