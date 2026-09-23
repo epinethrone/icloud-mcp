@@ -1,0 +1,68 @@
+name: Publish
+
+# Runs when a GitHub release is published. Builds the package, publishes it to PyPI through trusted publishing
+# (no stored token), then lists the new version in the official MCP Registry (GitHub OIDC, no stored token either).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the package and server.json versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          srv=$(python -c "import json; d=json.load(open('server.json')); print(d['version'], d['packages'][0]['version'])")
+          echo "tag=$tag pyproject=$pkg server.json=$srv"
+          [ "$tag" = "$pkg" ] && [ "$srv" = "$tag $tag" ]
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/icloud-mcp-server/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  mcp-registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+      - name: Wait until PyPI serves the new version
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS "https://pypi.org/pypi/icloud-mcp-server/${GITHUB_REF_NAME#v}/json" >/dev/null && exit 0
+            sleep 10
+          done
+          exit 1
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
