@@ -40,7 +40,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 | ✋ **You approve what leaves** | Outgoing mail is queued for your approval in a browser by default. Invitations to other people are blocked unless you allow them. Deletes go to the Trash. |
 | 🛡️ **Built for prompt injection** | Every email, event, note and file is marked as untrusted data, and the dangerous actions are gated by configuration rather than by asking the model nicely. |
 | 💻 **Server or no server** | Host it once for Claude on the web and your phone, or run it locally for Claude Desktop and Claude Code with one command: no domain, tunnel or Docker needed. |
-| 🧪 **Tested against the real iCloud** | 277 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
+| 🧪 **Tested against the real iCloud** | 288 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
 
 ## What you can ask Claude
 
@@ -204,7 +204,7 @@ If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv
 
 ## Tools
 
-**24 tools** for Mail, Calendar and Contacts, plus **22** more with the optional Mac helper.
+**26 tools** for Mail, Calendar and Contacts, plus **22** more with the optional Mac helper.
 
 <details>
 <summary><b>📧 Mail</b> (14)</summary>
