@@ -1,12 +1,13 @@
 # icloud-mac-helper
 
-Lets the icloud-mcp server use **Reminders** and **Notes** on your Mac. Apple only exposes those through their own apps, which are
-scriptable on a Mac, so this small helper runs there and does the work when the server asks.
+Lets the icloud-mcp server use **Reminders**, **Notes** and **iCloud Drive** on your Mac. Apple only exposes those on its own devices,
+so this small helper runs on your Mac and does the work when the server asks.
 
 **How it works.** The helper connects *out* to a private HTTPS port of your server and asks "any work?". It opens no listening port.
 The server never sends script text: only an operation name and validated arguments from a fixed list. Reminders operations run a
 small EventKit program (`bin/reminders-eventkit`, built from `eventkit/` on your Mac by the installer); Notes operations run a static
-script in `ops/`. Both receive their arguments as one JSON value in `argv`, so text from a reminder, a note or an AI can never become code.
+script in `ops/`; iCloud Drive runs the fixed script `ops/drive.py`. All of them receive their arguments as one JSON value in `argv`, so text
+from a reminder, a note, a file or an AI can never become code.
 The connection uses a self-signed certificate that the helper pins by fingerprint, plus a bearer token.
 
 **Requirements.** macOS 14 or newer with the command line tools (`xcode-select --install`; the installer compiles the Reminders program with
@@ -15,14 +16,15 @@ network path to the server's bridge port (your home network or your VPN). It onl
 
 ## Install
 
-1. On the server, enable the bridge in `.env` (`ENABLE_REMINDERS=true`, `BRIDGE_TOKEN=...`) and restart. The server logs, and writes to
+1. On the server, enable the bridge in `.env` (any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true`, `ENABLE_DRIVE=true`, plus
+   `BRIDGE_TOKEN=...`) and restart. The server logs, and writes to
    `bridge_fingerprint.txt` in its data folder, the certificate fingerprint.
 2. Copy this `mac-helper` folder to the Mac and run, in Terminal:
    ```bash
    ./install.sh
    ```
-   It asks for the bridge address, the token (hidden) and the fingerprint, builds the Reminders program, runs the self-test, and installs
-   a LaunchAgent. Do this while you are at the Mac and it is unlocked: macOS cannot show its permission prompts on the lock screen.
+   It asks for the bridge address, the token (hidden) and the fingerprint, builds the Reminders program and the PDF reader, runs the
+   self-test, and installs a LaunchAgent. Do this while you are at the Mac and it is unlocked: macOS cannot show its permission prompts on the lock screen.
 3. macOS asks two separate things. Click **Allow** on both:
    * **"iCloud Mac Helper (Reminders)" would like full access to your Reminders.** This is the grant Reminders needs. If you missed it:
      System Settings > Privacy & Security > Reminders, enable "iCloud Mac Helper (Reminders)", and run the self-test again.
@@ -30,6 +32,24 @@ network path to the server's bridge port (your home network or your VPN). It onl
 
    The self-test runs itself through launchd, exactly like the background service, so these permissions land on the service. (Run from
    Terminal directly, macOS would attribute them to Terminal and the service would still have none.)
+
+## iCloud Drive
+
+The helper works on the Drive folder your Mac already keeps in sync (`~/Library/Mobile Documents/com~apple~CloudDocs`), so every change
+syncs to your other devices by itself. Paths can't leave that folder, and nothing is ever deleted permanently: trashing and replacing use
+Apple's own `trash` command. Files offloaded by "Optimise Mac Storage" are downloaded on demand with Apple's `brctl`. PDFs are read by a
+small PDFKit program (`bin/pdf-text`) that the installer builds, and Word, RTF, ODT and HTML files by Apple's `textutil`.
+
+**It needs Full Disk Access.** In System Settings > Privacy & Security > Full Disk Access, press **+**, press Cmd+Shift+G and add:
+
+```
+/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app
+```
+
+(the version folder may differ on your Mac). On macOS 27 this grant only applies when the helper runs as that app's own executable, which
+is why the installer uses it rather than `/usr/bin/python3`: that is a launcher outside the app, which macOS judges by its path, and with it
+every read of iCloud Drive (and even of folders Full Disk Access always covers) is refused. A side benefit is that the helper no longer
+depends on Xcode, which can move its own Python on an update. If `pdf-text` asks for access to iCloud Drive, allow that too.
 
 ## Check it
 
@@ -67,5 +87,7 @@ it is never run automatically.
   shipping a prebuilt binary. macOS ties the Reminders permission to the exact build, and building on the Mac from checksummed source is what
   keeps both the trust anchor and the permission intact.
 * Scripting Notes is slow on very large libraries, and locked notes cannot be read.
+* Most files in a Drive with "Optimise Mac Storage" on live only in iCloud. The first read of such a file downloads it, which can take a
+  while for large files; the tool then answers that it is still downloading, and a second request a minute later reads it.
 * The token lives in `~/.config/icloud-mac-helper/config.json` (mode 600). Treat it like a password; rotate it by changing
   `BRIDGE_TOKEN` on the server and re-running `install.sh` after deleting that file.
