@@ -7,6 +7,7 @@
 **Give Claude your iCloud: Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive.**
 **Self-hosted, single-owner, and built around your approval, not the model's good behaviour.**
 
+[![Tests](https://github.com/epinethrone/icloud-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/epinethrone/icloud-mcp/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg?logo=python&logoColor=white)](pyproject.toml)
 [![Model Context Protocol](https://img.shields.io/badge/MCP-server-6e56cf.svg)](https://modelcontextprotocol.io)
@@ -14,7 +15,7 @@
 [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20server-555.svg)](#quick-start)
 [![Tools](https://img.shields.io/badge/tools-46-f28b30.svg)](#tools)
 
-[Why](#why-icloud-mcp) · [What you can ask](#what-you-can-ask-claude) · [How it works](#how-it-works) · [Security](#security-first) · [Quick start](#quick-start) · [Tools](#tools) · [Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) · [Configuration](#configuration)
+[Why](#why-icloud-mcp) · [What you can ask](#what-you-can-ask-claude) · [How it works](#how-it-works) · [Security](#security-first) · [Quick start](#quick-start) · [Tools](#tools) · [Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -33,7 +34,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 | 🔐 **Your credentials never leave your server** | Apple offers no OAuth for these protocols, so an app-specific password lives only in your server's environment. Claude signs in to *your* server through its own single-owner OAuth and never sees it. |
 | ✋ **You approve what leaves** | Outgoing mail is queued for your approval in a browser by default. Invitations to other people are blocked unless you allow them. Deletes go to the Trash. |
 | 🛡️ **Built for prompt injection** | Every email, event, note and file is marked as untrusted data, and the dangerous actions are gated by configuration rather than by asking the model nicely. |
-| 🧪 **Tested against the real iCloud** | 250 offline tests, plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
+| 🧪 **Tested against the real iCloud** | 250 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
 
 ## What you can ask Claude
 
@@ -130,6 +131,17 @@ For the bundled Cloudflare Tunnel: create a tunnel, point its public hostname (t
 **4. Connect Claude**
 
 Settings → Connectors → Add custom connector → `https://<your-host>/mcp`. Your server shows an approval page: enter the owner password. Reconnect the connector whenever you change tools or settings, because Claude caches tool definitions. To revoke every connected client, delete `oauth_state.json` in the data volume and restart.
+
+**5. Check it works**
+
+In a new chat, open the tools menu: the connector should be listed with its tools. Then try a few read-only requests:
+
+- *"List my mail folders."*
+- *"What's on my calendar this week?"*
+- *"Find Anna in my contacts."*
+- *"Is the Mac helper online?"* (only if you set up the Mac helper)
+
+Then ask Claude to email yourself. With the default settings nothing is sent: the message waits at `https://<your-host>/outbox` until you approve it. If anything fails, see [Troubleshooting](#troubleshooting).
 
 ### Approving outgoing mail
 
@@ -291,6 +303,57 @@ These only show up against Apple's real servers, never against local test server
 - Each tool call opens a fresh connection, about 1.5 to 5 seconds per call against iCloud.
 - Claude doesn't show custom icons for custom connectors yet ([open request](https://github.com/anthropics/claude-ai-mcp/issues/152)). The server serves and advertises the project logo anyway (`src/icloud_mcp/static/`), so clients that do show icons, and your browser tab on the approval and outbox pages, display it.
 
+## Troubleshooting
+
+<details>
+<summary><b>Server and connection</b></summary>
+
+| Symptom | Fix |
+|---|---|
+| `selftest` fails to log in | The login name is the usual cause. Some accounts sign in to one service with a different name: set `IMAP_USERNAME`, `SMTP_USERNAME`, `CALDAV_USERNAME` or `CARDDAV_USERNAME` separately. Use an app-specific password, never your Apple Account password. |
+| Claude can't reach the connector, or the approval page never appears | `MCP_PUBLIC_URL` must match the public address exactly, with no trailing slash, and your TLS front must keep the `Host` header. Make sure no login wall such as Cloudflare Access sits in front of the server. |
+| The approval or outbox page won't accept your password | After 10 wrong passwords in 15 minutes the pages lock for everyone. Wait, then use the owner password from `.env`, not your Apple password. |
+| New tools or changed settings don't show up in Claude | Claude caches tool definitions. Reconnect the connector in Claude's settings and start a new chat. |
+| "Missing session ID" after the server restarted | Leave `MCP_STATELESS=true` (the default). If you turned it off, reconnect the connector after every restart. |
+| A tool call times out | iCloud can be slow; a call is abandoned after `TOOL_TIMEOUT_SECONDS` (90 by default). Retry, and check the server logs if it keeps happening. |
+
+</details>
+
+<details>
+<summary><b>Mail, calendar and contacts</b></summary>
+
+| Symptom | Fix |
+|---|---|
+| Claude says it sent an email but nothing arrived | That is the approval step working. Open `https://<your-host>/outbox`, review the message and approve it. Queued mail expires after `OUTBOX_TTL_SECONDS`. |
+| Adding a guest to an event is refused | Invitations are off by default. Set `ALLOW_CALENDAR_INVITES=true` if you want Claude to invite people. |
+| Mail to a certain address is refused | Check `SEND_ALLOWLIST` and `MAX_RECIPIENTS`. |
+| Sent mail doesn't appear in Sent | iCloud doesn't file sent mail by itself. Keep `SAVE_SENT_COPY=true` (the default). |
+
+</details>
+
+<details>
+<summary><b>Mac helper: Reminders, Notes and iCloud Drive</b></summary>
+
+| Symptom | Fix |
+|---|---|
+| Tools say the Mac helper is offline | The Mac must be on, awake, logged in and able to reach the bridge address (home network or VPN). Ask *"Is the Mac helper online?"*, and check `~/Library/Logs/icloud-mac-helper/helper.log` on the Mac. |
+| The helper log shows "No route to host" | macOS blocks third-party Python from the local network. Use Apple's Python (the installer picks it), or allow it under Privacy & Security > Local Network. |
+| Reminders are refused | Allow Full Access to Reminders for "iCloud Mac Helper (Reminders)" under Privacy & Security > Reminders, then run the helper's self-test. |
+| Notes are refused ("not allowed to control") | Allow the helper's Python to control Notes under Privacy & Security > Automation. |
+| iCloud Drive says the helper has no access | Give Full Disk Access to the Command Line Tools `Python.app`, and make sure the helper runs as that executable (re-run the installer). See the [Mac helper guide](mac-helper/README.md#icloud-drive). |
+| Reading a Drive file says it is still downloading | The file was only in iCloud ("Optimise Mac Storage"). Its download has started; ask again in a minute. |
+
+</details>
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+- **Security problems:** please don't open a public issue. Follow the [security policy](SECURITY.md) instead.
+- **Before a pull request:** make sure `pytest tests --ignore=tests/integration` passes, and add tests for new behaviour. They run automatically on every pull request.
+- **Anything that talks to iCloud:** run `selftest`, and try it by hand against a real account. Local test servers accept things iCloud doesn't.
+- **New tools:** keep the safety defaults intact. Anything that sends, invites or deletes must stay behind the existing settings, and anything read from iCloud must be treated as data, never as instructions.
+
 ## Development
 
 ```bash
@@ -303,9 +366,13 @@ pytest tests                                 # adds integration tests against lo
 
 `dev/e2e_http.py` drives a running server over HTTP (OAuth plus tool calls). Local test servers accept things iCloud doesn't (see the quirks above), so treat `selftest` and a manual run against a real account as part of testing any change.
 
+## Acknowledgements
+
+Built on the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk), [IMAPClient](https://github.com/mjs/imapclient), [caldav](https://github.com/python-caldav/caldav), [icalendar](https://github.com/collective/icalendar), [html2text](https://github.com/Alir3z4/html2text), [python-dateutil](https://github.com/dateutil/dateutil), [Uvicorn](https://github.com/encode/uvicorn) and [HTTPX](https://github.com/encode/httpx). The Notes scripts are adapted from [MrGo2/icloud-mcp](https://github.com/MrGo2/icloud-mcp) (MIT).
+
 ## License
 
-[MIT](LICENSE). Contributions and issue reports are welcome.
+[MIT](LICENSE).
 
 <div align="center">
 <sub>Built for people who want an AI assistant for their Apple life without handing their Apple ID to anyone.</sub>
