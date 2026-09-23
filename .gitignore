@@ -4,6 +4,8 @@
 !.gitignore
 !.github/
 !.github/FUNDING.yml
+!.github/workflows/
+!.github/workflows/*.yml
 !LICENSE
 !README.md
 !.env.example
