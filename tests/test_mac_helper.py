@@ -131,7 +131,8 @@ def test_failures_become_short_actionable_messages(monkeypatch):
     assert "too large" in helper.run_op("reminder_lists", {})[2]
 
 
-def test_selftest_on_a_non_mac_reports_failure_as_json(capsys):
+def test_selftest_on_a_non_mac_reports_failure_as_json(capsys, monkeypatch):
+    monkeypatch.setattr(helper.platform, "system", lambda: "Linux")                  # the same result when the suite runs on a Mac
     assert helper.selftest() == 1
     report = json.loads(capsys.readouterr().out)
     assert report["checks"]["platform"]["ok"] is False
