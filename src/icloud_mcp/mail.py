@@ -32,6 +32,7 @@ from imapclient import IMAPClient
 
 from .config import Settings
 from .matching import fuzzy_match_all, norm, similar_enough
+from .safety import warnings_for
 from .outbox import Outbox, OutboxFull, QueuedMessage
 
 log = logging.getLogger(__name__)
@@ -635,6 +636,7 @@ class MailService:
         message_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
+        all_folders: bool = False,
     ) -> dict[str, Any]:
         crit: list[Any] = []
         if unread is True:
@@ -661,6 +663,8 @@ class MailService:
             crit = ["ALL"]
         charset = None if all(isinstance(x, (date,)) or str(x).isascii() for x in crit) else "UTF-8"
         limit = max(1, min(int(limit), 100))
+        if all_folders:
+            return self._search_everywhere(crit, charset, limit, offset)
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
             uv = self._select(c, folder)
@@ -675,6 +679,35 @@ class MailService:
                 "returned": len(page),
                 "messages": self._summaries(c, folder, page, uv),
             }
+
+    def _search_everywhere(self, crit: list[Any], charset: str | None, limit: int, offset: int) -> dict[str, Any]:
+        """The same search in every selectable folder, merged newest first. Mail rules and replies file messages away from
+        the inbox; this finds them wherever they went. Each result names its folder and that folder's uidvalidity."""
+        want = offset + limit
+        found: list[dict[str, Any]] = []
+        per_folder: dict[str, int] = {}
+        skipped: list[str] = []
+        with self.imap() as c:
+            for flags, _delim, name in c.list_folders():
+                fl = [f.decode() if isinstance(f, bytes) else str(f) for f in flags]
+                if "\\Noselect" in fl or "\\NonExistent" in fl:
+                    continue
+                try:
+                    uv = self._select(c, name)
+                    uids = sorted(c.search(crit, charset=charset), reverse=True)
+                except Exception:  # noqa: BLE001 - one unreadable folder must not sink the whole search
+                    skipped.append(name)
+                    continue
+                if uids:
+                    per_folder[name] = len(uids)
+                    found += self._summaries(c, name, uids[:want], uv)   # uids grow with arrival, so the newest are enough
+        found.sort(key=lambda m: m.get("date") or "", reverse=True)
+        page = found[offset : offset + limit]
+        out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "folder": "(all folders)", "total_matches": sum(per_folder.values()),
+                               "matches_per_folder": per_folder, "offset": offset, "returned": len(page), "messages": page}
+        if skipped:
+            out["folders_not_searched"] = skipped
+        return out
 
     def _fetch_raw(self, c: IMAPClient, folder: str, uid: int, *, readonly: bool = True,
                    uidvalidity: int | None = None) -> tuple[bytes, tuple[Any, ...], datetime | None, int | None]:
@@ -747,6 +780,8 @@ class MailService:
             "date": _iso_date(msg, internal),
             "text": text,
             "text_truncated": truncated,
+            **({"safety_warnings": w} if (w := warnings_for(_hdr(msg, "Subject"), text if text is not None else
+                                                           (html_to_text(htm) if htm else None))) else {}),
             "attachments": list_attachments(msg),
             **_flag_view(flags),
         }
