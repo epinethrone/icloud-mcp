@@ -353,6 +353,19 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
+        def mail_get_messages(
+            folder: Folder,
+            uids: Annotated[list[int], _d("Up to 25 message uids from that folder, taken from mail_search results.")],
+            body_chars: Annotated[int | None, _d("Longest body to return per message (default 4000). Lower it to skim many messages.")] = None,
+        ) -> dict[str, Any]:
+            """Read several messages from one folder in a single call: the same fields as mail_get_message for each, in the
+            order given, with bodies cut at body_chars. Use it after mail_search to go through a batch (a day's unread mail, a
+            whole thread) instead of calling mail_get_message repeatedly. Uids that no longer exist are listed in missing_uids.
+            Does not mark anything as read."""
+            return mail.get_messages(folder, uids, body_chars=body_chars)
+
+        @mcp.tool(annotations=_READ)
+        @_guard
         def mail_get_thread(folder: Folder, uid: Uid) -> dict[str, Any]:
             """List the messages in the same conversation as the given message (searched in that folder, INBOX and Sent),
             oldest first, as summaries. Use mail_get_message to read any of them."""
