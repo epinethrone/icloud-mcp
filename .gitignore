@@ -13,6 +13,7 @@
 !docker-compose.yml
 !pyproject.toml
 !server.json
+!glama.json
 !configure.sh
 !THIRD_PARTY_NOTICES.md
 !mac-helper/
