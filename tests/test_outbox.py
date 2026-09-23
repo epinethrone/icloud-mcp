@@ -19,13 +19,13 @@ PASSWORD = "correct-horse-battery"
 
 class FakeIMAP:
     def __init__(self):
-        self.appended, self.flags = [], []
+        self.appended, self.flags, self.uidvalidity = [], [], 7
 
     def append(self, folder, raw, flags=(), msg_time=None):
         self.appended.append((folder, raw))
 
     def select_folder(self, folder, readonly=False):
-        return {}
+        return {b"UIDVALIDITY": self.uidvalidity} if self.uidvalidity is not None else {}
 
     def add_flags(self, uids, flags):
         self.flags.append((list(uids), list(flags)))
@@ -104,6 +104,24 @@ def test_reply_flags_original_only_after_release(env, monkeypatch):
     res = mail.release(r["outbox_id"])
     assert res["original_marked_answered"] is True and fake.flags == [([7], [ANSWERED])]
     assert str(sent[0][0]["In-Reply-To"]) == "<1@example.org>"
+
+
+@pytest.mark.parametrize("operation", ["reply", "forward"])
+@pytest.mark.parametrize("current", [8, None])
+def test_release_skips_stale_original_flags(env, monkeypatch, operation, current):
+    s, fake, sent = env
+    original = b"From: Alice <alice@example.org>\r\nTo: me@icloud.com\r\nSubject: Question\r\nMessage-ID: <1@example.org>\r\n\r\nCan you help?\r\n"
+    monkeypatch.setattr(MailService, "_fetch_raw", lambda self, c, folder, uid, readonly=True, uidvalidity=None: (original, (), None, 7))
+    mail = MailService(s)
+    queued = (mail.reply("INBOX", 7, "Yes") if operation == "reply"
+              else mail.forward("INBOX", 7, ["bob@example.org"], note="FYI"))
+    assert mail.outbox.pending()[0].followup["uidvalidity"] == 7
+    fake.uidvalidity = current
+    result = mail.release(queued["outbox_id"])
+    assert result["status"] == "sent" and len(sent) == 1
+    assert "out of date" in result["original_flag_skipped"]
+    assert "original_marked_answered" not in result and "original_flagged" not in result
+    assert fake.flags == []
 
 
 def test_expired_items_are_dropped_and_never_sent(tmp_path):
