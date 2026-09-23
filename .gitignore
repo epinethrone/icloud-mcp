@@ -3,9 +3,6 @@
 *
 !.gitignore
 !.github/
-!.gemini/
-!.gemini/config.yaml
-!.gemini/styleguide.md
 !.github/FUNDING.yml
 !.github/workflows/
 !.github/workflows/*.yml
