@@ -56,6 +56,7 @@ OPS = {
     "notes_list": {"folder": ("str", False, 200), "query": ("str", False, 200), "search_body": ("bool", False, 0), "limit": ("int", False, 100)},
     "note_read": {"id": ("str", True, 500), "max_chars": ("int", False, 100000)},
     "note_create": {"title": ("str", True, 500), "body": ("str", False, 100000), "folder": ("str", False, 200)},
+    "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
 }
 # Reminders: one EventKit binary, one process per operation (measured ~21 ms fixed cost, 20-40 ms per operation end to end, against
 # 0.5-22 s for the JXA scripts, which scan a whole list per request). There is deliberately NO fallback to the JXA Reminders scripts:
@@ -67,6 +68,7 @@ EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create",
 REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
 OP_FILES = {
     "note_folders": "note_folders.js", "notes_list": "notes_list.js", "note_read": "note_read.js", "note_create": "note_create.js",
+    "note_delete": "note_delete.js",
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")

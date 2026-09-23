@@ -729,6 +729,17 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
                     """Create a note on the user's Mac (it syncs to their other devices). Returns the new note's id."""
                     return {"created": bridge.call("note_create", _given(title=title, body=body or None, folder=folder))}
 
+                @mcp.tool(annotations=_DESTRUCTIVE)
+                @_guard
+                def notes_delete(
+                    id: Annotated[str, _d("Note id from notes_list.")],
+                    title: Annotated[str, _d("The note's current title, exactly as notes_list returned it. A mismatch deletes nothing.")],
+                ) -> dict[str, Any]:
+                    """Move one note to Recently Deleted in Notes, where the user can recover it for about 30 days. Use only when the user
+                    asked to remove that exact note. Refuses locked notes, and refuses notes already in Recently Deleted (removing them from
+                    there would be permanent). One note per call: to clear several, call it once per note."""
+                    return {"deleted": bridge.call("note_delete", {"id": id, "title": title})}
+
     return mcp, provider
 
 
