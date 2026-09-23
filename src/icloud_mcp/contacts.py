@@ -50,6 +50,9 @@ _SKIP = {"PHOTO", "LOGO", "SOUND", "KEY", "NOTE", "X-IMAGEHASH", "X-IMAGETYPE", 
          "X-ADDRESSING-GRAMMAR", "VND-63-SENSITIVE-CONTENT-CONFIG"}          # binary, bulky or free-text we never expose
 _LINE = re.compile(r'^(?P<key>[^:;]+)(?P<params>(?:;(?:"[^"]*"|[^:;"])*)*):(?P<value>.*)$')
 _ESC = re.compile(r"\\([\\,;nN])")
+# vCard ADR component order (RFC 6350 6.3.1); the names are what the tools accept and return
+ADR_PARTS = ("po_box", "extended", "street", "city", "region", "postal_code", "country")
+_ADR_TYPES = {"home", "work", "other"}
 _TYPE_LABELS = ("home", "work", "school", "other", "mobile", "cell", "iphone", "main", "fax", "pager", "car", "assistant", "callback")
 
 
@@ -149,9 +152,11 @@ def parse_vcard(text: str) -> dict[str, Any] | None:
         elif name == "BDAY":
             c["birthday"] = value.strip()
         elif name == "ADR":
-            addr = ", ".join(p for p in (_unescape(x).strip() for x in _split(value, ";")) if p)
+            parts = [_unescape(x).strip() for x in _split(value, ";")] + [""] * 7
+            addr = ", ".join(p for p in parts[:7] if p)
             if addr:
-                c["addresses"].append({"address": addr, "label": _label(_types(params), custom)})
+                c["addresses"].append({"address": addr, "label": _label(_types(params), custom),
+                                       **{k: parts[i] for i, k in enumerate(ADR_PARTS)}})
         elif name == "URL":
             u = _unescape(value).strip()
             if u:
@@ -226,9 +231,34 @@ def _v_structured(name: str, parts: list[str]) -> str:
     return f"{name}:{';'.join(_v_escape(part) for part in parts)}"
 
 
+def _adr_lines(addresses: list[dict[str, Any]] | None, first_item: int = 1) -> list[str]:
+    """ADR properties for iCloud. home/work/other become TYPE parameters; any other label is stored the way Apple does,
+    as a grouped itemN.ADR with an itemN.X-ABLabel, so Contacts on the Mac and iPhone show it."""
+    out: list[str] = []
+    n = first_item
+    for a in addresses or []:
+        parts = [str(a.get(k) or "").strip() for k in ADR_PARTS]
+        if not any(parts):
+            continue
+        label = str(a.get("label") or "").strip()
+        if not label or label.lower() in _ADR_TYPES:
+            out.append(_v_structured(f"ADR;TYPE={(label or 'home').upper()}", parts))
+        else:
+            out.append(_v_structured(f"item{n}.ADR", parts))
+            out.append(_v_line(f"item{n}.X-ABLabel", label))
+            n += 1
+    return out
+
+
+def _free_item_number(raw: str) -> int:
+    used = [int(m) for m in re.findall(r"(?im)^item(\d+)\.", raw)]
+    return max(used, default=0) + 1
+
+
 def build_vcard(*, uid: str, given_name: str = "", family_name: str = "", name: str = "", nickname: str = "",
                 organization: str = "", job_title: str = "", emails: list[str] | None = None,
-                phones: list[str] | None = None, birthday: str = "", urls: list[str] | None = None) -> str:
+                phones: list[str] | None = None, birthday: str = "", urls: list[str] | None = None,
+                addresses: list[dict[str, Any]] | None = None) -> str:
     """Build the safe, non-secret subset of an iCloud-compatible vCard 3.0."""
     display = name.strip() or " ".join(p for p in (given_name.strip(), family_name.strip()) if p) or organization.strip()
     if not display:
@@ -243,6 +273,7 @@ def build_vcard(*, uid: str, given_name: str = "", family_name: str = "", name: 
     for url in urls or []:
         if url.strip():
             lines.append(_v_line("URL", url.strip()))
+    lines += _adr_lines(addresses)
     for key, value in (("NICKNAME", nickname), ("ORG", organization), ("TITLE", job_title), ("BDAY", birthday)):
         if value.strip():
             lines.append(_v_line(key, value.strip()))
@@ -253,7 +284,7 @@ def _replace_vcard_fields(raw: str, **updates: Any) -> str:
     """Replace selected fields while retaining untouched iCloud vCard properties (photos, notes, labels, etc.)."""
     replace = {"name": ("FN",), "given_name": ("N",), "family_name": ("N",), "nickname": ("NICKNAME",),
                "organization": ("ORG",), "job_title": ("TITLE",), "emails": ("EMAIL",), "phones": ("TEL",),
-               "birthday": ("BDAY",), "urls": ("URL",)}
+               "birthday": ("BDAY",), "urls": ("URL",), "addresses": ("ADR",)}
     wanted = {k for k, v in updates.items() if v is not None}
     if not wanted:
         raise ContactsError("Provide at least one field to change.")
@@ -279,12 +310,24 @@ def _replace_vcard_fields(raw: str, **updates: Any) -> str:
         if field in wanted:
             generated.extend(_v_line(key, item.strip()) for item in updates[field] if item.strip())
 
+    if "addresses" in wanted:
+        generated.extend(_adr_lines(updates["addresses"], _free_item_number(raw)))
+
     lines = re.sub(r"\r?\n[ \t]", "", raw).splitlines()
+    # A replaced property that sits in an Apple group (item3.EMAIL) takes the group's label lines with it (item3.X-ABLabel,
+    # item3.X-ABADR), so no orphaned labels are left behind.
+    dropped_groups = set()
+    for line in lines:
+        m = _LINE.match(line)
+        if m and "." in m["key"]:
+            group, _, prop = m["key"].rpartition(".")
+            if prop.upper() in keys:
+                dropped_groups.add(group.lower())
     kept: list[str] = []
     for line in lines:
         m = _LINE.match(line)
-        prop = "" if not m else m["key"].rsplit(".", 1)[-1].upper()
-        if prop in keys:
+        group, _, prop = ("", "", "") if not m else m["key"].rpartition(".")
+        if prop.upper() in keys or (group and group.lower() in dropped_groups):
             continue
         kept.append(line)
     try:
@@ -494,11 +537,12 @@ class ContactsService:
 
     def create(self, *, name: str = "", given_name: str = "", family_name: str = "", nickname: str = "",
                organization: str = "", job_title: str = "", emails: list[str] | None = None,
-               phones: list[str] | None = None, birthday: str = "", urls: list[str] | None = None) -> dict[str, Any]:
+               phones: list[str] | None = None, birthday: str = "", urls: list[str] | None = None,
+               addresses: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         uid = str(uuid.uuid4())
         raw = build_vcard(uid=uid, name=name, given_name=given_name, family_name=family_name, nickname=nickname,
                           organization=organization, job_title=job_title, emails=emails, phones=phones,
-                          birthday=birthday, urls=urls)
+                          birthday=birthday, urls=urls, addresses=addresses)
         with self._lock, self._client() as client:
             if not self._books:
                 self._books = self._discover(client)
