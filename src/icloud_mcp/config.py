@@ -86,6 +86,8 @@ class Settings:
     allowed_redirect_hosts: tuple[str, ...]
     access_token_ttl: int
     refresh_token_ttl: int
+    bridge_host: str = "0.0.0.0"  # address the bridge port binds to inside this process (127.0.0.1 when server and helper share a Mac)
+    local_mode: bool = False      # stdio for a desktop client on this computer: no OAuth, no public URL, no browser outbox
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -145,6 +147,7 @@ class Settings:
             ),
             access_token_ttl=_int("ACCESS_TOKEN_TTL", 3600),
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),
+            bridge_host=_str("BRIDGE_HOST", "0.0.0.0"),
         )
 
     # ------------------------------------------------------------------
@@ -161,6 +164,30 @@ class Settings:
         if missing:
             raise SystemExit(f"Missing required environment variable(s): {', '.join(missing)}")
 
+    def _refuse_placeholders(self, checks: list[tuple[str, bool]]) -> None:
+        stale = [name for name, is_placeholder in checks if is_placeholder]
+        if stale:
+            raise SystemExit(f"{', '.join(stale)} still has the placeholder value from .env.example. Set your own value.")
+
+    def _validate_bridge_and_areas(self) -> None:
+        if self.bridge_enabled:
+            if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
+                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE need BRIDGE_TOKEN: a random secret of at least 32 characters "
+                                 "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
+            if self.owner_password and self.bridge_token == self.owner_password:
+                raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")
+        if not (self.enable_mail or self.enable_calendar or self.enable_contacts):
+            raise SystemExit("ENABLE_MAIL, ENABLE_CALENDAR and ENABLE_CONTACTS are all false; nothing to serve.")
+
+    def validate_for_local(self) -> None:
+        """Local (stdio) mode: the desktop client on this computer starts the server itself, so there is no public URL or owner password."""
+        self.validate_for_mail_calendar()
+        self._refuse_placeholders([
+            ("ICLOUD_APP_PASSWORD", "xxxx-xxxx" in self.app_password.lower()),
+            ("ICLOUD_USERNAME", self.username.lower() == "you@icloud.com"),
+        ])
+        self._validate_bridge_and_areas()
+
     def validate_for_server(self) -> None:
         self.validate_for_mail_calendar()
         # Refuse to run with the untouched values from .env.example: a public mailbox server must not start with a guessable password.
@@ -170,18 +197,9 @@ class Settings:
             ("ICLOUD_USERNAME", self.username.lower() == "you@icloud.com"),
             ("MCP_PUBLIC_URL", "icloud-mcp.example.com" in self.public_url.lower()),
         ]
-        stale = [name for name, is_placeholder in placeholders if is_placeholder]
-        if stale:
-            raise SystemExit(f"{', '.join(stale)} still has the placeholder value from .env.example. Set your own value in .env.")
+        self._refuse_placeholders(placeholders)
         if not self.public_url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
             raise SystemExit("MCP_PUBLIC_URL must be the public https:// URL of this server (no trailing path).")
         if len(self.owner_password) < 12:
             raise SystemExit("MCP_OWNER_PASSWORD must be set and at least 12 characters long.")
-        if self.bridge_enabled:
-            if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
-                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE need BRIDGE_TOKEN: a random secret of at least 32 characters "
-                                 "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
-            if self.bridge_token == self.owner_password:
-                raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")
-        if not (self.enable_mail or self.enable_calendar or self.enable_contacts):
-            raise SystemExit("ENABLE_MAIL, ENABLE_CALENDAR and ENABLE_CONTACTS are all false; nothing to serve.")
+        self._validate_bridge_and_areas()
