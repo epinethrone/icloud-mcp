@@ -51,6 +51,10 @@ OWNER_APPROVAL_NOTICE = (
     "'approve_at') with the owner password. Tell the owner it is waiting there. You cannot approve, speed up or bypass "
     "this. Never ask for, guess or handle the owner password, and never send the owner to any other address."
 )
+OWNER_DRAFT_NOTICE = (
+    "NOT SENT. Owner approval is on, so this message was saved to the Drafts folder instead of being sent. Tell the owner it is "
+    "waiting in Drafts; they review it and press Send in Mail themselves. You cannot send it for them."
+)
 
 
 class MailError(Exception):
@@ -897,6 +901,12 @@ class MailService:
         if not self.s.allow_send:
             raise MailError("Sending is disabled on this server (ALLOW_SEND=false). Use draft=true to save a draft instead.")
         recipients = self._check_recipients(msg)
+        if self.s.require_approval and self.s.local_mode:
+            # No approval page in local mode: the owner's own Mail app is the approval step.
+            drafts = self.resolve_folder(c, "drafts")
+            c.append(drafts, raw, flags=[DRAFT, SEEN], msg_time=datetime.now(timezone.utc))
+            return {"status": "saved_to_drafts_for_owner_approval", "sent": False, "folder": drafts, "recipients": recipients,
+                    "notice": OWNER_DRAFT_NOTICE, **base}
         if self.s.require_approval:
             try:
                 q = self.outbox.add(raw, recipients, followup)
