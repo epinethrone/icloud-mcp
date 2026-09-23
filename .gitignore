@@ -2,6 +2,8 @@
 # cannot be committed by accident (even with `git add -A`).
 *
 !.gitignore
+!.github/
+!.github/FUNDING.yml
 !LICENSE
 !README.md
 !.env.example
