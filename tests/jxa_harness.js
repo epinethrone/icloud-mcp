@@ -105,15 +105,39 @@ function buildNotes() {
     });
     return A;
   });
+  function newFolder(name, parentObj, A) {
+    var F = { id: "x-coredata://folder/new-" + (++counter), name: name, items: [], account: A, sub: [], parentObj: parentObj };
+    folders.push(F);
+    return F;
+  }
   function folderObj(F) {
     if (F._obj) return F._obj;
     var fo = item({ id: F.id, name: F.name }, ['id', 'name']);
+    F.sub = F.sub || [];
     fo.notes = collection(function () { return F.items; }, NKEYS, { push: function (n) { n._data.id = "x-coredata://note/new-" + (++counter); n._F = F; F.items.push(n); } });
+    fo.folders = collection(function () { return F.sub.map(folderObj); }, ['id', 'name'], {
+      push: function (nf) { var C = newFolder(nf._data.name, fo, F.account); F.sub.push(C); nf._data.id = C.id; C._obj = nf; def(nf, '_Fd', C); nf.notes = folderObj(C).notes; }
+    });
+    def(fo, 'container', function () { return F.parentObj || accountObj(F.account); });
+    def(fo, '_Fd', F);
     F._obj = fo;
     return fo;
   }
+  function accountObj(A) {
+    if (A._obj) return A._obj;
+    var ao = item({ name: A.name }, ['name']);
+    ao.folders = collection(function () { return A.folders.map(folderObj); }, ['id', 'name'], {
+      push: function (nf) { var C = newFolder(nf._data.name, null, A); A.folders.push(C); nf._data.id = C.id; C._obj = nf; def(nf, '_Fd', C); }
+    });
+    A._obj = ao;
+    return ao;
+  }
   var app = {};
-  app.accounts = function () { return accounts.map(function (A) { var ao = item({ name: A.name }, ['name']); ao.folders = collection(function () { return A.folders.map(folderObj); }, ['id', 'name']); return ao; }); };
+  app.accounts = collection(function () { return accounts.map(accountObj); }, ['name']);
+  def(app.accounts, 'byName', function (n) { var A = accounts.filter(function (x) { return x.name === n; })[0]; return A ? accountObj(A) : missing(['name']); });
+  app.defaultAccount = function () { return accountObj(accounts.filter(function (x) { return x.name === (fx.defaultAccount || accounts[0].name); })[0]); };
+  app.Folder = function (props) { return item({ id: null, name: props.name }, ['id', 'name']); };
+  app.move = function (n, opts) { var F = n._F, T = opts.to._Fd; F.items.splice(F.items.indexOf(n), 1); T.items.push(n); n._F = T; };
   app.folders = collection(function () { return folders.map(folderObj); }, ['id', 'name']);
   var allNotes = function () { var out = []; folders.forEach(function (F) { F.items.forEach(function (n) { out.push(n); }); }); return out; };
   app.notes = collection(allNotes, NKEYS, {});
@@ -126,7 +150,7 @@ function buildNotes() {
   };
   app['delete'] = function (n) { var F = n._F; F.items.splice(F.items.indexOf(n), 1); };
   app._snapshot = function () {
-    return { folders: folders.map(function (F) { return { name: F.name, notes: F.items.map(function (n) { var x = n._data; return { id: x.id, name: x.name, plaintext: x.plaintext, body: x.body }; }) }; }) };
+    return { folders: folders.map(function (F) { return { id: F.id, name: F.name, in: F.parentObj ? F.parentObj._Fd.name : F.account.name, notes: F.items.map(function (n) { var x = n._data; return { id: x.id, name: x.name, plaintext: x.plaintext, body: x.body }; }) }; }) };
   };
   return app;
 }
