@@ -280,3 +280,51 @@ def test_note_delete_never_touches_locked_notes_or_recently_deleted():
     r = fails("note_delete", {"id": "d1", "title": "Gone soon"}, "already in Recently Deleted", fixture=fx)
     fx["notes"]["accounts"][0]["folders"][-1]["name"] = "Onlangs verwijderd"                     # Dutch system language
     fails("note_delete", {"id": "d1", "title": "Gone soon"}, "already in Recently Deleted", fixture=fx)
+
+
+def _folders(state):
+    return {f["name"]: f for f in state["notes"]["folders"]}
+
+
+def test_creating_a_folder_goes_to_the_default_account_and_never_duplicates():
+    made, state = ok("note_folder_create", {"name": "  Recipes  "})
+    assert made["name"] == "Recipes" and made["in"] == "iCloud" and made["existed"] is False and _folders(state)["Recipes"]["in"] == "iCloud"
+    again, state = ok("note_folder_create", {"name": "work"})                                   # same name, other case: existing one returned
+    assert again["existed"] is True and again["id"] == "f2" and [f["name"] for f in state["notes"]["folders"]].count("Work") == 1
+    other, _ = ok("note_folder_create", {"name": "Drafts", "account": "On My Mac"})
+    assert other["in"] == "On My Mac"
+    fails("note_folder_create", {"name": "Drafts", "account": "Nope"}, "-1728")
+    fails("note_folder_create", {"name": "Recently Deleted"}, "reserved")
+    fails("note_folder_create", {"name": "   "}, "name is required")
+
+
+def test_creating_a_subfolder_inside_an_existing_folder():
+    sub, state = ok("note_folder_create", {"name": "2026", "parent_id": "f2"})
+    assert sub["in"] == "Work" and _folders(state)["2026"]["in"] == "Work"
+    fails("note_folder_create", {"name": "x", "parent_id": "nope"}, "-1728")
+
+
+def test_moving_a_note_needs_the_matching_title_and_a_clear_destination():
+    moved, state = ok("note_move", {"id": "n1", "title": "shopping ideas", "folder": "Work"})
+    assert moved["moved"] is True and moved["from"] == "Notes" and moved["to"] == "Work"
+    assert "n1" in [n["id"] for n in _folders(state)["Work"]["notes"]] and "n1" not in [n["id"] for n in _folders(state)["Notes"]["notes"]]
+    by_id, _ = ok("note_move", {"id": "n2", "title": "Trip plan", "folder_id": "f3"})
+    assert by_id["to"] == "Scratch"
+    r = fails("note_move", {"id": "n2", "title": "Wrong", "folder": "Work"}, "title does not match")
+    assert "Trip plan" in r["error"]
+    fails("note_move", {"id": "n2", "title": "Trip plan"}, "folder_id")                           # no destination at all
+    fails("note_move", {"id": "n2", "title": "Trip plan", "folder": "Nope"}, "not found")
+    locked, _ = ok("note_move", {"id": "n3", "title": "Secret", "folder": "Work"})                # moving reads nothing, so locked is fine
+    assert locked["moved"] is True
+    same, _ = ok("note_move", {"id": "n4", "title": "Meeting notes", "folder": "Work"})
+    assert same["moved"] is False
+
+
+def test_moving_never_targets_recently_deleted_and_refuses_ambiguous_names():
+    fx = json.loads(json.dumps(FIXTURE))
+    fx["notes"]["accounts"][0]["folders"].append({"id": "f9", "name": "Recently Deleted", "notes": []})
+    fx["notes"]["accounts"][1]["folders"].append({"id": "f8", "name": "Work", "notes": []})         # a second "Work", on another account
+    fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder": "Recently Deleted"}, "use notes_delete", fixture=fx)
+    fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder_id": "f9"}, "use notes_delete", fixture=fx)
+    fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder": "Work"}, "pass folder_id", fixture=fx)
+    ok("note_move", {"id": "n1", "title": "Shopping ideas", "folder_id": "f8"}, fixture=fx)
