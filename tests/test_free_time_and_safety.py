@@ -11,7 +11,7 @@ import pytest
 
 from icloud_mcp.cal import CalendarError, CalendarService, free_slots, not_busy_reason, retry_uid
 from icloud_mcp.config import Settings
-from icloud_mcp.contacts import ContactsService
+from icloud_mcp.contacts import ContactsError, ContactsService
 from icloud_mcp.mail import MailError, MailService
 
 TZ = ZoneInfo("Europe/Amsterdam")
@@ -186,6 +186,53 @@ def test_create_contact_with_request_id_never_duplicates(s):
     assert store.puts == 1
 
 
+@pytest.mark.parametrize("stored_kind", ["same", "different", "invalid", "missing"])
+def test_create_contact_412_checks_stored_uid(s, stored_kind):
+    from test_contacts import FakeICloud
+    import dataclasses
+
+    class RacingStore(CardStore):
+        def __init__(self, base):
+            super().__init__(base)
+            self.gets = 0
+
+        def __call__(self, request):
+            if request.url.path.endswith(".vcf") and request.method == "GET":
+                self.gets += 1
+                if self.gets == 1 or stored_kind == "missing":
+                    return httpx.Response(404)
+            if request.url.path.endswith(".vcf") and request.method == "PUT":
+                raw = request.content.decode()
+                uid = request.url.path.rsplit("/", 1)[-1].removesuffix(".vcf")
+                self.cards[uid] = (raw if stored_kind == "same" else raw.replace(f"UID:{uid}", "UID:another-contact")
+                                   if stored_kind == "different" else "invalid vcard")
+                return httpx.Response(412)
+            return super().__call__(request)
+
+    store = RacingStore(FakeICloud())
+    svc = ContactsService(dataclasses.replace(s, carddav_url="https://contacts.example.test"), transport=httpx.MockTransport(store))
+    if stored_kind == "same":
+        result = svc.create(given_name="Ada", request_id="racing-create")
+        assert result["created"] is False and result["already_existed"] is True
+        assert result["uid"] in store.cards
+    else:
+        with pytest.raises(ContactsError, match="changed since it was read"):
+            svc.create(given_name="Ada", request_id="racing-create")
+    assert store.gets == 2
+
+
+def test_create_contact_preflight_requires_matching_uid(s):
+    from test_contacts import FakeICloud
+    import dataclasses
+
+    store = CardStore(FakeICloud())
+    svc = ContactsService(dataclasses.replace(s, carddav_url="https://contacts.example.test"), transport=httpx.MockTransport(store))
+    first = svc.create(given_name="Ada", request_id="existing-contact")
+    store.cards[first["uid"]] = store.cards[first["uid"]].replace(f'UID:{first["uid"]}', "UID:another-contact")
+    with pytest.raises(ContactsError, match="changed since it was read"):
+        svc.create(given_name="Ada", request_id="existing-contact")
+
+
 # ------------------------------------------------------------------ mail: uid + uidvalidity
 class FakeIMAP:
     def __init__(self, uidvalidity=5):
@@ -236,3 +283,23 @@ def test_uids_come_with_uidvalidity_and_stale_ones_are_refused(mail):
     assert fake.flag_calls == []                                          # nothing was changed on the stale ids
     svc.mark("INBOX", [7], read=True)                                     # without uidvalidity: old behaviour
     assert fake.flag_calls == [("add", [7])]
+
+
+def test_missing_uidvalidity_rejects_expected_uids(mail):
+    svc, fake = mail
+    fake.uidvalidity = None
+    with pytest.raises(MailError, match="out of date"):
+        svc.get_message("INBOX", 7, uidvalidity=5)
+    with pytest.raises(MailError, match="out of date"):
+        svc.mark("INBOX", [7], read=True, uidvalidity=5)
+    assert fake.flag_calls == []
+
+
+def test_unthreaded_seed_summary_keeps_uidvalidity(mail, monkeypatch):
+    svc, fake = mail
+    raw = b"From: a@example.org\r\nSubject: Hi\r\n\r\nbody"
+    monkeypatch.setattr(fake, "fetch", lambda uids, parts: {uid: {b"BODY[]": raw,
+                                                                 b"BODY[HEADER.FIELDS (FROM)]": raw} for uid in uids})
+    result = svc.get_thread("INBOX", 7, uidvalidity=5)
+    assert result["root_message_id"] is None
+    assert result["messages"][0]["uidvalidity"] == 5
