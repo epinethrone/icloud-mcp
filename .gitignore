@@ -27,6 +27,13 @@
 !src/icloud_mcp/*.py
 !src/icloud_mcp/static/
 !src/icloud_mcp/static/README.md
+!src/icloud_mcp/static/favicon.ico
+!src/icloud_mcp/static/icon-180.png
+!src/icloud_mcp/static/icon-32.png
+!assets/
+!assets/logo.svg
+!assets/logo-512.png
+!assets/social-preview.png
 !tests/
 !tests/*.py
 !tests/*.js
@@ -47,8 +54,6 @@
 data/
 oauth_state.json
 outbox.json
-src/icloud_mcp/static/*.png
-src/icloud_mcp/static/*.ico
 __pycache__/
 *.egg-info/
 build/
