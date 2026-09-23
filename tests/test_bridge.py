@@ -53,10 +53,11 @@ def test_arguments_are_validated_strictly(rich_ops):
         validate_args("demo", ["title"])
 
 
-def test_the_real_operation_table_is_exactly_the_reminders_and_notes_operations():
+def test_the_real_operation_table_is_exactly_the_reminders_notes_and_drive_operations():
     assert set(bridge_mod.OPS) == {"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete",
                                    "note_folders", "notes_list", "note_read", "note_create", "note_delete",
-                                   "note_folder_create", "note_move"}
+                                   "note_folder_create", "note_move",
+                                   "drive_list", "drive_search", "drive_info", "drive_read", "drive_write", "drive_mkdir", "drive_move", "drive_trash"}
     assert validate_args("reminder_lists", None) == {} and validate_args("reminders_list", {"query": "x", "limit": 5})["limit"] == 5
 
 
@@ -312,6 +313,45 @@ def test_reminders_list_passes_the_new_arguments_and_shapes_the_answer(s):
 def test_instructions_mention_the_mac_only_when_enabled(s):
     assert "REMINDERS / NOTES" in build_instructions(s) and "offline, tell the user" in build_instructions(s)
     assert "REMINDERS / NOTES" not in build_instructions(dataclasses.replace(s, enable_reminders=False))
+
+
+DRIVE_READ = {"drive_list", "drive_search", "drive_info", "drive_read"}
+DRIVE_WRITE = {"drive_write", "drive_create_folder", "drive_move", "drive_trash"}
+
+
+def test_drive_tools_exist_only_when_enabled_and_writes_only_when_writable(s):
+    assert not (DRIVE_READ | DRIVE_WRITE) & set(names(s))
+    on = dataclasses.replace(s, enable_drive=True)
+    assert (DRIVE_READ | DRIVE_WRITE) <= set(names(on))
+    ro = names(dataclasses.replace(on, read_only=True))
+    assert DRIVE_READ <= set(ro) and not DRIVE_WRITE & set(ro)
+    alone = names(dataclasses.replace(on, enable_reminders=False))                           # Drive alone still starts the bridge
+    assert "mac_helper_status" in alone and DRIVE_READ <= set(alone) and "reminders_lists" not in alone
+    assert names(on)["drive_trash"].annotations.destructive_hint is True
+
+
+def test_drive_tools_pass_exactly_the_given_arguments_to_the_mac(s):
+    seen = []
+
+    async def go(tool, args, answer):
+        mcp, _ = create_server(dataclasses.replace(s, enable_drive=True))
+        mcp._icloud_bridge.call = lambda op, a=None: seen.append((op, a)) or answer
+        r = await mcp.call_tool(tool, args)
+        return json.loads(r.content[0].text)
+    out = asyncio.run(go("drive_read", {"path": "Documents/a.pdf", "max_chars": 500}, {"path": "Documents/a.pdf", "text": "hi"}))
+    assert seen[-1] == ("drive_read", {"path": "Documents/a.pdf", "max_chars": 500}) and out["text"] == "hi" and "data" in out["notice"]
+    asyncio.run(go("drive_create_folder", {"path": "A/B"}, {"path": "A/B"}))
+    assert seen[-1] == ("drive_mkdir", {"path": "A/B"})
+    asyncio.run(go("drive_move", {"path": "a.txt", "to": "A"}, {"moved": True}))
+    assert seen[-1] == ("drive_move", {"path": "a.txt", "to": "A"})
+    asyncio.run(go("drive_write", {"path": "n.md", "content": "x"}, {}))
+    assert seen[-1] == ("drive_write", {"path": "n.md", "content": "x"})                           # overwrite not sent unless true
+
+
+def test_instructions_mention_drive_only_when_enabled(s):
+    assert "ICLOUD DRIVE" not in build_instructions(s)
+    drive_only = dataclasses.replace(s, enable_drive=True, enable_reminders=False)
+    assert "ICLOUD DRIVE" in build_instructions(drive_only) and "REMINDERS / NOTES" not in build_instructions(drive_only)
 
 
 # ------------------------------------------------------------------ end to end: real TLS listener + the real helper code + a fake osascript
