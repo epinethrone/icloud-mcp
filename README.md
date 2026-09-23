@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="iCloud MCP logo" width="128" height="128">
+<!-- mcp-name: io.github.epinethrone/icloud-mcp -->
+
+<img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/logo.svg" alt="iCloud MCP logo" width="128" height="128">
 
 # iCloud MCP
 
@@ -8,10 +10,10 @@
 **Self-hosted, single-owner, and built around your approval, not the model's good behaviour.**
 
 [![Tests](https://github.com/epinethrone/icloud-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/epinethrone/icloud-mcp/actions/workflows/tests.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg?logo=python&logoColor=white)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](https://github.com/epinethrone/icloud-mcp/blob/main/LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg?logo=python&logoColor=white)](https://github.com/epinethrone/icloud-mcp/blob/main/pyproject.toml)
 [![Model Context Protocol](https://img.shields.io/badge/MCP-server-6e56cf.svg)](https://modelcontextprotocol.io)
-[![Docker](https://img.shields.io/badge/docker-compose-2496ed.svg?logo=docker&logoColor=white)](docker-compose.yml)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ed.svg?logo=docker&logoColor=white)](https://github.com/epinethrone/icloud-mcp/blob/main/docker-compose.yml)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20server-555.svg)](#quick-start)
 [![Tools](https://img.shields.io/badge/tools-47-f28b30.svg)](#tools)
 
@@ -283,23 +285,23 @@ If Claude Desktop cannot find `uvx`, use its full path (`which uvx`). Without uv
 
 ## Reminders, Notes and iCloud Drive through your Mac
 
-Apple only exposes Reminders, Notes and iCloud Drive on its own devices, so a small helper ([`mac-helper/`](mac-helper/README.md)) runs on your Mac and does the work when the server asks.
+Apple only exposes Reminders, Notes and iCloud Drive on its own devices, so a small helper ([`mac-helper/`](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md)) runs on your Mac and does the work when the server asks.
 
 - **Nothing listens on your Mac.** The helper connects *out* to a private HTTPS port of the server (never the public address, never the tunnel) and long-polls for jobs.
 - **No code is ever sent.** The server sends an operation name and validated arguments from a fixed list. Reminders run a small EventKit program the installer builds on your Mac. Notes run static scripts. iCloud Drive runs one fixed Python script under Apple's own Python. In every case the arguments arrive as one JSON value, never as code.
 - **Pinned and authenticated.** TLS with a self-signed certificate the helper pins by fingerprint, plus a bearer token.
 - **Honest when it's off.** It works while your Mac is on and reachable (home network or VPN). When it isn't, the tools say so.
 
-Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true` and `ENABLE_DRIVE=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](mac-helper/README.md).
+Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true` and `ENABLE_DRIVE=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
 
 > [!IMPORTANT]
 > **iCloud Drive needs Full Disk Access** for the helper's Python. On macOS 27 the grant only takes effect when the helper runs as the Command Line Tools `Python.app` executable, which is what the installer sets up. Details in the [Mac helper guide](mac-helper/README.md#icloud-drive).
 
-The Notes scripts are adapted from [MrGo2/icloud-mcp](https://github.com/MrGo2/icloud-mcp) (MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The Notes scripts are adapted from [MrGo2/icloud-mcp](https://github.com/MrGo2/icloud-mcp) (MIT); see [THIRD_PARTY_NOTICES.md](https://github.com/epinethrone/icloud-mcp/blob/main/THIRD_PARTY_NOTICES.md).
 
 ## Configuration
 
-Everything is an environment variable. [`.env.example`](.env.example) has a comment for each one.
+Everything is an environment variable. [`.env.example`](https://github.com/epinethrone/icloud-mcp/blob/main/.env.example) has a comment for each one.
 
 <details>
 <summary><b>All settings</b></summary>
@@ -403,7 +405,7 @@ These only show up against Apple's real servers, never against local test server
 
 Issues and pull requests are welcome.
 
-- **Security problems:** please don't open a public issue. Follow the [security policy](SECURITY.md) instead.
+- **Security problems:** please don't open a public issue. Follow the [security policy](https://github.com/epinethrone/icloud-mcp/blob/main/SECURITY.md) instead.
 - **Before a pull request:** make sure `pytest tests --ignore=tests/integration` passes, and add tests for new behaviour. They run automatically on every pull request.
 - **Anything that talks to iCloud:** run `selftest`, and try it by hand against a real account. Local test servers accept things iCloud doesn't.
 - **New tools:** keep the safety defaults intact. Anything that sends, invites or deletes must stay behind the existing settings, and anything read from iCloud must be treated as data, never as instructions.
@@ -426,7 +428,7 @@ Built on the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk
 
 ## License
 
-[MIT](LICENSE).
+[MIT](https://github.com/epinethrone/icloud-mcp/blob/main/LICENSE).
 
 <div align="center">
 <sub>Built for people who want an AI assistant for their Apple life without handing their Apple ID to anyone.</sub>
