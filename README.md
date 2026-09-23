@@ -34,6 +34,7 @@ In Claude you can additionally set the send, reply, forward and delete tools to 
 | Contacts | `contacts_search`, `contacts_get`, `contacts_create`, `contacts_update`, `contacts_delete` (notes and photos are never returned) |
 | Reminders (Mac helper) | `reminders_lists`, `reminders_list` (active reminders only), `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete` |
 | Notes (Mac helper) | `notes_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_create_folder`, `notes_move`, `notes_delete` (note text is never edited; move and delete act on one note at a time and need its current title; delete moves it to Recently Deleted and refuses locked notes and notes already there; nothing is ever moved into Recently Deleted) |
+| iCloud Drive (Mac helper) | `drive_list`, `drive_search`, `drive_info`, `drive_read` (text, PDF, Word/RTF/ODT/HTML; offloaded files are downloaded first), `drive_write` (plain text; replacing needs `overwrite` and trashes the old file), `drive_create_folder`, `drive_move` (never overwrites), `drive_trash` (to the Trash, never permanent). Paths are relative to the Drive and cannot leave it; the Drive's trash folder is off limits |
 | Helper status | `mac_helper_status` (is the Mac helper online?) |
 
 Behaviour worth knowing:
@@ -51,7 +52,7 @@ Apple exposes Reminders and Notes only through their own apps. They are scriptab
 
 **Reminders through EventKit.** Reminders operations use Apple's EventKit framework, so every read is live and takes about 20-40 ms per operation whatever the size of a list (the earlier scripted path scanned a whole list per request, 15 to 70 seconds on a list with a thousand completed reminders). Only *active* reminders are returned. EventKit needs its own permission, **Full Access to Reminders** for "iCloud Mac Helper (Reminders)", which the installer asks for and the self-test checks. Reminder ids in the older `x-apple-reminder://...` form are still accepted. List names are not unique across accounts, so tools accept `list_id` and refuse an ambiguous name.
 
-Enable it in `.env` with `ENABLE_REMINDERS=true` (and/or `ENABLE_NOTES=true`), a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs, and writes to `bridge_fingerprint.txt` in its data folder, the certificate fingerprint to give the installer. The operation scripts are adapted from [MrGo2/icloud-mcp](https://github.com/MrGo2/icloud-mcp) (MIT), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Enable it in `.env` with `ENABLE_REMINDERS=true` (and/or `ENABLE_NOTES=true`, `ENABLE_DRIVE=true`), a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs, and writes to `bridge_fingerprint.txt` in its data folder, the certificate fingerprint to give the installer. The operation scripts are adapted from [MrGo2/icloud-mcp](https://github.com/MrGo2/icloud-mcp) (MIT), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Requirements
 

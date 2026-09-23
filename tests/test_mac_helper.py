@@ -22,8 +22,10 @@ spec.loader.exec_module(helper)
 # ------------------------------------------------------------------ the two copies of the rules cannot drift apart
 def test_helper_and_server_agree_on_the_operations():
     assert helper.OPS == bridge_mod.OPS
-    assert set(helper.OP_FILES) | helper.EVENTKIT_OPS == set(helper.OPS)         # Reminders through EventKit, Notes through a script
-    assert not set(helper.OP_FILES) & helper.EVENTKIT_OPS
+    # Reminders through EventKit, Notes through a script each, iCloud Drive through ops/drive.py; every operation in exactly one
+    assert set(helper.OP_FILES) | helper.EVENTKIT_OPS | helper.DRIVE_OPS == set(helper.OPS)
+    assert not set(helper.OP_FILES) & helper.EVENTKIT_OPS and not (set(helper.OP_FILES) | helper.EVENTKIT_OPS) & helper.DRIVE_OPS
+    assert pathlib.Path(helper.DRIVE_SCRIPT).is_file()
     for op, filename in helper.OP_FILES.items():
         assert (HELPER_PATH.parent / "ops" / filename).is_file(), op
 
