@@ -176,7 +176,7 @@ class CardStore:
 
 
 def test_create_contact_with_request_id_never_duplicates(s):
-    from tests.test_contacts import FakeICloud
+    from test_contacts import FakeICloud          # pytest puts tests/ on sys.path (no __init__.py)
     import dataclasses
     store = CardStore(FakeICloud())
     svc = ContactsService(dataclasses.replace(s, carddav_url="https://contacts.example.test"), transport=httpx.MockTransport(store))
