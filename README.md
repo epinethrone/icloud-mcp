@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" alt="iCloud MCP logo" width="128" height="128">
+
 # iCloud MCP
 
 **Give Claude your iCloud: Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive.**
@@ -287,7 +289,7 @@ These only show up against Apple's real servers, never against local test server
 - Reminders, Notes and iCloud Drive need the Mac helper and a Mac that is on. Contact photos and notes are deliberately not exposed to agents, and deleting a contact is permanent.
 - One identity: aliases can't be used as the From address. Attachments that aren't text come back as base64 and are size-capped.
 - Each tool call opens a fresh connection, about 1.5 to 5 seconds per call against iCloud.
-- Claude doesn't show custom icons for custom connectors yet ([open request](https://github.com/anthropics/claude-ai-mcp/issues/152)). Icon files placed in `src/icloud_mcp/static/` are served and advertised anyway; none ship with the source.
+- Claude doesn't show custom icons for custom connectors yet ([open request](https://github.com/anthropics/claude-ai-mcp/issues/152)). The server serves and advertises the project logo anyway (`src/icloud_mcp/static/`), so clients that do show icons, and your browser tab on the approval and outbox pages, display it.
 
 ## Development
 
