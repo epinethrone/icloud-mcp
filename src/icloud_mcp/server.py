@@ -227,7 +227,7 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider]:
         revocation_options=RevocationOptions(enabled=True),
         validate_token_resource=False,
     )
-    # Icon files are optional (none ship with the source): drop your own favicon.ico / icon-180.png / icon-32.png into static/.
+    # The project logo ships as favicon.ico / icon-180.png / icon-32.png in static/; replace them to use your own artwork.
     have = {name for name in ("favicon.ico", "icon-180.png", "icon-32.png") if (_STATIC / name).is_file()}
     icons = ([Icon(src=f"{s.public_url}/icon.png", mime_type="image/png", sizes=["180x180"])] if "icon-180.png" in have else []) + \
             ([Icon(src=f"{s.public_url}/icon-32.png", mime_type="image/png", sizes=["32x32"])] if "icon-32.png" in have else [])
