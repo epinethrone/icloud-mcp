@@ -42,7 +42,7 @@ fi
 
 mkdir -p "$DEST/ops" "$DEST/bin" "$LOGDIR"
 cp "$HERE/icloud_mac_helper.py" "$DEST/"
-cp "$HERE/ops/"*.js "$DEST/ops/"
+cp "$HERE/ops/"*.js "$HERE/ops/"*.py "$DEST/ops/"
 chmod 700 "$DEST/icloud_mac_helper.py"
 
 # Reminders goes through EventKit. The program is built HERE, on this Mac, from eventkit/: the package ships source only, so SHA256SUMS
@@ -70,6 +70,24 @@ else
   mv -f "$TMP_DIR/reminders-eventkit" "$EK_BIN"
   rm -rf "$TMP_DIR"
   echo "$STAMP" > "$DEST/bin/.build-stamp"
+fi
+
+# iCloud Drive reads PDFs through a tiny PDFKit program, built here from pdftext/ the same way. It needs no permission of its own.
+PDF_SRC="$HERE/pdftext/pdf-text.swift"
+PDF_BIN="$DEST/bin/pdf-text"
+PDF_STAMP="$( { shasum -a 256 "$PDF_SRC" | cut -d' ' -f1; xcrun --sdk macosx swiftc --version 2>&1 | head -1; } | shasum -a 256 | cut -d' ' -f1)"
+if [ -x "$PDF_BIN" ] && [ "$(cat "$DEST/bin/.pdf-build-stamp" 2>/dev/null)" = "$PDF_STAMP" ]; then
+  echo "Keeping the PDF reader already built from this exact source."
+else
+  echo "Building the PDF reader (PDFKit)..."
+  TMP_DIR="$(mktemp -d "$DEST/bin/.build.XXXXXX")"
+  if ! xcrun --sdk macosx swiftc -O "$PDF_SRC" -o "$TMP_DIR/pdf-text" || ! codesign --force --sign - "$TMP_DIR/pdf-text"; then
+    rm -rf "$TMP_DIR"; echo "Building the PDF reader failed (see above)." >&2; exit 1
+  fi
+  chmod 755 "$TMP_DIR/pdf-text"
+  mv -f "$TMP_DIR/pdf-text" "$PDF_BIN"
+  rm -rf "$TMP_DIR"
+  echo "$PDF_STAMP" > "$DEST/bin/.pdf-build-stamp"
 fi
 
 echo

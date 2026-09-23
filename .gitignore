@@ -16,6 +16,9 @@
 !mac-helper/README.md
 !mac-helper/ops/
 !mac-helper/ops/*.js
+!mac-helper/ops/*.py
+!mac-helper/pdftext/
+!mac-helper/pdftext/*.swift
 !mac-helper/eventkit/
 !mac-helper/eventkit/*.swift
 !mac-helper/eventkit/Info.plist

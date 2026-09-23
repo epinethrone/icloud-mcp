@@ -67,6 +67,15 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
     "note_folder_create": {"name": ("str", True, 200), "account": ("str", False, 200), "parent_id": ("str", False, 500)},
     "note_move": {"id": ("str", True, 500), "title": ("str", True, 500), "folder_id": ("str", False, 500), "folder": ("str", False, 200)},
+    # iCloud Drive (paths are relative to the Drive; see ops/drive.py)
+    "drive_list": {"path": ("str", False, 1000), "include_hidden": ("bool", False, 0), "limit": ("int", False, 1000)},
+    "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
+    "drive_info": {"path": ("str", True, 1000)},
+    "drive_read": {"path": ("str", True, 1000), "max_chars": ("int", False, 200000), "offset": ("int", False, 50000000)},
+    "drive_write": {"path": ("str", True, 1000), "content": ("str", False, 500000), "overwrite": ("bool", False, 0)},
+    "drive_mkdir": {"path": ("str", True, 1000)},
+    "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
+    "drive_trash": {"path": ("str", True, 1000)},
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
