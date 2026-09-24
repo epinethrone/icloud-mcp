@@ -514,10 +514,11 @@ class MailService:
         self.outbox = Outbox(settings.data_dir, settings.outbox_ttl, settings.outbox_max)
         self._people_lock = threading.Lock()
         self._people_cache: dict[bool, tuple[float, dict[str, dict[str, Any]], dict[str, int]]] = {}
+        self._pool_lock = threading.Lock()
+        self._pool: list[tuple[IMAPClient, float]] = []      # idle, logged-in connections and when each was last used
 
     # -- connections ---------------------------------------------------------
-    @contextlib.contextmanager
-    def imap(self) -> Iterator[IMAPClient]:
+    def _login(self) -> IMAPClient:
         s = self.s
         ctx = ssl.create_default_context()
         try:
@@ -528,11 +529,72 @@ class MailService:
             c.login(s.imap_username, s.app_password)
         except Exception as e:  # noqa: BLE001
             raise MailError(f"IMAP connection/login failed: {e}") from e
+        return c
+
+    def _checkout(self) -> IMAPClient | None:
+        """A pooled connection that still answers, or None. Connections idle too long are closed; ones idle for more than
+        30 seconds are checked with a NOOP first (iCloud drops idle sessions without telling us)."""
+        while True:
+            with self._pool_lock:
+                if not self._pool:
+                    return None
+                c, last = self._pool.pop()
+            idle = time.monotonic() - last
+            if idle > self.s.imap_idle_seconds:
+                self._discard(c)
+                continue
+            if idle > 30:
+                try:
+                    c.noop()
+                except Exception:  # noqa: BLE001 - a dead session is simply replaced
+                    self._discard(c)
+                    continue
+            return c
+
+    def _checkin(self, c: IMAPClient) -> None:
+        """Return a connection to the pool with no folder selected. UNSELECT, never CLOSE: CLOSE would permanently expunge every
+        message flagged \\Deleted in the folder, and moves and deletes here only ever expunge the exact messages they handled."""
+        try:
+            if getattr(getattr(c, "_imap", None), "state", "SELECTED") == "SELECTED":   # unknown state counts as selected
+                if not c.has_capability("UNSELECT"):
+                    raise MailError("server cannot UNSELECT")
+                c.unselect_folder()
+        except Exception:  # noqa: BLE001 - anything unexpected: do not reuse this session
+            self._discard(c)
+            return
+        with self._pool_lock:
+            if len(self._pool) < self.s.imap_pool_size:
+                self._pool.append((c, time.monotonic()))
+                return
+        self._discard(c)
+
+    @staticmethod
+    def _discard(c: IMAPClient) -> None:
+        with contextlib.suppress(Exception):
+            c.logout()
+
+    def close_pool(self) -> None:
+        with self._pool_lock:
+            pooled, self._pool = self._pool, []
+        for c, _ in pooled:
+            self._discard(c)
+
+    @contextlib.contextmanager
+    def imap(self, fresh: bool = False) -> Iterator[IMAPClient]:
+        """A logged-in IMAP connection. It comes from a small pool when possible (IMAP_POOL_SIZE, default 2), which saves a TLS
+        handshake and login (about a second against iCloud) on every call. Each connection is used by one call at a time. A call
+        that fails leaves its connection out of the pool, since its state is unknown. fresh=True always logs in anew."""
+        reuse = self.s.imap_pool_size > 0 and not fresh
+        c = (self._checkout() if reuse else None) or self._login()
+        ok = False
         try:
             yield c
+            ok = True
         finally:
-            with contextlib.suppress(Exception):
-                c.logout()
+            if ok and reuse:
+                self._checkin(c)
+            else:
+                self._discard(c)
 
     def resolve_folder(self, c: IMAPClient, name: str) -> str:
         key = (name or "INBOX").strip().lower()
@@ -562,7 +624,7 @@ class MailService:
     # -- reading ---------------------------------------------------------------
     def health(self) -> dict[str, Any]:
         """Sign in and open the inbox read-only: the cheapest proof that IMAP works with these credentials."""
-        with self.imap() as c:
+        with self.imap(fresh=True) as c:                 # a real login: a pooled session could outlive a revoked password
             info = c.select_folder("INBOX", readonly=True) or {}
             return {"inbox_messages": info.get(b"EXISTS"), "can_move": bool(c.has_capability("MOVE") or c.has_capability("UIDPLUS"))}
 
