@@ -141,3 +141,46 @@ What changed against the baseline, with 40 ms per round trip:
 
 Mail searches 20 s apart logged in once in both versions: Dovecot does not drop idle sessions the way iCloud does, so the
 IMAP keep-alive (a NOOP every 5 minutes) only shows its effect against a live account.
+
+## Phase 2a: parallel calendars, leaner results
+
+Calendars are read in parallel on spare pooled connections (never new ones), `limit` is applied before events are converted,
+descriptions in event lists are cut at 2,000 characters, `fields="summary"` gives a compact list, all-folder mail search runs
+folders in parallel, HTML is converted from a bounded slice, attachment sizes come without decoding, list results leave empty
+fields out, and untrusted-content notices are one short line.
+
+### local stack, 5 runs, +40 ms per round trip
+
+| scenario | median s | p90 s | bytes | notice chars | tcp connects | imap commands | imap kb in | caldav requests | carddav requests |
+|---|---|---|---|---|---|---|---|---|---|
+| mail_search 20 | 0.136 | 0.179 | 10438 | 85 | 0 | 3 | 12 | 0 | 0 |
+| mail_search 20 + get_messages 10 | 0.308 | 0.310 | 30776 | 249 | 0 | 6 | 465 | 0 | 0 |
+| mail_search all_folders | 0.342 | 0.466 | 11257 | 85 | 0 | 19 | 31 | 0 | 0 |
+| mail_get_attachment (300 KB pdf) | 0.277 | 0.277 | 420259 | 170 | 0 | 6 | 436 | 0 | 0 |
+| calendar_list_calendars (cold) | 1.608 | 1.967 | 491 | 0 | 9 | 0 | 0 | 9 | 0 |
+| calendar_list_calendars (warm) | 0.000 | 0.168 | 491 | 0 | 0 | 0 | 0 | 0 | 0 |
+| calendar_list_events 7 days | 0.210 | 0.223 | 7633 | 85 | 5 | 0 | 0 | 5 | 0 |
+| calendar_list_events 30 days | 0.245 | 0.264 | 12384 | 85 | 5 | 0 | 0 | 5 | 0 |
+| calendar_list_events 30 days, fields=summary | 0.247 | 0.260 | 13208 | 85 | 5 | 0 | 0 | 5 | 0 |
+| calendar_find_free_time 14 days | 0.223 | 0.231 | 2320 | 85 | 5 | 0 | 0 | 5 | 0 |
+| contacts_search (cold) | 0.494 | 0.495 | 8539 | 72 | 5 | 0 | 0 | 0 | 5 |
+| contacts_search (warm) | 0.002 | 0.003 | 8539 | 72 | 0 | 0 | 0 | 0 | 0 |
+| calendar create + update + delete | 0.605 | 0.608 | 1397 | 0 | 7 | 0 | 0 | 7 | 0 |
+
+Against the baseline (40 ms per round trip):
+
+| scenario | baseline | phase 2a | change |
+|---|---|---|---|
+| `calendar_list_events` 7 days | 7 requests, 0.652 s | 5 requests, 0.210 s | -68 % time |
+| `calendar_list_events` 30 days | 7 requests, 0.738 s, 26,017 bytes | 5 requests, 0.245 s, 12,384 bytes | 33 % of the time, -52 % bytes |
+| `calendar_find_free_time` 14 days | 0.681 s | 0.223 s | -67 % |
+| `mail_search all_folders` | 0.622 s, 14,111 bytes | 0.342 s, 11,257 bytes | -45 % time, -20 % bytes |
+| `mail_search` 20 hits (same messages, computed offline) | 8,946 bytes | 6,827 bytes | -24 % |
+
+The first attempt at parallel calendar reads opened new connections for them and made a week of events slower (1.6 s, 9
+requests). A new CalDAV connection costs more than reading a few calendars one after another, so parallel reads now only borrow
+idle pooled connections, and warm-up opens up to three spares in the background.
+
+**Server-side recurrence expansion on iCloud** (plan 2.2), measured read-only on a real account with caldav 3.3: iCloud accepts
+`server_expand` and its replies are 40 to 70 % smaller, but it turns all-day events into UTC date-times (a DATE start came back
+as midnight UTC), which would break `all_day` and shift the day for anyone east or west of UTC. Expansion stays client-side.

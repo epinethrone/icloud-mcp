@@ -272,9 +272,10 @@ def mail(s, monkeypatch):
 def test_uids_come_with_uidvalidity_and_stale_ones_are_refused(mail):
     svc, fake = mail
     found = svc.search("INBOX")
-    assert found["uidvalidity"] == 5 and found["messages"][0]["uidvalidity"] == 5
+    assert found["uidvalidity"] == 5 and "uidvalidity" not in found["messages"][0]     # given once for the one folder
     assert svc.get_message("INBOX", 7, uidvalidity=5)["uidvalidity"] == 5
-    assert svc.get_messages("INBOX", [7], uidvalidity=5)["messages"][0]["uidvalidity"] == 5
+    got = svc.get_messages("INBOX", [7], uidvalidity=5)
+    assert got["uidvalidity"] == 5 and "uidvalidity" not in got["messages"][0]
     fake.uidvalidity = 6                                                  # the server renumbered the folder
     with pytest.raises(MailError, match="out of date"):
         svc.get_message("INBOX", 7, uidvalidity=5)
