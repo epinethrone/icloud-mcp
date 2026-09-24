@@ -93,3 +93,9 @@ def test_an_empty_calendar_goes_at_once_one_with_events_needs_the_token(svc):
     again = s.delete_calendar("Personal")
     done = s.delete_calendar("Personal", confirm_token=again["confirm_token"])
     assert done["deleted"] is True and done["events_deleted"] == 6 and p.cals[1].deleted
+
+
+def test_only_a_real_default_is_protected_not_whichever_calendar_is_listed_first(svc):
+    s, p = svc
+    p.cals[0].name = "Work"                                   # no "Calendar" or "Home" left, no DEFAULT_CALENDAR set
+    assert s.delete_calendar("Work")["deleted"] is True       # the first in the list is not a default worth protecting
