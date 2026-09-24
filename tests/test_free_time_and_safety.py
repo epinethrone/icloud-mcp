@@ -79,7 +79,7 @@ def cal(s, monkeypatch):
     ]
     monkeypatch.setattr(CalendarService, "_principal", lambda self: contextlib.nullcontext(object()))
     monkeypatch.setattr(CalendarService, "_occurrences",
-                        lambda self, p, calendar, s_dt, e_dt, not_read=None: iter([("Home", e) for e in events]))
+                        lambda self, p, calendar, s_dt, e_dt, not_read=None, skipped=None: iter([("Home", e) for e in events]))
     return svc
 
 

@@ -32,7 +32,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
@@ -378,9 +378,45 @@ def current_config(path=None):
     return _CFG["cfg"]
 
 
+NOTE_BACKUPS = os.path.expanduser("~/Library/Application Support/icloud-mac-helper/note-backups")
+NOTE_BACKUP_DAYS = 30
+_PRUNED = {"at": 0.0}
+
+
+def prune_note_backups(folder=NOTE_BACKUPS, days=NOTE_BACKUP_DAYS, trash=None, now=None):
+    """Move note backups older than `days` to the macOS Trash (never a permanent delete; they stay recoverable there).
+    Returns how many were moved. Runs at most once a day from the main loop; a failure is reported and skipped."""
+    now = time.time() if now is None else now
+    old = []
+    try:
+        for name in os.listdir(folder):
+            path = os.path.join(folder, name)
+            if name.endswith(".html") and os.path.isfile(path) and now - os.path.getmtime(path) > days * 86400:
+                old.append(path)
+    except OSError:
+        return 0
+    if not old:
+        return 0
+    trash = trash or (lambda paths: subprocess.run(["/usr/bin/trash"] + paths, capture_output=True, timeout=60).returncode == 0)
+    moved = 0
+    for i in range(0, len(old), 50):
+        batch = old[i:i + 50]
+        if trash(batch):
+            moved += len(batch)
+    return moved
+
+
 def run_forever(cfg_path=None):
     backoff = 2
     while True:
+        if time.time() - _PRUNED["at"] > 86400:
+            _PRUNED["at"] = time.time()
+            try:
+                n = prune_note_backups()
+                if n:
+                    print("moved %d note backup(s) older than %d days to the Trash" % (n, NOTE_BACKUP_DAYS), file=sys.stderr, flush=True)
+            except Exception as e:  # noqa: BLE001 - housekeeping never stops the helper
+                print("note backup clean-up skipped: %s" % e, file=sys.stderr, flush=True)
         try:
             cfg = current_config(cfg_path)
             outcome = handle_one(cfg, runner=run_op)

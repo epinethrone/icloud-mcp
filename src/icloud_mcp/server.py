@@ -66,6 +66,7 @@ Folder = Annotated[str, _d("Mail folder, e.g. INBOX, Sent, Archive or a custom n
 Uid = Annotated[int, _d("Message uid in that folder (from mail_search).")]
 Uids = Annotated[list[int], _d("Message uids in that folder (from mail_search).")]
 UidValidity = Annotated[int | None, _d("The 'uidvalidity' from the result the uid came from: a renumbered folder is then refused, not misread.")]
+UidValidityRequired = Annotated[int, _d("The 'uidvalidity' from the result the uids came from (required: a renumbered folder is refused, not misread).")]
 To = Annotated[list[str], _d("Addresses: 'anna@example.org' or 'Anna <anna@example.org>'. Only a name? contacts_search, then mail_find_correspondent.")]
 Cc = Annotated[list[str] | None, _d("Cc addresses (visible to all recipients).")]
 Bcc = Annotated[list[str] | None, _d("Bcc addresses (hidden from other recipients).")]
@@ -649,21 +650,20 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_IDEMPOTENT_WRITE)
             @_guard
-            def mail_mark(folder: Folder, uids: Uids, read: Annotated[bool | None, _d("true = mark read, false = mark unread, omit = leave unchanged.")] = None, flagged: Annotated[bool | None, _d("true = flag, false = unflag, omit = leave unchanged.")] = None,
-                          uidvalidity: UidValidity = None) -> dict[str, Any]:
+            def mail_mark(folder: Folder, uids: Uids, uidvalidity: UidValidityRequired, read: Annotated[bool | None, _d("true = mark read, false = mark unread, omit = leave unchanged.")] = None, flagged: Annotated[bool | None, _d("true = flag, false = unflag, omit = leave unchanged.")] = None) -> dict[str, Any]:
                 """Mark messages read/unread and/or flagged/unflagged. Leave an argument unset to keep it unchanged."""
                 return mail.mark(folder, uids, read=read, flagged=flagged, uidvalidity=uidvalidity)
 
             @mcp.tool(annotations=_IDEMPOTENT_WRITE)
             @_guard
             def mail_move(folder: Folder, uids: Uids, destination: Annotated[str, _d("Destination folder: Archive, Junk, Trash or a custom folder name.")],
-                          uidvalidity: UidValidity = None) -> dict[str, Any]:
+                          uidvalidity: UidValidityRequired) -> dict[str, Any]:
                 """Move messages to another folder (e.g. 'Archive', 'Junk', or a custom folder name)."""
                 return mail.move(folder, uids, destination, uidvalidity=uidvalidity)
 
             @mcp.tool(annotations=_DESTRUCTIVE)
             @_guard
-            def mail_delete(folder: Folder, uids: Uids, uidvalidity: UidValidity = None) -> dict[str, Any]:
+            def mail_delete(folder: Folder, uids: Uids, uidvalidity: UidValidityRequired) -> dict[str, Any]:
                 """Move messages to Trash. Messages already in Trash are not permanently deleted unless the server
                 operator enabled ALLOW_PERMANENT_DELETE."""
                 return mail.delete(folder, uids, uidvalidity=uidvalidity)

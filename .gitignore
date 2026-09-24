@@ -9,6 +9,8 @@
 !.github/workflows/*.yml
 !LICENSE
 !README.md
+!CHANGELOG.md
+!CONTRIBUTING.md
 !.env.example
 !Dockerfile
 !docker-compose.yml

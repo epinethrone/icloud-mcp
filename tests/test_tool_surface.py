@@ -67,13 +67,27 @@ def test_an_explicit_null_is_still_accepted(mcp):
     model = tools["calendar_list_events"].fn_metadata.arg_model
     got = model.model_validate({"start": "2026-09-01", "end": "2026-09-02", "calendar": None})
     assert got.calendar is None
-    model = tools["mail_move"].fn_metadata.arg_model
-    assert model.model_validate({"folder": "INBOX", "uids": [1], "destination": "Archive", "uidvalidity": None}).uidvalidity is None
+    model = tools["mail_reply"].fn_metadata.arg_model
+    assert model.model_validate({"folder": "INBOX", "uid": 1, "body": "x", "uidvalidity": None}).uidvalidity is None
+
+
+def test_destructive_mail_tools_require_uidvalidity(mcp):
+    import pydantic
+    tools = {t.name: t for t in mcp._tool_manager.list_tools()}
+    base = {"folder": "INBOX", "uids": [1]}
+    for name, extra in (("mail_delete", {}), ("mail_move", {"destination": "Archive"}), ("mail_mark", {"read": True})):
+        model = tools[name].fn_metadata.arg_model
+        for bad in ({}, {"uidvalidity": None}):
+            with pytest.raises(pydantic.ValidationError):
+                model.model_validate({**base, **extra, **bad})
+        assert model.model_validate({**base, **extra, "uidvalidity": 7}).uidvalidity == 7
+        assert "uidvalidity" in listed(mcp)[name].input_schema["required"]
 
 
 @pytest.mark.parametrize("tool, param, phrase", [
-    ("mail_move", "uidvalidity", "renumbered folder is then refused"),
-    ("mail_delete", "uidvalidity", "renumbered folder is then refused"),
+    ("mail_move", "uidvalidity", "a renumbered folder is refused"),
+    ("mail_delete", "uidvalidity", "a renumbered folder is refused"),
+    ("mail_reply", "uidvalidity", "renumbered folder is then refused"),
     ("calendar_create_event", "attendees", "iCloud emails each one an invitation"),
     ("calendar_create_event", "request_id", "never a second copy"),
     ("contacts_create", "request_id", "never a second copy"),

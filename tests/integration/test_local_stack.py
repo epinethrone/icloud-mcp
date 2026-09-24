@@ -185,6 +185,28 @@ def test_thread_spans_inbox_and_sent(mail, inbox):
     assert {m["folder"] for m in t["messages"]} == {"INBOX", "Sent Messages"}
 
 
+def test_every_result_that_hands_out_uids_hands_out_their_uidvalidity(mail, inbox):
+    """mail_mark, mail_move and mail_delete require uidvalidity, so each uid an agent is given must come with one: on the
+    message itself (all-folder search, threads) or once on the result's folder. Each pair is then used for real."""
+    lunch = uid_of(mail, "Lunch")
+    results = {
+        "search": mail.search("INBOX"),
+        "search all folders": mail.search("INBOX", all_folders=True),
+        "thread": mail.get_thread("INBOX", lunch),
+        "get_messages": mail.get_messages("INBOX", [lunch]),
+    }
+    assert isinstance(mail.changes("INBOX")["uidvalidity"], int)             # later calls list uids under this folder header
+    for name, r in results.items():
+        msgs = r.get("messages") or []
+        assert msgs, name
+        for m in msgs:
+            folder = m.get("folder") or r["folder"]
+            uv = m.get("uidvalidity") or r.get("uidvalidity")
+            assert isinstance(uv, int), (name, m)
+            mail.mark(folder, [m["uid"]], flagged=True, uidvalidity=uv)          # accepted: the pair is right
+            mail.mark(folder, [m["uid"]], flagged=False, uidvalidity=uv)
+
+
 def test_draft_forward_and_new_message(mail, inbox):
     b_uid = uid_of(mail, "Q3")
     d = mail.reply("INBOX", b_uid, "Thanks, will review.", draft=True)
@@ -198,7 +220,7 @@ def test_draft_forward_and_new_message(mail, inbox):
     wire = email.message_from_bytes(sink_files()[-1].read_bytes(), policy=policy.default)
     assert wire["Subject"] == "Fwd: Q3 report"
     assert [p.get_filename() for p in wire.iter_attachments()] == ["q3.pdf"]
-    assert "$Forwarded" in mail.get_message("INBOX", b_uid)["flags"]
+    assert mail.get_message("INBOX", b_uid)["forwarded"] is True
 
     n = mail.send(to=["x@example.org"], cc=["y@example.org"], bcc=["secret@example.org"], subject="Grüße", body="Hallo ☕",
                   attachments=[{"filename": "n.txt", "content_base64": base64.b64encode(b"note").decode()}])
@@ -276,6 +298,16 @@ def test_calendar_crud_and_recurrence(cal):
     assert cal.delete_event(uid)["deleted"] is True
     with pytest.raises(CalendarError):
         cal.get_event(uid)
+
+
+def test_an_all_day_series_expands_to_dates(cal):
+    """The reason expansion is client-side: server-side expansion turns all-day events into UTC date-times."""
+    uid = cal.create_event(summary="Bins out", start="2026-10-05", end="2026-10-05", rrule="FREQ=WEEKLY;COUNT=3")["uid"]
+    try:
+        occ = [e for e in cal.list_events("2026-10-01", "2026-10-31")["events"] if e["uid"] == uid]
+        assert [e["start"] for e in occ] == ["2026-10-05", "2026-10-12", "2026-10-19"]
+    finally:
+        cal.delete_event(uid)
     assert cal.list_events("2026-09-21", "2026-10-31")["total"] == 0
 
 

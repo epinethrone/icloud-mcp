@@ -235,8 +235,8 @@ class MacBridge:
     # -- called by the bridge HTTP app -----------------------------------------------------
     def _touch(self, meta: dict[str, str]) -> None:
         self.last_seen = time.time()
-        if meta:
-            self.agent = meta
+        if meta:                    # the hostname a helper reports is never kept: the Mac's name would reach the model
+            self.agent = {k: v for k, v in meta.items() if k in ("version", "os")}
 
     def next_job(self, meta: dict[str, str], wait: float) -> Job | None:
         end = time.monotonic() + wait
@@ -361,7 +361,7 @@ def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
             wait = min(max(float(body.get("wait", 25)), 0.0), 30.0)
         except (BridgeError, ValueError, TypeError, AttributeError):
             return JSONResponse({"error": "bad request"}, status_code=400)
-        meta = {"host": str(body.get("host", ""))[:80], "version": str(body.get("version", ""))[:20], "os": str(body.get("os", ""))[:40]}
+        meta = {"version": str(body.get("version", ""))[:20], "os": str(body.get("os", ""))[:40]}
         job = await asyncio.to_thread(bridge.next_job, meta, wait)
         if job is None:
             return Response(status_code=204)

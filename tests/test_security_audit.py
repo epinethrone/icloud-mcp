@@ -121,7 +121,7 @@ def test_the_invite_gate_looks_at_every_component_of_the_object():
 
 def test_repeat_rules_are_one_line_and_never_finer_than_hourly():
     assert parse_rrule("RRULE:FREQ=WEEKLY;COUNT=3")["FREQ"] == ["WEEKLY"]
-    with pytest.raises(CalendarError, match="finer than HOURLY"):
+    with pytest.raises(CalendarError, match="more than 48 times a day"):
         parse_rrule("FREQ=MINUTELY")
     with pytest.raises(CalendarError):
         parse_rrule("FREQ=DAILY\r\nATTENDEE:mailto:victim@example.org")

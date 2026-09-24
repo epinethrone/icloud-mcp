@@ -30,8 +30,8 @@ jobs:
       - name: Offline tests
         run: pytest tests --ignore=tests/integration -q
 
-  # Integration tests and the benchmark against a local Dovecot + SMTP sink + Radicale. The integration step reports but does not
-  # fail the job; the benchmark writes its tables to the job summary and uploads them (gh run download <id> -n bench).
+  # Integration tests and the benchmark against a local Dovecot + SMTP sink + Radicale. A failing integration test fails the
+  # job; the benchmark writes its tables to the job summary and uploads them (gh run download <id> -n bench).
   bench:
     runs-on: ubuntu-latest
     steps:
@@ -48,7 +48,6 @@ jobs:
       - name: Start the local stack
         run: sudo env "PATH=$PATH" bash dev/start_local_stack.sh
       - name: Integration tests
-        continue-on-error: true
         run: pytest tests/integration -q
       - name: Benchmark
         run: |
