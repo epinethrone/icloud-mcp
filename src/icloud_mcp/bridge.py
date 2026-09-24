@@ -37,6 +37,7 @@ log = logging.getLogger("icloud_mcp.bridge")
 
 ONLINE_WINDOW = 45          # seconds after the last poll during which the helper counts as online (polls last <= 30 s)
 MAX_BODY = 1_048_576        # largest request body accepted on the bridge port
+MAX_RESULT_BODY = 12 * 1_048_576   # a job result (only after the token check): drive_get_file carries a file of up to 7 MB, base64
 _MAX_FAILURES, _FAILURE_WINDOW = 20, 900
 
 
@@ -67,15 +68,22 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
     "note_folder_create": {"name": ("str", True, 200), "account": ("str", False, 200), "parent_id": ("str", False, 500)},
     "note_move": {"id": ("str", True, 500), "title": ("str", True, 500), "folder_id": ("str", False, 500), "folder": ("str", False, 200)},
+    "note_update": {"id": ("str", True, 500), "title": ("str", True, 500), "expected_hash": ("str", True, 8), "text": ("str", True, 100000),
+                    "mode": ("str", True, 7)},
     # iCloud Drive (paths are relative to the Drive; see ops/drive.py)
     "drive_list": {"path": ("str", False, 1000), "include_hidden": ("bool", False, 0), "limit": ("int", False, 1000)},
     "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
+    "drive_search_content": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 100),
+                             "download": ("bool", False, 0)},
     "drive_info": {"path": ("str", True, 1000)},
     "drive_read": {"path": ("str", True, 1000), "max_chars": ("int", False, 200000), "offset": ("int", False, 50000000)},
+    "drive_get_file": {"path": ("str", True, 1000), "max_bytes": ("int", False, 7340032)},
     "drive_write": {"path": ("str", True, 1000), "content": ("str", False, 500000), "overwrite": ("bool", False, 0)},
     "drive_mkdir": {"path": ("str", True, 1000)},
     "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
     "drive_trash": {"path": ("str", True, 1000)},
+    # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
+    "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
@@ -303,9 +311,9 @@ def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return None
 
-    async def read_json(request: Request) -> Any:
+    async def read_json(request: Request, limit: int = MAX_BODY) -> Any:
         body = await request.body()
-        if len(body) > MAX_BODY:
+        if len(body) > limit:
             raise BridgeError("request body too large")
         return json.loads(body or b"{}")
 
@@ -330,7 +338,7 @@ def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
         if (bad := denied(request)) is not None:
             return bad
         try:
-            body = await read_json(request)
+            body = await read_json(request, MAX_RESULT_BODY)
             job_id, ok = str(body["job"]), bool(body["ok"])
         except (BridgeError, ValueError, TypeError, KeyError, AttributeError):
             return JSONResponse({"error": "bad request"}, status_code=400)

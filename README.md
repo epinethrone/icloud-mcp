@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (14 tools), Calendar (8), Contacts (5), Reminders (6), Notes (7) and iCloud Drive (8), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (20 tools), Calendar (8), Contacts (6), Reminders (6), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -67,37 +67,39 @@ Everything Claude reads is marked as someone else's words, not instructions.<br>
 Hidden characters are stripped, and phishing tricks are called out.
 
 **Tested where it counts.**<br>
-311 offline tests on every change, integration tests against real mail and calendar servers,<br>
+385 offline tests on every change, integration tests against real mail and calendar servers,<br>
 and hands-on runs against a live iCloud account for the quirks only Apple's servers have.
 
 <br>
 
-## New in 0.3.
+## New in 0.4.
 
 </div>
 
 <table>
 <tr>
-<td width="33%" valign="top"><b>One-click install</b><br>A Claude Desktop extension. Double-click, fill in a short form, done.</td>
-<td width="33%" valign="top"><b>No server needed</b><br><code>--local</code> runs it on your computer for Claude Desktop and Claude Code.</td>
-<td width="33%" valign="top"><b>Keychain storage</b><br><code>--store-password</code> keeps your app-specific password out of every file.</td>
+<td width="33%" valign="top"><b>Faster mail</b><br>Logged-in connections are reused, so repeat mail calls are about 40% quicker.</td>
+<td width="33%" valign="top"><b>What changed</b><br><code>mail_changes</code> lists only new and changed messages since the last check.</td>
+<td width="33%" valign="top"><b>Newsletter radar</b><br>Bulk mail is marked in every search; <code>mail_senders</code> shows who fills your inbox.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Find free time</b><br>Openings of any length within your hours. Travel time counts as busy.</td>
-<td width="33%" valign="top"><b>Answer invitations</b><br>Accept, decline or maybe, for a whole series or a single date.</td>
-<td width="33%" valign="top"><b>One date in a series</b><br>Move or cancel one occurrence and leave the rest alone.</td>
+<td width="33%" valign="top"><b>Safe bulk clean-up</b><br>Archive, trash or mark read by search, with a preview, a token and a 30-day undo.</td>
+<td width="33%" valign="top"><b>Unsubscribe safely</b><br>The standard one-click request or an email; links in the body are never followed.</td>
+<td width="33%" valign="top"><b>Exact bookings</b><br>Flights, hotels, trains, tickets and invitations read from the booking data, never guessed.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Delivery you can trust</b><br>See whether each guest's invitation was sent, delivered or refused.</td>
-<td width="33%" valign="top"><b>Search every folder</b><br>Archive, Sent, Junk and your own folders at once. Read 25 messages in one call.</td>
-<td width="33%" valign="top"><b>Safe retries</b><br>A retried create never makes a duplicate. Stale mail ids are refused.</td>
+<td width="33%" valign="top"><b>Edit notes</b><br>Append to or rewrite a note, guarded by a content hash and backed up first.</td>
+<td width="33%" valign="top"><b>Search inside files</b><br>Find words in your iCloud Drive PDFs and documents, not just their names.</td>
+<td width="33%" valign="top"><b>Send Drive files</b><br><code>drive_get_file</code> hands over the file itself, so it can be attached or sent on.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Scam warnings</b><br>Flags text that addresses an AI, asks for codes or says bank details changed.</td>
-<td width="33%" valign="top"><b>A health check</b><br>Tests every service in one call and never shows a secret.</td>
-<td width="33%" valign="top"><b>A smaller menu</b><br><code>TOOLS=essential</code> offers a core of 19 tools that clients choose from more reliably.</td>
+<td width="33%" valign="top"><b>Birthdays</b><br>Upcoming birthdays from your contacts, with the age they turn.</td>
+<td width="33%" valign="top"><b>Ready-made workflows</b><br>Triage my inbox, Plan my week, Prepare for an appointment, Birthdays coming up.</td>
+<td width="33%" valign="top"><b>Shortcuts</b><br>Run the Shortcuts you allow, allowlisted on the server and again on the Mac.</td>
 </tr>
 </table>
+
+<p align="center"><sub>Also in 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP, single occurrences, invitation delivery reports and scam warnings.</sub></p>
 
 <br>
 
@@ -275,19 +277,25 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**50 tools.** 28 for Mail, Calendar, Contacts and the health check, and 22 more with the optional Mac helper. Open a section for the details.
+**63 tools.** 35 for Mail, Calendar, Contacts and the health check, 26 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 <details>
-<summary><b>Mail</b> &nbsp;·&nbsp; 14 tools</summary>
+<summary><b>Mail</b> &nbsp;·&nbsp; 20 tools</summary>
 
 | Kind | Tools |
 |---|---|
-| Read | `mail_list_folders`, `mail_search`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment` |
-| Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder` |
+| Read | `mail_list_folders`, `mail_search`, `mail_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
+| Read | `mail_senders` (who fills a folder, busiest first, with bulk and unsubscribe info) |
+| Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder`, `mail_bulk_action`, `mail_bulk_undo`, `mail_unsubscribe` |
 
 - Replies keep the `Re:` subject, `In-Reply-To` and `References`, the right recipients and the quoted original in plain text and HTML. Sent mail is copied to Sent and the original is flagged Answered (forwards get `$Forwarded`). `draft=true` saves to Drafts instead of sending.
 - `mail_get_messages` reads a batch (a day's unread mail, a whole thread) in one IMAP round trip, about 7 times faster than one at a time.
 - **Search every folder at once.** `mail_search` with `all_folders=true` looks in Archive, Sent, Junk and your own folders too, newest first, because mail rules and replies file messages away from the inbox.
+- **Newsletters are told apart from people.** Search results mark `bulk` mail (a List-Unsubscribe or List-Id header, bulk precedence, automated or no-reply senders) and say how it can be unsubscribed from; `mail_senders` groups a folder by sender.
+- **Clean up in bulk, safely.** `mail_bulk_action` (move, archive, trash, mark read) always previews first: the count, a sample and a confirm token that stands for exactly those messages. Running needs that token, so mail that arrived since is never touched. Every run is logged by Message-ID and `mail_bulk_undo` reverses it for 30 days. It needs at least one filter and never deletes permanently.
+- **Unsubscribe without following links.** `mail_unsubscribe` uses only the List-Unsubscribe header: the standard one-click request (RFC 8058, HTTPS to public addresses only) or an unsubscribe email through the normal send path, so approval rules apply. Links in the body are never followed, unsubscribe web pages are only handed to you, and mail in Junk is refused.
+- **Bookings come out exact.** `mail_extract_bookings` reads the schema.org booking data airlines, hotels, rail and ticket shops embed (flights, stays, trains, buses, rental cars, restaurants, events) and `.ics` invitations, and returns each with a ready `calendar_create_event` block. Nothing is guessed from the wording; a message without that data says so.
+- **Only what changed.** `mail_changes` returns a token; passed back next time, it lists just the new messages and those whose read, flagged or answered state changed, using IMAP CONDSTORE instead of re-reading the folder. If iCloud renumbered the folder, it says to start over rather than guess.
 - **Stale ids are refused.** Every message comes with its folder's `uidvalidity`; tools that act on a uid accept it back and refuse if iCloud has renumbered the folder since, instead of touching a different message.
 - Reading a message does not mark it read. Bcc recipients receive the mail, but the header is stripped on the wire.
 - Recipients accept `a@b.com`, `Name <a@b.com>` or `mailto:a@b.com`. Anything else is rejected with a clear error and never silently dropped.
@@ -310,13 +318,14 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>Contacts</b> &nbsp;·&nbsp; 5 tools</summary>
+<summary><b>Contacts</b> &nbsp;·&nbsp; 6 tools</summary>
 
-`contacts_search`, `contacts_get`, `contacts_create`, `contacts_update`, `contacts_delete`
+`contacts_search`, `contacts_get`, `contacts_upcoming_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`
 
 - Contacts are fetched whole, cached and searched locally by name, nickname, company, email or phone, ignoring accents. A contact with no email comes back with `has_email: false`, so an agent asks instead of guessing.
 - **Misspelled names are handled.** `contacts_search` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.
 - **Postal addresses** are read and written as street, city, region, postcode and country, with home, work or your own labels ("Holiday house"), stored the way Apple's Contacts app expects.
+- **Birthdays coming up.** `contacts_upcoming_birthdays` lists them soonest first, with the age turned when the year is known (Apple's "year unknown" 1604 is understood, and 29 February falls on the 28th in other years).
 - Updates keep every field outside the changed ones and use ETags to refuse stale overwrites. Contact photos and notes are never returned.
 
 </details>
@@ -332,24 +341,27 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>Notes</b> &nbsp;·&nbsp; 7 tools, with the Mac helper</summary>
+<summary><b>Notes</b> &nbsp;·&nbsp; 9 tools, with the Mac helper</summary>
 
-`notes_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_create_folder`, `notes_move`, `notes_delete`
+`notes_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_append`, `notes_update`, `notes_create_folder`, `notes_move`, `notes_delete`
 
-- Read, create, and **organise**: create folders and subfolders, and move notes between them. The text of an existing note is never edited.
+- Read, create, **edit** and **organise**: add to a note (`notes_append`, keeps headings, lists and styling; notes with tables are refused) or rewrite it (`notes_update`, keeps the title), create folders and subfolders, and move notes between them.
+- **Edits are guarded.** `notes_read` returns a `content_hash`; append and update need it with the current title, so a note that changed since it was read is never overwritten. Locked notes, notes with attachments and notes in Recently Deleted are refused, and the old version is saved to `~/Library/Application Support/icloud-mac-helper/note-backups/` before anything is written.
 - Move and delete act on one note at a time and need its **current title** as well as its id, so a stale or wrong id changes nothing.
 - Delete moves a note to **Recently Deleted**, where you can recover it for about 30 days. It refuses locked notes, and notes already in Recently Deleted, because removing them from there would be permanent. Nothing is ever moved into Recently Deleted.
 
 </details>
 
 <details>
-<summary><b>iCloud Drive</b> &nbsp;·&nbsp; 8 tools, with the Mac helper</summary>
+<summary><b>iCloud Drive</b> &nbsp;·&nbsp; 10 tools, with the Mac helper</summary>
 
-`drive_list`, `drive_search`, `drive_info`, `drive_read`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
+`drive_list`, `drive_search`, `drive_search_content`, `drive_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
 
 - Works on your **whole iCloud Drive** as your Mac keeps it in sync, so every change syncs to your other devices by itself.
 - `drive_read` returns text from plain text files, **PDFs** and **Word, RTF, ODT and HTML** documents. Files offloaded by "Optimise Mac Storage" are downloaded first. If that takes too long, the answer says the file is still downloading, instead of timing out.
+- **Search inside files.** `drive_search_content` finds words in the text of plain text, PDF, Word, RTF, ODT and HTML files (case and accents ignored) and returns an excerpt for each match. Each file is read once and its text kept in a private cache on the Mac (`drive-text-cache.sqlite`, mode 600), so later searches are fast and still work after macOS offloads the file. Files that are only in iCloud are skipped unless `download=true`, and the answer always says how many were left out. (Spotlight was tried first and dropped: its index of iCloud Drive was measurably incomplete.)
 - `drive_write` creates plain text files. Replacing a file needs `overwrite`, and the old version goes to the Trash. `drive_move` never overwrites.
+- `drive_get_file` hands over the file itself (base64, up to `MAX_ATTACHMENT_BYTES`), so an agent can attach it or send it on, the way `mail_get_attachment` does for mail.
 - **Nothing is ever deleted permanently.** `drive_trash` moves items to the Trash, where you can recover them.
 - Paths are relative to the Drive and can't leave it, not through `..` and not through a symbolic link (links that lead outside are not even listed). The Drive's trash folder is off limits.
 
@@ -362,6 +374,10 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 </details>
 
+### Ready-made workflows
+
+The server also offers MCP prompts your client can show as one-click workflows: **Triage my inbox**, **Plan my week**, **Prepare for an appointment** and **Birthdays coming up**. Each only appears when the areas it needs are on, and each tells the agent to show you what it would do before sending, booking, moving or deleting anything.
+
 ## Reminders, Notes and iCloud Drive through your Mac
 
 Apple only exposes Reminders, Notes and iCloud Drive on its own devices, so a small helper ([`mac-helper/`](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md)) runs on your Mac and does the work when the server asks.
@@ -372,6 +388,8 @@ Apple only exposes Reminders, Notes and iCloud Drive on its own devices, so a sm
 - **Honest when it's off.** It works while your Mac is on and reachable (home network or VPN). When it isn't, the tools say so.
 
 Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true` and `ENABLE_DRIVE=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
+
+**Shortcuts, allowlisted twice.** To let the assistant run some of your Shortcuts (`shortcuts_list`, `shortcuts_run`), list their exact names in `SHORTCUTS_ALLOW` on the server **and**, one per line, in `~/Library/Application Support/icloud-mac-helper/shortcuts-allow.txt` on the Mac. A name must be on both lists, so a compromised server can never run a shortcut you did not allow at the Mac itself. Apple's `shortcuts` command runs it, with optional text input, and its text output comes back. The tools do not exist without an allowlist or on a read-only server.
 
 > [!IMPORTANT]
 > **iCloud Drive needs Full Disk Access** for the helper's Python. On macOS 27 the grant only takes effect when the helper runs as the Command Line Tools `Python.app` executable, which is what the installer sets up. Details in the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md#icloud-drive).
@@ -400,6 +418,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `TOOLS` | all | `essential` and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
 | `BRIDGE_HOST` | 0.0.0.0 (127.0.0.1 in local mode) | Address the bridge binds to inside the process. Use 127.0.0.1 when the server runs directly on the helper's Mac |
+| `SHORTCUTS_ALLOW` | empty | Exact names of Shortcuts the assistant may run through the Mac helper, separated by commas (or by `;` when a name contains a comma); the Mac must list them too (see below) |
 | `BRIDGE_JOB_TIMEOUT_SECONDS` | 60 | How long a tool call waits for the Mac |
 | `READ_ONLY` | false | No sending, moving, deleting, or calendar, contact, reminder, note or file changes |
 | `ALLOW_SEND` | true | false = agents can only save drafts |
@@ -415,6 +434,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `MCP_HOST`, `MCP_PORT`, `MCP_EXTRA_ALLOWED_HOSTS` | 0.0.0.0, 8000, empty | Bind address and extra allowed `Host` headers |
 | `MCP_STATELESS` | true | No server-side MCP sessions, so a restart never breaks a connected client ("Missing session ID") |
 | `TOOL_TIMEOUT_SECONDS` | 90 | A tool call running longer is abandoned with an error instead of hanging |
+| `IMAP_POOL_SIZE`, `IMAP_IDLE_SECONDS` | 2, 600 | Logged-in mail connections kept for reuse (0 = log in on every call), and how long an unused one is kept |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
@@ -494,7 +514,7 @@ These only show up against Apple's real servers, never against local test server
 
 - Reminders, Notes and iCloud Drive need the Mac helper and a Mac that is on. Contact photos and notes are deliberately not exposed to agents, and deleting a contact is permanent.
 - One identity: aliases can't be used as the From address. Attachments that aren't text come back as base64 and are size-capped.
-- Each tool call opens a fresh connection, about 1.5 to 5 seconds per call against iCloud.
+- Mail calls reuse up to two logged-in connections, which saves the login (about a second) on each call after the first; calendar and contacts calls take about 1.5 to 5 seconds against iCloud.
 - Claude doesn't show custom icons for custom connectors yet ([open request](https://github.com/anthropics/claude-ai-mcp/issues/152)). The server serves and advertises the project logo anyway, so clients that do show icons, and your browser tab on the approval and outbox pages, display it.
 
 </details>

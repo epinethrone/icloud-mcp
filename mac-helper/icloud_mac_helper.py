@@ -36,7 +36,7 @@ VERSION = "0.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
-MAX_OUTPUT = 2 * 1024 * 1024        # largest script result accepted
+MAX_OUTPUT = 12 * 1024 * 1024       # largest script result accepted (drive_get_file hands over files of up to 7 MB, base64-encoded)
 MAX_RESPONSE = 1024 * 1024          # largest server response accepted
 
 # The fixed operations, identical to the server's table (tests keep them in sync): name -> {argument: (type, required, max)}.
@@ -59,15 +59,22 @@ OPS = {
     "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
     "note_folder_create": {"name": ("str", True, 200), "account": ("str", False, 200), "parent_id": ("str", False, 500)},
     "note_move": {"id": ("str", True, 500), "title": ("str", True, 500), "folder_id": ("str", False, 500), "folder": ("str", False, 200)},
+    "note_update": {"id": ("str", True, 500), "title": ("str", True, 500), "expected_hash": ("str", True, 8), "text": ("str", True, 100000),
+                    "mode": ("str", True, 7)},
     # iCloud Drive (paths are relative to the Drive; see ops/drive.py)
     "drive_list": {"path": ("str", False, 1000), "include_hidden": ("bool", False, 0), "limit": ("int", False, 1000)},
     "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
+    "drive_search_content": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 100),
+                             "download": ("bool", False, 0)},
     "drive_info": {"path": ("str", True, 1000)},
     "drive_read": {"path": ("str", True, 1000), "max_chars": ("int", False, 200000), "offset": ("int", False, 50000000)},
+    "drive_get_file": {"path": ("str", True, 1000), "max_bytes": ("int", False, 7340032)},
     "drive_write": {"path": ("str", True, 1000), "content": ("str", False, 500000), "overwrite": ("bool", False, 0)},
     "drive_mkdir": {"path": ("str", True, 1000)},
     "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
     "drive_trash": {"path": ("str", True, 1000)},
+    # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
+    "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
 # Reminders: one EventKit binary, one process per operation (measured ~21 ms fixed cost, 20-40 ms per operation end to end, against
 # 0.5-22 s for the JXA scripts, which scan a whole list per request). There is deliberately NO fallback to the JXA Reminders scripts:
@@ -78,11 +85,14 @@ EVENTKIT_BIN = os.path.join(HERE, "bin", "reminders-eventkit")
 # iCloud Drive: plain file operations, run by Apple's own Python (the one running this helper) from a fixed script with one JSON argument.
 DRIVE_SCRIPT = os.path.join(OPS_DIR, "drive.py")
 DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
+# Shortcuts: one fixed script, run by the same Apple Python, which checks the Mac's own allowlist before `shortcuts run`.
+SHORTCUT_SCRIPT = os.path.join(OPS_DIR, "shortcut.py")
+SHORTCUT_OPS = frozenset({"shortcut_run"})
 EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete"})
 REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
 OP_FILES = {
     "note_folders": "note_folders.js", "notes_list": "notes_list.js", "note_read": "note_read.js", "note_create": "note_create.js",
-    "note_delete": "note_delete.js", "note_folder_create": "note_folder_create.js", "note_move": "note_move.js",
+    "note_delete": "note_delete.js", "note_folder_create": "note_folder_create.js", "note_move": "note_move.js", "note_update": "note_update.js",
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
@@ -175,19 +185,21 @@ def build_command(op, args):
         return [EVENTKIT_BIN, op, payload]
     if op in DRIVE_OPS:
         return [sys.executable, "-I", DRIVE_SCRIPT, op, payload]
+    if op in SHORTCUT_OPS:
+        return [sys.executable, "-I", SHORTCUT_SCRIPT, op, payload]
     return ["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
 
 
 def run_op(op, args, timeout=60, extra=None):
     """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
     `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
-    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS):
+    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS and op not in SHORTCUT_OPS):
         return False, None, "unknown operation"
     try:
         clean = validate_args(op, args)
     except HelperError as e:
         return False, None, str(e)
-    if op in DRIVE_OPS:                                                   # how long a read may wait for an offloaded file
+    if op in DRIVE_OPS or op in SHORTCUT_OPS:                             # how long the script may take within the job
         clean = dict(clean, budget=max(1, timeout - 10))
     if extra:
         clean = dict(clean, **extra)
