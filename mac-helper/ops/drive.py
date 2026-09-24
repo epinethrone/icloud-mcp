@@ -7,8 +7,10 @@ including through a symbolic link, is refused. The Drive's own trash folder is n
 Nothing is ever deleted permanently: drive_trash, and drive_write with overwrite, move items to the Trash with Apple's own `trash`
 command, where the user can recover them. Offloaded files ("Optimise Mac Storage") are downloaded on demand with Apple's `brctl`.
 """
+import base64
 import datetime
 import json
+import mimetypes
 import os
 import subprocess
 import sys
@@ -22,6 +24,7 @@ FORBIDDEN = {".trash"}                       # path components that are never to
 TEXTUTIL = {".docx", ".doc", ".rtf", ".rtfd", ".odt", ".html", ".htm", ".webarchive", ".wordml"}
 PACKAGES = {".pages", ".numbers", ".key", ".rtfd", ".app", ".bundle", ".photoslibrary", ".logicx", ".band"}
 MAX_WRITE = 500000
+MAX_GET = 7 * 1024 * 1024                    # largest file drive_get_file hands over (the server passes its own lower cap)
 
 
 class DriveError(Exception):
@@ -222,6 +225,30 @@ def op_read(a):
     return {"path": rel(full), "kind": kind, "chars": len(text), "offset": offset, "truncated": offset + len(part) < len(text), "text": part}
 
 
+def op_get_file(a):
+    """The file itself, base64-encoded, so an agent can attach or send it. Folders and app documents (packages such as .pages) are
+    refused: they are not single files. Offloaded files are downloaded first, within the time budget."""
+    full = resolve(a.get("path"))
+    info = describe(full)
+    if info["type"] != "file":
+        raise DriveError("that is a folder; use drive_list" if info["type"] == "folder" else
+                         "that is an app document (%s), which is a bundle of files, not one file. Export it (for example to PDF) first"
+                         % os.path.splitext(full)[1])
+    limit = min(a.get("max_bytes") or MAX_GET, MAX_GET)
+    if info["bytes"] > limit:
+        raise DriveError("the file is %.1f MB, more than the %.1f MB that can be handed over" % (info["bytes"] / 1048576, limit / 1048576))
+    if not ensure_local(full, max(1, (a.get("budget") or 45) - 5)):
+        return {"path": rel(full), "downloading": True,
+                "message": "This file is only in iCloud and is still downloading to the Mac. Ask again in a minute."}
+    with open(full, "rb") as f:
+        data = f.read(limit + 1)
+    if len(data) > limit:
+        raise DriveError("the file is larger than the %.1f MB that can be handed over" % (limit / 1048576))
+    return {"path": rel(full), "name": os.path.basename(full), "bytes": len(data), "modified": info["modified"],
+            "mime_type": mimetypes.guess_type(full)[0] or "application/octet-stream",
+            "data_base64": base64.b64encode(data).decode("ascii")}
+
+
 def op_write(a):
     content = a.get("content") or ""
     if len(content) > MAX_WRITE:
@@ -282,7 +309,7 @@ def op_trash(a):
     return {"trashed": what["path"], "type": what["type"], "recoverable": "moved to the Trash; recover it from Recently Deleted in iCloud Drive"}
 
 
-OPS = {"drive_list": op_list, "drive_search": op_search, "drive_info": op_info, "drive_read": op_read,
+OPS = {"drive_list": op_list, "drive_search": op_search, "drive_info": op_info, "drive_read": op_read, "drive_get_file": op_get_file,
        "drive_write": op_write, "drive_mkdir": op_mkdir, "drive_move": op_move, "drive_trash": op_trash}
 
 

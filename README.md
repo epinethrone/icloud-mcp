@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (14 tools), Calendar (8), Contacts (5), Reminders (6), Notes (7) and iCloud Drive (8), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (14 tools), Calendar (8), Contacts (5), Reminders (6), Notes (7) and iCloud Drive (9), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -67,7 +67,7 @@ Everything Claude reads is marked as someone else's words, not instructions.<br>
 Hidden characters are stripped, and phishing tricks are called out.
 
 **Tested where it counts.**<br>
-311 offline tests on every change, integration tests against real mail and calendar servers,<br>
+313 offline tests on every change, integration tests against real mail and calendar servers,<br>
 and hands-on runs against a live iCloud account for the quirks only Apple's servers have.
 
 <br>
@@ -275,7 +275,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**50 tools.** 28 for Mail, Calendar, Contacts and the health check, and 22 more with the optional Mac helper. Open a section for the details.
+**51 tools.** 28 for Mail, Calendar, Contacts and the health check, and 23 more with the optional Mac helper. Open a section for the details.
 
 <details>
 <summary><b>Mail</b> &nbsp;·&nbsp; 14 tools</summary>
@@ -343,13 +343,14 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>iCloud Drive</b> &nbsp;·&nbsp; 8 tools, with the Mac helper</summary>
+<summary><b>iCloud Drive</b> &nbsp;·&nbsp; 9 tools, with the Mac helper</summary>
 
-`drive_list`, `drive_search`, `drive_info`, `drive_read`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
+`drive_list`, `drive_search`, `drive_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
 
 - Works on your **whole iCloud Drive** as your Mac keeps it in sync, so every change syncs to your other devices by itself.
 - `drive_read` returns text from plain text files, **PDFs** and **Word, RTF, ODT and HTML** documents. Files offloaded by "Optimise Mac Storage" are downloaded first. If that takes too long, the answer says the file is still downloading, instead of timing out.
 - `drive_write` creates plain text files. Replacing a file needs `overwrite`, and the old version goes to the Trash. `drive_move` never overwrites.
+- `drive_get_file` hands over the file itself (base64, up to `MAX_ATTACHMENT_BYTES`), so an agent can attach it or send it on, the way `mail_get_attachment` does for mail.
 - **Nothing is ever deleted permanently.** `drive_trash` moves items to the Trash, where you can recover them.
 - Paths are relative to the Drive and can't leave it, not through `..` and not through a symbolic link (links that lead outside are not even listed). The Drive's trash folder is off limits.
 

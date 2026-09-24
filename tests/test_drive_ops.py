@@ -88,6 +88,18 @@ def test_reading_text_and_documents_with_offsets(drive):
     fails(drive, "drive_read", {"path": "Music/Draft.logicx"}, "app document")
 
 
+def test_getting_a_file_hands_over_the_exact_bytes_and_refuses_what_is_not_one_file(drive):
+    import base64
+    got = ok(drive, "drive_get_file", {"path": "Documents/photo.jpg"})
+    assert base64.b64decode(got["data_base64"]) == (drive[0] / "Documents" / "photo.jpg").read_bytes()
+    assert got["name"] == "photo.jpg" and got["mime_type"] == "image/jpeg" and got["bytes"] == (drive[0] / "Documents" / "photo.jpg").stat().st_size
+    fails(drive, "drive_get_file", {"path": "Documents"}, "folder")
+    fails(drive, "drive_get_file", {"path": "Music/Draft.logicx"}, "app document")
+    fails(drive, "drive_get_file", {"path": "notes.md", "max_bytes": 100}, "more than")
+    fails(drive, "drive_get_file", {"path": "escape/secret.txt"}, "")                 # outside the Drive, through a link
+    fails(drive, "drive_get_file", {"path": "../outside/secret.txt"}, "")
+
+
 def test_writing_never_silently_replaces_and_only_writes_plain_text(drive):
     root, trash = drive
     w = ok(drive, "drive_write", {"path": "Plans/week.md", "content": "Mon: cinema"})
@@ -143,7 +155,7 @@ def test_searching_names_skips_hidden_items_and_the_trash(drive):
 def test_the_helper_runs_drive_operations_through_the_fixed_script_with_a_time_budget(monkeypatch):
     sys.path.insert(0, str(SCRIPT.parent.parent))
     import icloud_mac_helper as h
-    assert h.DRIVE_OPS == {op for op in h.OPS if op.startswith("drive_")} and len(h.DRIVE_OPS) == 8
+    assert h.DRIVE_OPS == {op for op in h.OPS if op.startswith("drive_")} and len(h.DRIVE_OPS) == 9
     cmd = h.build_command("drive_list", {"path": "x"})
     assert cmd[:3] == [sys.executable, "-I", h.DRIVE_SCRIPT] and cmd[3] == "drive_list" and json.loads(cmd[4]) == {"path": "x"}
     seen = {}
