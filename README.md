@@ -387,6 +387,8 @@ Apple only exposes Reminders, Notes and iCloud Drive on its own devices, so a sm
 
 Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true` and `ENABLE_DRIVE=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
 
+**Shortcuts, allowlisted twice.** To let the assistant run some of your Shortcuts (`shortcuts_list`, `shortcuts_run`), list their exact names in `SHORTCUTS_ALLOW` on the server **and**, one per line, in `~/Library/Application Support/icloud-mac-helper/shortcuts-allow.txt` on the Mac. A name must be on both lists, so a compromised server can never run a shortcut you did not allow at the Mac itself. Apple's `shortcuts` command runs it, with optional text input, and its text output comes back. The tools do not exist without an allowlist or on a read-only server.
+
 > [!IMPORTANT]
 > **iCloud Drive needs Full Disk Access** for the helper's Python. On macOS 27 the grant only takes effect when the helper runs as the Command Line Tools `Python.app` executable, which is what the installer sets up. Details in the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md#icloud-drive).
 
@@ -414,6 +416,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `TOOLS` | all | `essential` and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
 | `BRIDGE_HOST` | 0.0.0.0 (127.0.0.1 in local mode) | Address the bridge binds to inside the process. Use 127.0.0.1 when the server runs directly on the helper's Mac |
+| `SHORTCUTS_ALLOW` | empty | Exact names of Shortcuts the assistant may run through the Mac helper, separated by commas (or by `;` when a name contains a comma); the Mac must list them too (see below) |
 | `BRIDGE_JOB_TIMEOUT_SECONDS` | 60 | How long a tool call waits for the Mac |
 | `READ_ONLY` | false | No sending, moving, deleting, or calendar, contact, reminder, note or file changes |
 | `ALLOW_SEND` | true | false = agents can only save drafts |
