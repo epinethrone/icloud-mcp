@@ -51,6 +51,13 @@ class Meter:
         self.lock = threading.Lock()
         self.delay = latency_ms / 1000.0
 
+    def add(self, key: str, n: int) -> None:
+        """A quantity (bytes), not a round trip: never delayed."""
+        if threading.current_thread().name.startswith(("icloud-mcp-keepalive", "icloud-warmup")):
+            key = "background_" + key
+        with self.lock:
+            self.c[key] += n
+
     def hit(self, key: str, round_trips: int = 1) -> None:
         if threading.current_thread().name.startswith(("icloud-mcp-keepalive", "icloud-warmup")):
             key = "background_" + key                 # keep-alive pings and warm-up: off the call path, counted apart
@@ -85,6 +92,14 @@ def instrument(m: Meter) -> None:
         return real_connect(self, address)
     socket.socket.connect = connect
     wrap(imaplib.IMAP4, "_command", "imap_commands")
+    for name in ("read", "readline"):                   # bytes the IMAP server sent: what partial fetches save
+        orig = getattr(imaplib.IMAP4, name)
+
+        def counted(self, *a, _orig=orig, **k):
+            data = _orig(self, *a, **k)
+            m.add("imap_kb_in", len(data))
+            return data
+        setattr(imaplib.IMAP4, name, counted)
     wrap(IMAPClient, "login", "imap_logins", 0)
     wrap(smtplib.SMTP, "login", "smtp_logins", 0)
     wrap(smtplib.SMTP, "putcmd", "smtp_commands")
@@ -304,6 +319,8 @@ async def run(args, settings, meter: Meter) -> list[dict]:
     await b.measure("calendar_list_calendars (warm)", [("calendar_list_calendars", {})], mcp=warm)
     await b.measure("calendar_list_events 7 days", [("calendar_list_events", {"start": str(today), "end": str(d7)})], mcp=warm)
     await b.measure("calendar_list_events 30 days", [("calendar_list_events", {"start": str(today), "end": str(d30)})], mcp=warm)
+    await b.measure("calendar_list_events 30 days, fields=summary", [("calendar_list_events", {"start": str(today), "end": str(d30),
+                                                                                              "fields": "summary"})], mcp=warm)
     await b.measure("calendar_find_free_time 14 days", [("calendar_find_free_time", {"start": str(today), "end": str(d14),
                                                                                      "duration_minutes": 60})], mcp=warm)
     if settings.enable_contacts:
@@ -324,14 +341,15 @@ async def run(args, settings, meter: Meter) -> list[dict]:
 
 
 def table(rows: list[dict], title: str) -> str:
-    counts = ["tcp_connects", "imap_logins", "imap_commands", "smtp_logins", "caldav_requests", "carddav_requests", "bridge_jobs"]
+    counts = ["tcp_connects", "imap_logins", "imap_commands", "imap_kb_in", "smtp_logins", "caldav_requests", "carddav_requests",
+              "bridge_jobs"]
     counts += ["background_" + c for c in counts]
     shown = [c for c in counts if any(r.get(c) for r in rows)]
     head = ["scenario", "median s", "p90 s", "bytes", "notice chars"] + [c.replace("_", " ") for c in shown]
     out = [f"### {title}", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     for r in rows:
         cells = [r["scenario"], f"{r['median_s']:.3f}", f"{r['p90_s']:.3f}", str(r["bytes"]), str(r["notice_chars"])]
-        cells += [f"{r.get(c, 0):g}" for c in shown]
+        cells += [f"{r.get(c, 0) / 1024:.0f}" if c.endswith("kb_in") else f"{r.get(c, 0):g}" for c in shown]
         out.append("| " + " | ".join(cells) + " |")
     return "\n".join(out) + "\n"
 
