@@ -984,6 +984,18 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             age they turn when the birth year is known (today counts as 0). Only contacts with a birthday saved appear."""
             return contacts.upcoming_birthdays(days)
 
+        @mcp.tool(annotations=_READ)
+        @_guard
+        def contacts_list_groups() -> dict[str, Any]:
+            """The owner's contact groups (as in the Contacts app): uid, name and member count."""
+            return contacts.list_groups()
+
+        @mcp.tool(annotations=_READ)
+        @_guard
+        def contacts_get_group(uid: Annotated[str, _d("Group uid from contacts_list_groups.")]) -> dict[str, Any]:
+            """One contact group with its members (the same fields as contacts_search). Use it to invite or mail a group."""
+            return contacts.get_group(uid)
+
         if writable:
 
             @mcp.tool(annotations=_WRITE)
@@ -1040,6 +1052,28 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 """Permanently delete one iCloud contact. This cannot be undone through the connector. Use only when the user
                 explicitly asks to remove that exact contact."""
                 return contacts.delete(uid)
+
+            @mcp.tool(annotations=_WRITE)
+            @_guard
+            def contacts_create_group(name: Annotated[str, _d("Name of the new group.")],
+                                      members: Annotated[list[str] | None, _d("Contact uids (from contacts_search).")] = None) -> dict[str, Any]:
+                """Create a contact group (it shows in the Contacts app), optionally with members."""
+                return contacts.create_group(name, members)
+
+            @mcp.tool(annotations=_IDEMPOTENT_WRITE)
+            @_guard
+            def contacts_update_group(uid: Annotated[str, _d("Group uid from contacts_list_groups.")],
+                                      name: Annotated[str | None, _d("New name; omit to keep.")] = None,
+                                      add_members: Annotated[list[str] | None, _d("Contact uids (from contacts_search).")] = None, remove_members: Annotated[list[str] | None, _d("Contact uids (from contacts_search).")] = None) -> dict[str, Any]:
+                """Rename a contact group and/or add or remove members. Removing someone from a group never deletes their contact."""
+                return contacts.update_group(uid, name=name, add_members=add_members, remove_members=remove_members)
+
+            @mcp.tool(annotations=_DESTRUCTIVE)
+            @_guard
+            def contacts_delete_group(uid: Annotated[str, _d("Group uid from contacts_list_groups.")],
+                                      name: Annotated[str, _d("The group's exact name, as a check.")]) -> dict[str, Any]:
+                """Delete a contact group. Only the group goes: its members stay in the address book."""
+                return contacts.delete_group(uid, name)
 
     # ------------------------------------------------ Reminders / Notes, through the helper on the owner's Mac
     if s.bridge_enabled:

@@ -11,6 +11,8 @@ Update the Mac helper before the server whenever its version changes.
   confirm step. The mailbox's own folders are refused.
 - Calendars: `calendar_create_calendar`, `calendar_update_calendar` (rename), `calendar_delete_calendar` (never the default
   calendar; one with events only after a preview and its token).
+- Contact groups, in the format the Contacts app uses: list, read, create, rename, add and remove members, delete (only the
+  group, never its members). A contact shows the groups it is in. Fixed: a group card was listed as if it were a person.
 - A server call that needs a newer Mac helper says so and asks for the update, instead of failing with "unknown operation".
 
 ## 0.8.0

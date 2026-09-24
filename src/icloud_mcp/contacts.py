@@ -166,6 +166,11 @@ def parse_vcard(text: str) -> dict[str, Any] | None:
             u = _unescape(value).strip()
             if u:
                 c["urls"].append(u)
+        elif name == "X-ADDRESSBOOKSERVER-KIND" and value.strip().lower() == "group":
+            c["kind"] = "group"
+        elif name == "X-ADDRESSBOOKSERVER-MEMBER":
+            member = value.strip()
+            c.setdefault("members", []).append(member[9:] if member.lower().startswith("urn:uuid:") else member)
     if not c["uid"]:
         return None
     c["name"] = (fn or " ".join(p for p in (c["given_name"], c["family_name"]) if p) or c["organization"]
@@ -347,6 +352,26 @@ def build_vcard(*, uid: str, given_name: str = "", family_name: str = "", name: 
         if value.strip():
             lines.append(_v_line(key, value.strip()))
     return "\r\n".join(lines + ["END:VCARD", ""])
+
+
+def build_group_vcard(*, uid: str, name: str, members: list[str]) -> str:
+    """A contact group in Apple's own format, the one the Contacts app and iCloud use (vCard 3.0 with
+    X-ADDRESSBOOKSERVER-KIND:group and one X-ADDRESSBOOKSERVER-MEMBER line per member, by the member card's UID)."""
+    lines = ["BEGIN:VCARD", "VERSION:3.0", "PRODID:-//icloud-mcp//EN", _v_structured("N", [name, "", "", "", ""]), _v_line("FN", name),
+             _v_line("UID", uid), "X-ADDRESSBOOKSERVER-KIND:group"]
+    lines += [f"X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:{_v_escape(m)}" for m in dict.fromkeys(members)]
+    return "\r\n".join(lines + ["END:VCARD"]) + "\r\n"
+
+
+def _rewrite_group(raw: str, *, name: str, members: list[str]) -> str:
+    """The group card with a new name and member list; every other line (from the Contacts app or elsewhere) is kept."""
+    lines = re.sub(r"\r?\n[ \t]", "", raw).splitlines()
+    drop = ("N", "FN", "X-ADDRESSBOOKSERVER-MEMBER")
+    kept = [ln for ln in lines if (m := _LINE.match(ln)) is None or m["key"].strip().rpartition(".")[2].upper() not in drop]
+    end = next(i for i in range(len(kept) - 1, -1, -1) if kept[i].strip().upper() == "END:VCARD")
+    new = [_v_structured("N", [name, "", "", "", ""]), _v_line("FN", name)]
+    new += [f"X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:{_v_escape(m)}" for m in dict.fromkeys(members)]
+    return "\r\n".join(kept[:end] + new + kept[end:]) + "\r\n"
 
 
 def _append_vcard_items(raw: str, emails: list[str] | None = None, phones: list[str] | None = None) -> tuple[str, list[str]]:
@@ -644,6 +669,20 @@ class ContactsService:
                         self._books = []                                      # stale address-book URL: discover again once
             raise ContactsError("Could not load contacts. Run icloud_check_health to see which service is failing.")                    # pragma: no cover
 
+    def _people(self) -> list[dict[str, Any]]:
+        """Contacts only: group cards live in the same address book but are not people."""
+        return [c for c in self._all() if c.get("kind") != "group"]
+
+    def _groups(self) -> list[dict[str, Any]]:
+        return [c for c in self._all() if c.get("kind") == "group"]
+
+    def _membership(self) -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        for g in self._groups():
+            for m in g.get("members", []):
+                out.setdefault(m, []).append(g["name"])
+        return out
+
     def _patch(self, remove: str | None = None, add: dict[str, Any] | None = None) -> None:
         """Apply one write to the cached address book (a new list, so a search running meanwhile never sees half an edit).
         The stored ctags are kept: the next freshness check sees the server's new ctag and downloads only changed cards."""
@@ -657,7 +696,7 @@ class ContactsService:
 
     # -- tools ----------------------------------------------------------------------------
     def search(self, query: str = "", *, with_email: bool = False, limit: int = 20, offset: int = 0) -> dict[str, Any]:
-        contacts = self._all()
+        contacts = self._people()
         q = _norm(query.strip())
         tokens = q.split()
         if tokens:
@@ -669,7 +708,8 @@ class ContactsService:
             hits = [c for c in hits if c["has_email"]]
         limit = max(1, min(int(limit), _MAX_LIMIT))
         offset = max(0, int(offset))
-        page = [_brief(c) for c in hits[offset:offset + limit]]
+        groups = self._membership()
+        page = [{**_brief(c), **({"groups": groups[c["uid"]]} if c["uid"] in groups else {})} for c in hits[offset:offset + limit]]
         out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "total_matches": len(hits), "offset": offset, "returned": len(page), "contacts": page,
                                "complete": True}                    # the whole address book was read
         if not hits and tokens:
@@ -704,7 +744,7 @@ class ContactsService:
         days = max(1, min(int(days), 366))
         today = today or date.today()
         out = []
-        for c in self._all():
+        for c in self._people():
             parsed = parse_birthday(c.get("birthday", ""))
             if not parsed:
                 continue
@@ -719,18 +759,105 @@ class ContactsService:
                 **({} if out else {"note": "No birthdays in that window among contacts that have one saved."})}
 
     def get(self, uid: str) -> dict[str, Any]:
-        for c in self._all():
+        for c in self._people():
             if c["uid"] == uid:
                 d = {k: v for k, v in c.items() if not k.startswith("_")}
+                if groups := self._membership().get(uid):
+                    d["groups"] = groups
                 d["notice"] = UNTRUSTED_NOTICE
                 return d
         raise ContactsError(f"No contact with uid '{uid}'. Use contacts_search to find the uid.")
 
     def _record(self, uid: str) -> dict[str, Any]:
-        for c in self._all():
+        for c in self._people():
             if c["uid"] == uid:
                 return c
         raise ContactsError(f"No contact with uid '{uid}'. Use contacts_search to find the uid.")
+
+    # -- groups -----------------------------------------------------------------------------
+    def _group(self, uid: str) -> dict[str, Any]:
+        for g in self._groups():
+            if g["uid"] == uid:
+                return g
+        raise ContactsError(f"No group with uid '{uid}'. Use contacts_list_groups to find it.")
+
+    def _check_members(self, members: list[str]) -> list[str]:
+        people = {c["uid"] for c in self._people()}
+        unknown = [m for m in members if m not in people]
+        if unknown:
+            raise ContactsError(f"Not contacts in this address book: {', '.join(unknown)}. Members are contact uids from contacts_search.")
+        return list(dict.fromkeys(members))
+
+    @staticmethod
+    def _group_name(name: str) -> str:
+        name = re.sub(r"\s+", " ", name or "").strip()
+        if not 1 <= len(name) <= 100:
+            raise ContactsError("A group name must be 1 to 100 characters.")
+        return name
+
+    def list_groups(self) -> dict[str, Any]:
+        groups = sorted(self._groups(), key=lambda g: _norm(g["name"]))
+        return {"notice": UNTRUSTED_NOTICE, "count": len(groups),
+                "groups": [{"uid": g["uid"], "name": g["name"], "members": len(g.get("members", []))} for g in groups]}
+
+    def get_group(self, uid: str) -> dict[str, Any]:
+        g = self._group(uid)
+        people = {c["uid"]: c for c in self._people()}
+        members = g.get("members", [])
+        return {"notice": UNTRUSTED_NOTICE, "uid": g["uid"], "name": g["name"],
+                "members": [_brief(people[m]) for m in members if m in people],
+                **({"unresolved": [m for m in members if m not in people]} if any(m not in people for m in members) else {})}
+
+    def create_group(self, name: str, members: list[str] | None = None) -> dict[str, Any]:
+        name = self._group_name(name)
+        if any(_norm(g["name"]) == _norm(name) for g in self._groups()):
+            raise ContactsError(f"There is already a group called '{name}'.")
+        members = self._check_members(members or [])
+        uid = str(uuid.uuid4()).upper()
+        raw = build_group_vcard(uid=uid, name=name, members=members)
+        with self._lock, self._client() as client:
+            if not self._books:
+                self._books = self._discover(client)
+            target = urljoin(self._books[0].rstrip("/") + "/", quote(uid, safe="") + ".vcf")
+            response = self._mutate(client, "PUT", target, data=raw, create=True)
+            card = parse_vcard(raw)
+            card.update(_href=target, _etag=response.headers.get("etag"), _book=self._books[0])
+            self._patch(add=card)
+        return {"created": True, "uid": uid, "name": name, "members": len(members)}
+
+    def update_group(self, uid: str, *, name: str | None = None, add_members: list[str] | None = None,
+                     remove_members: list[str] | None = None) -> dict[str, Any]:
+        with self._lock:
+            g = self._group(uid)
+            new_name = self._group_name(name) if name is not None else g["name"]
+            if name is not None and _norm(new_name) != _norm(g["name"]) and any(_norm(x["name"]) == _norm(new_name) for x in self._groups()):
+                raise ContactsError(f"There is already a group called '{new_name}'.")
+            current = list(g.get("members", []))
+            added = [m for m in self._check_members(add_members or []) if m not in current]
+            gone = set(remove_members or [])
+            members = [m for m in current if m not in gone] + added
+            if new_name == g["name"] and members == current:
+                return {"updated": False, "uid": uid, "name": g["name"], "note": "Nothing to change."}
+            with self._client() as client:
+                raw = self._mutate(client, "GET", g["_href"]).text
+                new_raw = _rewrite_group(raw, name=new_name, members=members)
+                response = self._mutate(client, "PUT", g["_href"], data=new_raw, etag=g.get("_etag"))
+                card = parse_vcard(new_raw)
+                card.update(_href=g["_href"], _etag=response.headers.get("etag"), _book=g.get("_book"))
+                self._patch(remove=uid, add=card)
+        return {"updated": True, "uid": uid, "name": new_name, "members": len(members),
+                **({"added": added} if added else {}), **({"removed": [m for m in current if m in gone]} if gone & set(current) else {})}
+
+    def delete_group(self, uid: str, name: str) -> dict[str, Any]:
+        """Delete a group card. Its members stay: only the grouping goes. The name must match, as a check on the uid."""
+        with self._lock:
+            g = self._group(uid)
+            if _norm(name or "") != _norm(g["name"]):
+                raise ContactsError(f"That uid is the group '{g['name']}', not '{name}'. Nothing was deleted.")
+            with self._client() as client:
+                self._mutate(client, "DELETE", g["_href"], etag=g.get("_etag"))
+                self._patch(remove=uid)
+        return {"deleted": True, "uid": uid, "name": g["name"], "note": "Only the group was deleted; its members are unchanged."}
 
     def _clear_cache(self) -> None:
         self._cache = None
