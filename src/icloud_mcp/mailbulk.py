@@ -1,0 +1,291 @@
+"""Bulk mail: telling newsletters from people, unsubscribing safely, and cleaning up many messages with a preview and an undo.
+
+- bulk_view: a message is "bulk" when it carries List-Unsubscribe or List-Id, a bulk/list Precedence, or Auto-Submitted, or comes
+  from a no-reply address. Only headers are read.
+- senders: who fills a folder, grouped by address, with counts, unread counts and whether each sender can be unsubscribed from.
+- unsubscribe: RFC 8058 one-click (an HTTPS POST to the address in the List-Unsubscribe header, only when List-Unsubscribe-Post
+  says it is one-click), or a mailto unsubscribe sent through the normal send path (so approval, allowlist and ALLOW_SEND apply).
+  Links in the message body are never followed, plain unsubscribe web pages are never opened (they are returned for the user),
+  mail in Junk is refused (unsubscribing from spam confirms the address is alive), and the POST only goes to public addresses.
+- bulk_action: move / archive / trash / mark read for everything matching a search, in two steps. A dry run returns the count, a
+  sample and a confirm_token that stands for exactly those messages; running needs that token, so the agent must preview first
+  and nothing that arrived in between is touched. Every run is logged by Message-ID and can be undone with bulk_undo.
+"""
+from __future__ import annotations
+
+import email
+import email.utils
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import socket
+import time
+import uuid
+from datetime import date, timedelta
+from email import policy
+from typing import TYPE_CHECKING, Any, Callable
+from urllib.parse import parse_qs, unquote, urlsplit
+
+if TYPE_CHECKING:
+    from .mail import MailService
+
+_NOREPLY = re.compile(r"^(no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply|notifications?|mailer-daemon|bounces?)([+@]|$)", re.I)
+BULK_ACTIONS = ("move", "archive", "trash", "mark_read")
+MAX_BULK, DEFAULT_BULK = 1000, 200
+UNDO_DAYS = 30
+_LOG = "bulk-actions.jsonl"
+
+
+# ------------------------------------------------------------------ headers
+def parse_unsubscribe(value: str | None, post: str | None = None) -> dict[str, Any] | None:
+    """The unsubscribe options in a List-Unsubscribe header: <https://...> and <mailto:...> entries, and whether the HTTPS one is
+    RFC 8058 one-click (List-Unsubscribe-Post: List-Unsubscribe=One-Click)."""
+    if not value:
+        return None
+    entries = re.findall(r"<\s*([^>\s]+)\s*>", str(value))
+    https = [e for e in entries if e.lower().startswith("https://")]
+    mailto = [e for e in entries if e.lower().startswith("mailto:")]
+    if not https and not mailto:
+        return None
+    one_click = bool(https) and "list-unsubscribe=one-click" in str(post or "").replace(" ", "").lower()
+    return {"https": https, "mailto": mailto, "one_click": one_click}
+
+
+def bulk_view(hdr: email.message.Message) -> dict[str, Any]:
+    """Extra summary fields for a message that looks like bulk mail; {} for mail that looks written by a person."""
+    unsub = parse_unsubscribe(hdr.get("List-Unsubscribe"), hdr.get("List-Unsubscribe-Post"))
+    precedence = str(hdr.get("Precedence") or "").strip().lower()
+    auto = str(hdr.get("Auto-Submitted") or "").strip().lower()
+    sender = email.utils.parseaddr(str(hdr.get("From") or ""))[1]
+    bulk = bool(unsub or hdr.get("List-Id") or precedence in ("bulk", "list", "junk")
+                or (auto and auto != "no") or _NOREPLY.match(sender or ""))
+    if not bulk:
+        return {}
+    out: dict[str, Any] = {"bulk": True}
+    if unsub:
+        out["unsubscribe"] = {"one_click": unsub["one_click"], "by_mail": bool(unsub["mailto"]), "web_page": bool(unsub["https"])}
+    return out
+
+
+# ------------------------------------------------------------------ who fills the folder
+def senders(mail: MailService, folder: str = "INBOX", *, days: int = 30, limit: int = 20, scan: int = 1000) -> dict[str, Any]:
+    days, limit, scan = max(1, min(int(days), 365)), max(1, min(int(limit), 100)), max(50, min(int(scan), 3000))
+    since = date.today() - timedelta(days=days)
+    groups: dict[str, dict[str, Any]] = {}
+    with mail.imap() as c:
+        folder = mail.resolve_folder(c, folder)
+        mail._select(c, folder)
+        uids = sorted(c.search(["SINCE", since]), reverse=True)[:scan]
+        for chunk in (uids[i:i + 200] for i in range(0, len(uids), 200)):
+            for m in mail._summaries(c, folder, chunk):
+                frm = (m.get("from") or [{}])[0]
+                addr = (frm.get("email") or "").lower()
+                if not addr:
+                    continue
+                g = groups.setdefault(addr, {"email": addr, "name": frm.get("name") or "", "messages": 0, "unread": 0, "bulk": False,
+                                             "unsubscribe": None, "latest": None, "latest_subject": None})
+                g["messages"] += 1
+                g["unread"] += 1 if m.get("unread") else 0
+                g["bulk"] = g["bulk"] or bool(m.get("bulk"))
+                g["unsubscribe"] = g["unsubscribe"] or m.get("unsubscribe")
+                if not g["latest"] or (m.get("date") or "") > g["latest"]:
+                    g["latest"], g["latest_subject"], g["latest_uid"] = m.get("date"), m.get("subject"), m.get("uid")
+    ranked = sorted(groups.values(), key=lambda g: (-g["messages"], g["email"]))
+    return {"folder": folder, "days": days, "scanned": len(uids), "senders_found": len(groups),
+            "bulk_messages": sum(g["messages"] for g in groups.values() if g["bulk"]),
+            "senders": ranked[:limit],
+            "hint": "bulk=true marks newsletters and automated mail. Use mail_bulk_action (dry run first) to clean up a sender, "
+                    "or mail_unsubscribe with a message's uid to stop one."}
+
+
+# ------------------------------------------------------------------ unsubscribing
+def _public_https(url: str) -> str | None:
+    """Why a URL may not be POSTed to, or None when it is a public HTTPS address (every resolved address is global)."""
+    parts = urlsplit(url)
+    if parts.scheme.lower() != "https" or not parts.hostname:
+        return "only https addresses are used"
+    if parts.username or parts.password:
+        return "the address carries credentials"
+    try:
+        infos = socket.getaddrinfo(parts.hostname, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return "the address does not resolve"
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            return "the address points into a private or local network"
+    return None
+
+
+def _post_one_click(url: str) -> dict[str, Any]:
+    import httpx
+
+    r = httpx.post(url, data={"List-Unsubscribe": "One-Click"}, timeout=10, follow_redirects=False,
+                   headers={"User-Agent": "icloud-mcp one-click unsubscribe (RFC 8058)"})
+    return {"status": r.status_code}
+
+
+def unsubscribe(mail: MailService, folder: str, uid: int, *, uidvalidity: int | None = None,
+                post: Callable[[str], dict[str, Any]] | None = None, check_url: Callable[[str], str | None] | None = None) -> dict[str, Any]:
+    post, check_url = post or _post_one_click, check_url or _public_https
+    with mail.imap() as c:
+        folder = mail.resolve_folder(c, folder)
+        try:
+            junk = mail.resolve_folder(c, "junk")
+        except Exception:  # noqa: BLE001 - no Junk folder: nothing to compare against
+            junk = None
+        if folder == junk:
+            return {"unsubscribed": False, "reason": "This message is in Junk. Unsubscribing from spam only confirms the address is "
+                                                     "read. Leave it in Junk instead."}
+        mail._select(c, folder, expect=uidvalidity)
+        data = c.fetch([uid], ["BODY.PEEK[HEADER.FIELDS (FROM LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)]"]).get(uid)
+    if not data:
+        return {"unsubscribed": False, "reason": f"No message with uid {uid} in {folder}."}
+    raw = next((v for k, v in data.items() if isinstance(k, bytes) and k.startswith(b"BODY[HEADER")), b"")
+    hdr = email.message_from_bytes(raw, policy=policy.default)
+    sender = str(hdr.get("From") or "")
+    opts = parse_unsubscribe(hdr.get("List-Unsubscribe"), hdr.get("List-Unsubscribe-Post"))
+    if not opts:
+        return {"unsubscribed": False, "sender": sender,
+                "reason": "This message has no List-Unsubscribe header. Links inside the message body are never followed; the user "
+                          "can unsubscribe from the message itself, or you can filter it with mail_bulk_action."}
+    if opts["one_click"]:
+        url = opts["https"][0]
+        why = check_url(url)
+        if why is None:
+            try:
+                res = post(url)
+            except Exception as e:  # noqa: BLE001
+                res = {"error": f"{type(e).__name__}: {e}"[:200]}
+            ok = 200 <= int(res.get("status") or 0) < 300
+            if ok:
+                return {"unsubscribed": True, "method": "one-click (RFC 8058)", "sender": sender,
+                        "note": "The sender was asked to stop. A few more messages may still arrive while it processes this."}
+            if not opts["mailto"]:
+                return {"unsubscribed": False, "sender": sender, "reason": f"The one-click request did not succeed ({res})."}
+        elif not opts["mailto"]:
+            return {"unsubscribed": False, "sender": sender, "reason": f"The unsubscribe address was not used: {why}."}
+    if opts["mailto"]:
+        target = opts["mailto"][0]
+        parts = urlsplit(target)
+        address = unquote(parts.path)
+        q = {k.lower(): v[0] for k, v in parse_qs(parts.query).items()}
+        if not mail.s.allow_send:
+            return {"unsubscribed": False, "sender": sender, "reason": f"Unsubscribing means emailing {address}, and sending is "
+                                                                       "disabled on this server. The user can send it themselves."}
+        sent = mail.send(to=[address], subject=q.get("subject") or "unsubscribe", body=q.get("body") or "unsubscribe")
+        return {"unsubscribed": sent.get("status") == "sent", "method": "email to the list's unsubscribe address", "sender": sender,
+                **({"waiting": "The unsubscribe email is waiting for the owner's approval or in Drafts; it takes effect once sent."}
+                   if sent.get("status") != "sent" else {}), "result": sent}
+    return {"unsubscribed": False, "sender": sender, "web_page": opts["https"][0],
+            "reason": "This sender only offers an unsubscribe web page, which is never opened automatically (a visit can confirm "
+                      "the address or do more than unsubscribe). Give the user the link to open themselves."}
+
+
+# ------------------------------------------------------------------ bulk actions with preview and undo
+def _token(folder: str, uv: Any, action: str, destination: str, uids: list[int]) -> str:
+    raw = f"{folder}|{uv}|{action}|{destination}|{','.join(map(str, sorted(uids)))}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _log_path(mail: MailService) -> str:
+    return os.path.join(mail.s.data_dir, _LOG)
+
+
+def _write_log(mail: MailService, entry: dict[str, Any]) -> None:
+    path = _log_path(mail)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _read_log(mail: MailService) -> list[dict[str, Any]]:
+    try:
+        with open(_log_path(mail)) as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def bulk_action(mail: MailService, folder: str, action: str, *, destination: str | None = None, dry_run: bool = True,
+                confirm_token: str | None = None, max_messages: int = DEFAULT_BULK, **filters: Any) -> dict[str, Any]:
+    if action not in BULK_ACTIONS:
+        raise ValueError(f"action must be one of {', '.join(BULK_ACTIONS)}")
+    if action == "move" and not destination:
+        raise ValueError("action 'move' needs a destination folder")
+    if not any(v not in (None, "") for v in filters.values()):
+        raise ValueError("give at least one filter (from_address, subject, text, since, before, unread, flagged): "
+                         "a bulk action on a whole folder is refused")
+    limit = max(1, min(int(max_messages), MAX_BULK))
+    crit, charset = mail.criteria(**filters)
+    with mail.imap() as c:
+        src = mail.resolve_folder(c, folder)
+        dst = {"move": destination, "archive": "archive", "trash": "trash"}.get(action)
+        dst = mail.resolve_folder(c, dst) if dst else None
+        if action == "trash" and src == mail.resolve_folder(c, "trash"):
+            raise ValueError("these messages are already in the Trash; bulk actions never delete permanently")
+        if dst and dst == src:
+            raise ValueError(f"the messages are already in {src}")
+        uv = mail._select(c, src, readonly=dry_run)
+        matched = sorted(c.search(crit, charset=charset), reverse=True)
+        uids = matched[:limit]
+        token = _token(src, uv, action, dst or "", uids)
+        preview = {"folder": src, "action": action, **({"destination": dst} if dst else {}), "total_matches": len(matched),
+                   "would_handle": len(uids)}
+        if dry_run:
+            sample = mail._summaries(c, src, uids[:10])
+            return {**preview, "dry_run": True, "confirm_token": token if uids else None,
+                    "sample": [{"from": (m.get("from") or [{}])[0].get("email"), "subject": m.get("subject"), "date": m.get("date")}
+                               for m in sample],
+                    **({"note": f"Only the newest {limit} of {len(matched)} would be handled; narrow the search or run again."}
+                       if len(matched) > limit else {}),
+                    "next": "Show the user the count and sample. To go ahead, call again with dry_run=false and this confirm_token."}
+        if not uids:
+            return {**preview, "done": 0}
+        if confirm_token != token:
+            raise ValueError("confirm_token does not match the messages that match now (new mail arrived, or the filters "
+                             "changed). Run the dry run again and use its new token.")
+        ids = [m.get("message_id") for m in mail._summaries(c, src, uids)]
+        entry = {"action_id": uuid.uuid4().hex[:12], "time": time.time(), "folder": src, "action": action, "destination": dst,
+                 "message_ids": [i for i in ids if i], "without_message_id": sum(1 for i in ids if not i)}
+        _write_log(mail, entry)                     # logged before anything changes, so an interrupted run can still be undone
+        for i in range(0, len(uids), 100):
+            chunk = uids[i:i + 100]
+            if action == "mark_read":
+                c.add_flags(chunk, ["\\Seen"])
+            else:
+                mail._move_messages(c, chunk, dst)
+    return {**preview, "done": len(uids), "action_id": entry["action_id"],
+            "undo": f"mail_bulk_undo with action_id {entry['action_id']} reverses this for {UNDO_DAYS} days"
+                    + (f" ({entry['without_message_id']} messages without a Message-ID cannot be undone)" if entry["without_message_id"] else "")}
+
+
+def bulk_undo(mail: MailService, action_id: str) -> dict[str, Any]:
+    entries = _read_log(mail)
+    entry = next((e for e in entries if e.get("action_id") == action_id and not e.get("undo_of")), None)
+    if not entry:
+        return {"undone": False, "reason": f"No bulk action {action_id} in the log."}
+    if any(e.get("undo_of") == action_id for e in entries):
+        return {"undone": False, "reason": "That action was already undone."}
+    if time.time() - entry["time"] > UNDO_DAYS * 86400:
+        return {"undone": False, "reason": f"That action is older than {UNDO_DAYS} days."}
+    where = entry["destination"] if entry["action"] != "mark_read" else entry["folder"]
+    found: list[int] = []
+    with mail.imap() as c:
+        mail._select(c, where, readonly=False)
+        for mid in entry["message_ids"]:
+            found += c.search(["HEADER", "Message-ID", mid])
+        found = sorted(set(found))
+        for i in range(0, len(found), 100):
+            chunk = found[i:i + 100]
+            if entry["action"] == "mark_read":
+                c.remove_flags(chunk, ["\\Seen"])
+            else:
+                mail._move_messages(c, chunk, entry["folder"])
+    _write_log(mail, {"action_id": uuid.uuid4().hex[:12], "time": time.time(), "undo_of": action_id, "restored": len(found)})
+    return {"undone": True, "restored": len(found), "of": len(entry["message_ids"]),
+            **({"note": "Some messages were no longer where the action left them (moved or deleted since) and were skipped."}
+               if len(found) < len(entry["message_ids"]) else {})}
