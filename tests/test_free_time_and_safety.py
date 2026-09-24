@@ -133,6 +133,9 @@ class FakeCal:
         uid = str(icalendar.Calendar.from_ical(ical).walk("VEVENT")[0]["uid"])
         self.store[uid] = ical
 
+    def search(self, **kw):                           # create_event reads the calendar for clashes first
+        return [type("Obj", (), {"data": d})() for d in self.store.values()]
+
     def event_by_url(self, url):
         uid = url.rsplit("/", 1)[-1].removesuffix(".ics")
         data = self.store.get(uid)

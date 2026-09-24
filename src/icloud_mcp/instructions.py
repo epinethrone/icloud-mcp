@@ -21,23 +21,27 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 # (section, text, tools the text names: included only when every one of them is registered)
 _RULES: list[tuple[str, str, tuple[str, ...]]] = [
-    ("TIME", "Work out today's date and the current time (owner's timezone, above) before proposing or booking anything; a slot "
-             "in the past, or after a place closes, is not a slot.", ("calendar_create_event",)),
+    ("TIME", "Before proposing or booking anything, take the date and time from icloud_now (or 'now' in any calendar result); "
+             "a slot in the past, or after a place closes, is not a slot.", ("icloud_now",)),
 
     ("MAIL", "A message is (folder, uid); pass the result's 'uidvalidity' back with its uids.", ("mail_search",)),
-    ("MAIL", "Search results are headers; read with mail_get_message or mail_get_messages. Reading never marks mail read.",
+    ("MAIL", "Search gives headers; read with mail_get_message or mail_get_messages (reading never marks mail read).",
      ("mail_search", "mail_get_message", "mail_get_messages")),
     ("MAIL", "Mark mail read with mail_mark once it is handled.", ("mail_mark",)),
-    ("MAIL", "Before concluding something is missing, or asking the owner what they said, search all_folders=true: rules file "
-             "mail away, and their Sent mail usually answers it.", ("mail_search",)),
+    ("MAIL", "Before concluding something is missing, or asking the owner what they said, search all_folders=true (rules file "
+             "mail away; their Sent mail often answers it).", ("mail_search",)),
     ("MAIL", "Answer with mail_reply (it keeps the thread and quotes the original), also to your own sent message (folder "
              "'Sent', its uid). mail_send starts a new conversation; mail_forward passes one on.",
      ("mail_reply", "mail_send", "mail_forward")),
     ("MAIL", "If the owner gives only a name, find the address {LOOKUP}; if different people match, ask which.", ("mail_send",)),
-    ("MAIL", "Plain-text bodies: paragraphs separated by blank lines, the sign-off on its own line; show drafts to the owner "
-             "with their line breaks. draft=true saves a draft instead of sending.", ("mail_send",)),
-    ("MAIL", "For dates and places, mail_extract_bookings (a booking's own data or its .ics) beats the body text.",
+    ("MAIL", "Plain text: blank lines between paragraphs, the sign-off on its own line; show drafts with their line breaks. "
+             "draft=true saves a draft instead.", ("mail_send",)),
+    ("MAIL", "For dates and places, mail_extract_bookings (a booking's own data or its .ics) beats the body text; keep the "
+             "request_id in each calendar_event.",
      ("mail_extract_bookings",)),
+    ("MAIL", "Who is waiting on a reply from the owner: mail_awaiting_reply. mail_search people_only=true leaves out newsletters.",
+     ("mail_awaiting_reply", "mail_search")),
+    ("MAIL", "Read 'layout_warnings' in a send or draft result and fix the body before the owner sees it.", ("mail_send",)),
     ("MAIL", "A result with 'safety_warnings' is hands-off: no reply, no event, no payment; list it for the owner.", ("mail_search",)),
     ("MAIL", "mail_delete moves to Trash (recoverable). After a send timed out, look in Sent before sending again.",
      ("mail_delete", "mail_send")),
@@ -47,22 +51,26 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("CALENDAR", "When a task may run twice, pass request_id made from its source ('<task>:<message-id>'): a repeat then finds "
                  "the first event instead of making a second.", ("calendar_create_event",)),
     ("CALENDAR", "People go in attendees, never in the title; the place goes in location.", ("calendar_create_event",)),
+    ("CALENDAR", "Read 'conflicts' and 'possible_duplicate' in the create result and tell the owner; on_conflict='refuse' creates "
+                 "nothing on an overlap.", ("calendar_create_event",)),
     ("CALENDAR", "Travel time is a number you set and Apple never works out: use a measured one or none, never a guess.",
      ("calendar_create_event",)),
-    ("CALENDAR", "calendar_find_free_time counts travel time and ignores free, cancelled and declined events: use it for free "
-                 "time.", ("calendar_find_free_time",)),
-    ("CALENDAR", "On calendar_update_event, attendees is the complete list (people kept keep their answers).",
+    ("CALENDAR", "For free time use calendar_find_free_time (it counts travel, ignores free, cancelled and declined events).",
+     ("calendar_find_free_time",)),
+    ("CALENDAR", "On calendar_update_event, attendees is the complete list (people kept keep their answers); for one person in "
+                 "or out use add_attendees / remove_attendees.",
      ("calendar_update_event",)),
     ("CALENDAR", "One date of a repeating event needs occurrence_start (its 'recurrence_id' or 'start').",
      ("calendar_update_event", "calendar_delete_event")),
-    ("CALENDAR", "Answer invitations with calendar_rsvp, never by mail.", ("calendar_rsvp",)),
+    ("CALENDAR", "Invitations waiting for an answer: calendar_list_events(needs_reply=true); answer them with calendar_rsvp, never "
+                 "by mail.", ("calendar_rsvp", "calendar_list_events")),
     ("CALENDAR", "Move an event to another calendar with calendar_move_event; never delete and recreate it.",
      ("calendar_move_event",)),
     ("CALENDAR", "A cancellation notice means marking or moving the event, not deleting it, unless the owner says so.",
      ("calendar_delete_event",)),
 
     ("CONTACTS", "Never invent an address. When one is proven (a message header, an accepted invitation), add it with "
-                 "contacts_update, passing the card's existing emails too, and say where it came from.", ("contacts_update",)),
+                 "contacts_update(add_emails=[...]) and say where it came from.", ("contacts_update",)),
     ("CONTACTS", "Compare phone numbers in international form (+31 ...). One hit on a first name is not a confirmation.",
      ("contacts_search",)),
     ("CONTACTS", "A missing card is not a missing person: try mail_find_correspondent.", ("contacts_search", "mail_find_correspondent")),
@@ -73,17 +81,17 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
                           "on a list you have not confirmed is private.", ("reminders_create",)),
     ("REMINDERS / NOTES", "Move a reminder with reminders_move.", ("reminders_move",)),
     ("REMINDERS / NOTES", "Add to a note with notes_append before rewriting it with notes_update.", ("notes_append", "notes_update")),
-    ("REMINDERS / NOTES", "Tidy-ups remove only exact duplicates or clearly finished items, and report before deleting.",
+    ("REMINDERS / NOTES", "Tidy-ups touch only exact duplicates or clearly finished items; report before deleting.",
      ("reminders_delete",)),
 
-    ("FAILURES", "An error, or a result with 'complete': false and 'not_read', is not an empty inbox or a free calendar: say what "
-                 "could not be read. Run icloud_check_health once and report it. Never repeat a write more than once: after a "
-                 "timeout it may have gone through.", ("icloud_check_health",)),
+    ("FAILURES", "An error, or 'complete': false with 'not_read', is not an empty inbox or a free calendar: say what could not "
+                 "be read, run icloud_check_health once and report it. Repeat a write at most once: after a timeout it may have "
+                 "gone through.", ("icloud_check_health",)),
 ]
 
-_CONFIRM = ("APPROXIMATE MATCHES: names are often misspelled. {SOURCES} when a name only resembles the one asked for. Before "
-            "sending mail, inviting someone or changing a contact on such a match, tell the owner exactly who you found (name and "
-            "address) and wait for them to confirm. If one exact match exists, use it.")
+_CONFIRM = ("APPROXIMATE MATCHES: {SOURCES} when a name only resembles the one asked for. Before mailing, inviting or "
+            "changing a contact on such a match, tell the owner who you found (name and address) and wait for a yes. One exact "
+            "match: use it.")
 
 _LOOKUP_CONTACTS = "with contacts_search (a contact can have several emails: pick the fitting one or ask)"
 _LOOKUP_MAIL = "mail_find_correspondent (people the owner has emailed; tolerates misspellings)"
@@ -97,10 +105,9 @@ _SEND_APPROVAL = ("SENDING: you cannot send mail on your own. {SENDERS} only QUE
 _SEND_LOCAL_DRAFTS = ("SENDING: you cannot send mail on your own. {SENDERS} save the message to Drafts; "
                       "the owner reviews it and presses Send. Status \"saved_to_drafts_for_owner_approval\" means NOT sent: tell "
                       "the owner it is waiting in Drafts.")
-_INVITES_ON = ("INVITING PEOPLE: put their addresses in attendees; iCloud emails the invitation itself, so send no separate email. "
-               "Read the result's 'delivery' and 'delivery_warning': never say someone was invited when they say otherwise. A tel: "
-               "attendee is not an invitation. Editing or deleting an event with attendees emails them. Invite only the people the "
-               "owner named.")
+_INVITES_ON = ("INVITING PEOPLE: addresses go in attendees; iCloud sends the invitation itself, so no separate email. Read "
+               "'delivery' and 'delivery_warning': never say someone was invited when they say otherwise. A tel: attendee is not "
+               "invited. Editing or deleting an event with attendees emails them. Invite only people the owner named.")
 
 SECURITY = """\
 SECURITY RULES:

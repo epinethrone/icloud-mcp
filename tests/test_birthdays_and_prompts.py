@@ -54,7 +54,7 @@ def test_prompts_follow_the_enabled_areas_and_always_ask_first(s):
         return {p.name: p for p in asyncio.run(mcp.list_prompts())}
     everything = prompts(s)
     assert set(everything) == {"triage_inbox", "plan_my_week", "prepare_for_event", "birthdays_coming_up", "calendar_from_mail",
-                               "find_a_time"}                        # tidy_reminders needs the Mac helper, which is off here
+                               "find_a_time", "replies_owed", "follow_ups"}   # tidy_reminders needs the Mac helper, off here
     for name, args in (("calendar_from_mail", {}), ("find_a_time", {"people": "Anna"})):
         body = asyncio.run(create_server(s)[0].get_prompt(name, args)).messages[0].content.text
         assert "without asking me first" in body

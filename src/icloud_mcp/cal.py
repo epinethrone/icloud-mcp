@@ -297,6 +297,18 @@ def not_busy_reason(comp: icalendar.Component, own_addresses: set[str]) -> str |
     return None
 
 
+def unanswered_invitation(comp: icalendar.Component, own_addresses: set[str]) -> bool:
+    """An invitation from someone else that the owner has not answered: the owner is an attendee with PARTSTAT NEEDS-ACTION
+    (or none), and the organizer is not the owner. Any of the owner's addresses counts (aliases, the Apple ID)."""
+    organizer = comp.get("organizer")
+    if organizer is None or (_attendee_email(organizer) or "") in own_addresses:
+        return False
+    for a in _as_list(comp.get("attendee")):
+        if (_attendee_email(a) or "") in own_addresses:
+            return str((getattr(a, "params", {}) or {}).get("PARTSTAT", "NEEDS-ACTION")).upper() == "NEEDS-ACTION"
+    return False
+
+
 def free_slots(busy: list[tuple[datetime, datetime]], windows: list[tuple[datetime, datetime]],
                duration: timedelta) -> list[tuple[datetime, datetime]]:
     """Openings of at least `duration` inside each window, after removing the (possibly overlapping) busy intervals."""
@@ -889,13 +901,22 @@ class CalendarService:
             return [{"name": self._cal_name(c), "id": str(c.url)} for c in self._event_calendars(p)]
 
     @_reconnecting
-    def list_events(self, start: str, end: str, *, calendar: str | None = None, query: str | None = None, limit: int = 50,
-                    fields: str = "full") -> dict[str, Any]:
+    def list_events(self, start: str | None = None, end: str | None = None, *, calendar: str | None = None, query: str | None = None,
+                    limit: int = 50, fields: str = "full", needs_reply: bool = False,
+                    starting_within_minutes: int | None = None) -> dict[str, Any]:
         tz = get_tz(self.s.default_timezone)
-        s_val, _ = parse_when(start, tz)
-        e_val, e_is_date = parse_when(end, tz)
-        s_dt = _as_dt(s_val, tz)
-        e_dt = _as_dt(e_val, tz) + (timedelta(days=1) if e_is_date else timedelta())
+        if starting_within_minutes is not None:
+            if not 1 <= int(starting_within_minutes) <= 7 * 24 * 60:
+                raise CalendarError("starting_within_minutes must be between 1 and 10080 (a week).")
+            s_dt = datetime.now(tz).replace(microsecond=0)
+            e_dt = s_dt + timedelta(minutes=int(starting_within_minutes))
+        else:
+            if not start or not end:
+                raise CalendarError("Give start and end (ISO dates or date-times), or starting_within_minutes.")
+            s_val, _ = parse_when(start, tz)
+            e_val, e_is_date = parse_when(end, tz)
+            s_dt = _as_dt(s_val, tz)
+            e_dt = _as_dt(e_val, tz) + (timedelta(days=1) if e_is_date else timedelta())
         if e_dt <= s_dt:
             raise CalendarError("end must be after start.")
         if e_dt - s_dt > timedelta(days=800):
@@ -907,12 +928,18 @@ class CalendarService:
             for name, comp in self._occurrences(p, calendar, s_dt, e_dt, not_read):
                 if want and want not in " ".join(_text(comp, k) or "" for k in ("summary", "location", "description")).lower():
                     continue
-                rows.append((_as_dt(comp.get("dtstart").dt, tz), name, comp))
+                if needs_reply and not unanswered_invitation(comp, self.s.own_addresses):
+                    continue
+                first = _as_dt(comp.get("dtstart").dt, tz)
+                if starting_within_minutes is not None and not s_dt <= first < e_dt:
+                    continue                                                  # under way already, or not starting in the window
+                rows.append((first, name, comp))
         rows.sort(key=lambda t: t[0])
         limit = max(1, min(int(limit), 200))
         events = [self._listed(comp, name, fields) for _, name, comp in rows[:limit]]     # only what is returned gets converted
         out: dict[str, Any] = {
             "notice": UNTRUSTED_NOTICE,
+            "now": datetime.now(tz).replace(microsecond=0).isoformat(),
             "range": {"start": s_dt.isoformat(), "end": e_dt.isoformat()},
             "total": len(rows),
             "events": events,
@@ -1057,7 +1084,7 @@ class CalendarService:
             except KeyError as e:
                 raise CalendarError("weekdays must be names like ['mon', 'tue', 'sat'].") from e
 
-        own = {a.lower() for a in (self.s.email_address, self.s.username) if a}
+        own = self.s.own_addresses
         busy: list[tuple[datetime, datetime]] = []
         all_day: list[dict[str, Any]] = []
         not_busy: list[dict[str, Any]] = []
@@ -1101,6 +1128,7 @@ class CalendarService:
         limit = max(1, min(int(limit), 100))
         return {
             "notice": UNTRUSTED_NOTICE,
+            "now": datetime.now(tz).replace(microsecond=0).isoformat(),
             "timezone": str(tz),
             "duration_minutes": int(duration_minutes),
             "hours": f"{day_start}-{day_end}",
@@ -1188,6 +1216,7 @@ class CalendarService:
             parsed = icalendar.Calendar.from_ical(obj.data)
             d = event_to_dict(self._master(parsed), self._cal_name(cal))
             d["notice"] = UNTRUSTED_NOTICE
+            d["now"] = datetime.now(get_tz(self.s.default_timezone)).replace(microsecond=0).isoformat()
             d["overridden_instances"] = sum(1 for e in parsed.walk("VEVENT") if "recurrence-id" in e)
             return d
 
@@ -1227,7 +1256,10 @@ class CalendarService:
         location_geo: str | None = None, travel_minutes: int | None = None, travel_routing: str | None = None,
         travel_origin: str | None = None, travel_origin_geo: str | None = None,
         alarms_minutes_before: list[int] | None = None, url: str | None = None, request_id: str | None = None,
+        on_conflict: str = "warn", on_duplicate: str = "warn",
     ) -> dict[str, Any]:
+        if on_conflict not in ("warn", "refuse") or on_duplicate not in ("warn", "refuse"):
+            raise CalendarError("on_conflict and on_duplicate must be 'warn' or 'refuse'.")
         self._refuse_invites(attendees_given=bool(attendees))
         tz = get_tz(timezone_name or self.s.default_timezone)
         fixed_uid = retry_uid(self.s.username, request_id) if request_id else None
@@ -1251,17 +1283,66 @@ class CalendarService:
                     return {"created": False, "already_existed": True, "uid": fixed_uid, "calendar": name,
                             "event": event_to_dict(master, name),
                             "note": "An event with this request_id was already created, so nothing new was added."}
+            # Read before writing (nothing is written yet, so this part may still be retried): overlaps across all calendars,
+            # counted the way calendar_find_free_time counts busy time, and the same event already on the target calendar.
+            new = self._master(icalendar.Calendar.from_ical(ical))
+            check = self._clashes(p, new, self._cal_name(cal), tz)
+            now_iso = datetime.now(tz).replace(microsecond=0).isoformat()
+            if check["possible_duplicate"] and on_duplicate == "refuse":
+                return {"created": False, "possible_duplicate": check["possible_duplicate"], "now": now_iso,
+                        "note": "The same title at the same time is already on this calendar, so nothing was created."}
+            if check["conflicts"] and on_conflict == "refuse":
+                return {"created": False, "conflicts": check["conflicts"], "now": now_iso,
+                        **({"not_read": check["not_read"]} if check["not_read"] else {}),
+                        "note": "It overlaps the events in 'conflicts', so nothing was created. Ask the owner, or pass on_conflict='warn'."}
             self._tl.mutated = True                  # from here on a transport error must not be retried: the PUT may have landed
             cal.save_event(ical)
             name = self._cal_name(cal)
             master = self._master(icalendar.Calendar.from_ical(ical))
             invited = [a for _, a in parse_attendees(attendees) if a.lower() != (self.s.email_address or "").lower()]
-            out: dict[str, Any] = {"created": True, "uid": uid, "calendar": name, "event": event_to_dict(master, name)}
+            out: dict[str, Any] = {"created": True, "uid": uid, "calendar": name, "event": event_to_dict(master, name), "now": now_iso,
+                                   "conflicts": check["conflicts"]}
+            if check["possible_duplicate"]:
+                out["possible_duplicate"] = check["possible_duplicate"]
+            if check["not_read"]:
+                out["not_read"] = check["not_read"]
+                out["conflicts_note"] = "Some calendars could not be read, so the conflicts list may be incomplete."
             if invited:
                 out["invited"] = invited
                 out["note"] = "iCloud emails each invited person an invitation itself; there is no need to send a separate email."
                 _attach_delivery(out, self._delivery(cal, uid))
             return out
+
+    def _clashes(self, principal: Any, new: icalendar.Component, target: str, tz: ZoneInfo) -> dict[str, Any]:
+        """Events that overlap `new` (travel time counted on both sides, free/cancelled/declined events ignored, as in
+        calendar_find_free_time), and an event on `target` with the same title and start. Reads only."""
+        start_v = new.get("dtstart").dt
+        if not isinstance(start_v, datetime):
+            return {"conflicts": [], "possible_duplicate": None, "not_read": []}          # all-day entries block nothing
+        ns = _as_dt(start_v, tz)
+        ne = _as_dt(new.end, tz) if new.get("dtend") is not None or new.get("duration") is not None else ns
+        ns_busy = ns - timedelta(minutes=parse_duration_minutes(new.get(_TRAVEL_DURATION)) or 0)
+        not_read: list[str] = []
+        conflicts, duplicate = [], None
+        title = (_text(new, "summary") or "").strip().casefold()
+        for name, comp in self._occurrences(principal, None, ns_busy - timedelta(hours=1), ne + timedelta(hours=12), not_read):
+            dt = comp.get("dtstart").dt
+            if not isinstance(dt, datetime):
+                continue
+            bs = _as_dt(dt, tz)
+            end_v = None
+            with contextlib.suppress(Exception):
+                end_v = comp.end
+            be = _as_dt(end_v, tz) if end_v is not None else bs
+            if name == target and bs == ns and (_text(comp, "summary") or "").strip().casefold() == title and duplicate is None:
+                duplicate = {"uid": _text(comp, "uid"), "calendar": name, "summary": _text(comp, "summary"), "start": _iso(dt)}
+            if not_busy_reason(comp, self.s.own_addresses):
+                continue
+            bs_busy = bs - timedelta(minutes=parse_duration_minutes(comp.get(_TRAVEL_DURATION)) or 0)
+            if bs_busy < ne and ns_busy < be:
+                conflicts.append({"uid": _text(comp, "uid"), "calendar": name, "summary": _text(comp, "summary") or "(no title)",
+                                  "start": _iso(dt), "end": _iso(end_v)})
+        return {"conflicts": conflicts, "possible_duplicate": duplicate, "not_read": sorted(not_read)}
 
     @_reconnecting
     def update_event(
@@ -1270,8 +1351,10 @@ class CalendarService:
         rrule: str | None = None, attendees: list[str] | None = None, alarms_minutes_before: list[int] | None = None,
         url: str | None = None, location_geo: str | None = None, travel_minutes: int | None = None,
         travel_routing: str | None = None, travel_origin: str | None = None, travel_origin_geo: str | None = None,
-        occurrence_start: str | None = None,
+        occurrence_start: str | None = None, add_attendees: list[str] | None = None, remove_attendees: list[str] | None = None,
     ) -> dict[str, Any]:
+        if (add_attendees or remove_attendees) and attendees is not None:
+            raise CalendarError("Use attendees (the complete list) or add_attendees / remove_attendees, not both.")
         tz = get_tz(timezone_name or self.s.default_timezone)
         with self._principal() as p:
             cal, obj = self._find(p, uid, calendar)
@@ -1283,6 +1366,11 @@ class CalendarService:
                 ev, new_override = self._occurrence(parsed, occurrence_start, tz)
             else:
                 ev = self._master(parsed)
+            if add_attendees or remove_attendees:                # one person in or out: the rest of the list stays as it is
+                gone = {a.lower() for _, a in parse_attendees(remove_attendees or [])}
+                current = [a for a in (_attendee_email(x) for x in _as_list(ev.get("attendee")))
+                           if a and a not in gone and a not in self.s.own_addresses]
+                attendees = list(dict.fromkeys(current + [a for _, a in parse_attendees(add_attendees or []) if a.lower() not in gone]))
             self._refuse_invites(attendees_given=bool(attendees) or attendees == [], existing=self._guests(parsed, ev))
 
             if start is not None or end is not None:
@@ -1360,7 +1448,7 @@ class CalendarService:
 
     def _delivery_read(self, cal: Any, uid: str, recurrence_id: Any = None) -> list[dict[str, Any]]:
         """Re-read an event after a write that emailed guests, and report what iCloud recorded for each of them."""
-        own = {a.lower() for a in (self.s.email_address, self.s.username) if a}
+        own = self.s.own_addresses
         report: list[dict[str, Any]] = []
         for attempt in range(2):
             obj = self._by_href(cal, uid)
@@ -1465,7 +1553,7 @@ class CalendarService:
             raise CalendarError("Blocked: answering an invitation makes iCloud email the organizer, and emails to other people from the "
                                 "calendar are disabled on this server (ALLOW_CALENDAR_INVITES=false). Answer it in the Calendar app.")
         tz = get_tz(timezone_name or self.s.default_timezone)
-        own = {a.lower() for a in (self.s.email_address, self.s.username) if a}
+        own = self.s.own_addresses
         with self._principal() as p:
             cal, obj = self._find(p, uid, calendar)
             parsed = icalendar.Calendar.from_ical(obj.data)

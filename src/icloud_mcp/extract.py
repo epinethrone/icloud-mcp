@@ -12,6 +12,7 @@ Every value is copied from those fields as they are; nothing is inferred from th
 from __future__ import annotations
 
 import email
+import hashlib
 import json
 import re
 from datetime import date, datetime
@@ -229,6 +230,13 @@ def extract(raw: bytes) -> dict[str, Any]:
         if (k := _key(it)) not in seen:
             seen.add(k)
             unique.append(it)
+    # A ready retry key per booking, so search -> extract -> create can never book the same thing twice. The Message-ID is
+    # the sender's text, so only a hash of it goes into the key.
+    source = str(msg.get("Message-ID") or "").strip() or hashlib.sha256(raw).hexdigest()
+    tag = hashlib.sha256(source.encode("utf-8", "replace")).hexdigest()[:16]
+    for n, it in enumerate(unique[:MAX_ITEMS]):
+        if isinstance(it.get("calendar_event"), dict):
+            it["calendar_event"]["request_id"] = f"booking:{tag}:{n}"
     return {"subject": _text(str(msg.get("Subject") or "")), "from": _text(str(msg.get("From") or "")), "items": unique[:MAX_ITEMS],
             "found": len(unique),
             "note": ("Copied from the booking data and calendar attachments the sender embedded, never guessed from the text. Check "

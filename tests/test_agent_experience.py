@@ -55,6 +55,9 @@ class FakeCal:
     def save_event(self, ical):
         self.saved.append(ical)
 
+    def search(self, **kw):                           # create_event reads the calendar for clashes first
+        return [type("Obj", (), {"data": d})() for d in self.saved]
+
 
 def _svc(s, monkeypatch, names):
     cals = [FakeCal(n) for n in names]
