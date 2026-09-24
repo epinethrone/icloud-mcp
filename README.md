@@ -332,11 +332,11 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>Notes</b> &nbsp;·&nbsp; 7 tools, with the Mac helper</summary>
+<summary><b>Notes</b> &nbsp;·&nbsp; 9 tools, with the Mac helper</summary>
 
 `notes_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_append`, `notes_update`, `notes_create_folder`, `notes_move`, `notes_delete`
 
-- Read, create, **edit** and **organise**: add to a note (`notes_append`, keeps its formatting) or rewrite it (`notes_update`, keeps the title), create folders and subfolders, and move notes between them.
+- Read, create, **edit** and **organise**: add to a note (`notes_append`, keeps headings, lists and styling; notes with tables are refused) or rewrite it (`notes_update`, keeps the title), create folders and subfolders, and move notes between them.
 - **Edits are guarded.** `notes_read` returns a `content_hash`; append and update need it with the current title, so a note that changed since it was read is never overwritten. Locked notes, notes with attachments and notes in Recently Deleted are refused, and the old version is saved to `~/Library/Application Support/icloud-mac-helper/note-backups/` before anything is written.
 - Move and delete act on one note at a time and need its **current title** as well as its id, so a stale or wrong id changes nothing.
 - Delete moves a note to **Recently Deleted**, where you can recover it for about 30 days. It refuses locked notes, and notes already in Recently Deleted, because removing them from there would be permanent. Nothing is ever moved into Recently Deleted.

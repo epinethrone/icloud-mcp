@@ -40,18 +40,19 @@ function update(app, a, env) {
   var n = findNote(app, a.id);
   var title = n.name();
   if (norm(title) !== norm(a.title)) throw new Error("title does not match: this id belongs to a note titled '" + title + "'. Nothing was changed.");
-  var locked = false;
-  try { locked = n.passwordProtected() === true; } catch (e) {}
+  var locked;
+  try { locked = n.passwordProtected() === true; } catch (e) { throw new Error("could not check whether the note is locked. Nothing was changed."); }
   if (locked) throw new Error("the note is locked, so it is never changed. Nothing was changed.");
   var folder = null;
   try { folder = n.container().name(); } catch (e2) {}
   if (folder !== null && RECENTLY_DELETED.indexOf(norm(folder)) >= 0) throw new Error("the note is in Recently Deleted. Nothing was changed.");
-  var attachments = 0;
-  try { attachments = n.attachments().length; } catch (e3) {}
+  var attachments;
+  try { attachments = n.attachments().length; } catch (e3) { throw new Error("could not check the note for attachments. Nothing was changed."); }
   if (attachments > 0) throw new Error("the note has " + attachments + " attachment(s); rewriting it could lose them, so it is not changed. Nothing was changed.");
   var current = contentHash(String(n.plaintext() || ""));
   if (current !== a.expected_hash) throw new Error("the note changed since it was read (content_hash " + a.expected_hash + " is now " + current + "). Read it again first. Nothing was changed.");
   var old = String(n.body() || "");
+  if (/<table[\s>]/i.test(old)) throw new Error("the note contains a table, which Notes does not keep when a note is rewritten from a script. Nothing was changed.");
   var saved = backup(n.id(), old, env);
   if (!saved) throw new Error("could not save a backup of the note first. Nothing was changed.");
   var html = a.mode === "append" ? old + textHtml(a.text) : "<h1>" + esc(title) + "</h1>" + textHtml(a.text);
