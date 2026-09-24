@@ -236,15 +236,22 @@ def _read_log(mail: MailService) -> list[dict[str, Any]]:
         return []
 
 
+def _MailError(message: str) -> Exception:
+    """A MailError (imported late: mail imports this module), so the message reaches the agent scrubbed, as a normal tool error."""
+    from .mail import MailError
+
+    return MailError(message + ("" if message.endswith(".") else "."))
+
+
 def bulk_action(mail: MailService, folder: str, action: str, *, destination: str | None = None, dry_run: bool = True,
                 confirm_token: str | None = None, max_messages: int = DEFAULT_BULK, **filters: Any) -> dict[str, Any]:
     if action not in BULK_ACTIONS:
-        raise ValueError(f"action must be one of {', '.join(BULK_ACTIONS)}")
+        raise _MailError(f"action must be one of {', '.join(BULK_ACTIONS)}.")
     if action == "move" and not destination:
-        raise ValueError("action 'move' needs a destination folder")
+        raise _MailError("action 'move' needs a destination folder (a name from mail_list_folders).")
     if not any(v not in (None, "") for v in filters.values()):
-        raise ValueError("give at least one filter (from_address, subject, text, since, before, unread, flagged): "
-                         "a bulk action on a whole folder is refused")
+        raise _MailError("give at least one filter (from_address, subject, text, since, before, unread, flagged): "
+                         "a bulk action on a whole folder is refused.")
     limit = max(1, min(int(max_messages), MAX_BULK))
     crit, charset = mail.criteria(**filters)
     with mail.imap() as c:
@@ -252,9 +259,9 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
         dst = {"move": destination, "archive": "archive", "trash": "trash"}.get(action)
         dst = mail.resolve_folder(c, dst) if dst else None
         if action == "trash" and src == mail.resolve_folder(c, "trash"):
-            raise ValueError("these messages are already in the Trash; bulk actions never delete permanently")
+            raise _MailError("these messages are already in the Trash; bulk actions never delete permanently.")
         if dst and dst == src:
-            raise ValueError(f"the messages are already in {src}")
+            raise _MailError(f"the messages are already in {src}")
         uv = mail._select(c, src, readonly=dry_run)
         matched = sorted(c.search(crit, charset=charset), reverse=True)
         picked = matched[:limit]
@@ -278,7 +285,7 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
         if not uids:
             return {**preview, "done": 0}
         if why := _token_ok(confirm_token, src, uv, action, dst or "", uids):
-            raise ValueError(why)
+            raise _MailError(why)
         entry = {"action_id": uuid.uuid4().hex[:12], "time": time.time(), "folder": src, "action": action, "destination": dst,
                  "message_ids": [ids[u] for u in uids]}
         _write_log(mail, entry)                     # logged before anything changes, so an interrupted run can still be undone

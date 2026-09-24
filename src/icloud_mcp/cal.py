@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import caldav
 import icalendar
 
+from . import callctx
 from .config import Settings
 from .keepalive import TICKER
 from .safety import compact, warnings_for
@@ -507,7 +508,7 @@ def parse_rrule(text: str) -> icalendar.vRecur:
     try:
         return icalendar.vRecur.from_ical(text)
     except Exception as e:  # noqa: BLE001
-        raise CalendarError(f"Invalid rrule '{text}': {e}") from e
+        raise CalendarError(f"Invalid rrule '{text}': {e}. Use a rule like FREQ=WEEKLY;BYDAY=MO;COUNT=6.") from e
 
 
 def occurs_in_series(master: icalendar.Component, rid: Any) -> bool:
@@ -677,28 +678,10 @@ def _is_transport_error(exc: BaseException | None) -> bool:
     return False
 
 
-def _reconnecting(method):
-    """Retry once on a dead reused connection, and ONLY then.
-
-    A pooled connection can be closed by the server between calls, and that failure surfaces on the next request
-    rather than at hand-out time. Retrying is safe only when the connection was a reused one AND nothing has been
-    written yet, so a PUT or DELETE is never replayed. A fresh connection that fails is a real failure and is raised.
-    The retry always uses a brand-new connection, never another pooled one.
-    """
-    @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
-        if getattr(self._tl, "conn", None) is None:     # a new call (not one nested inside another): start from a clean slate
-            self._tl.mutated = False
-            self._tl.reused = False
-        try:
-            return method(self, *args, **kwargs)
-        except Exception as e:  # noqa: BLE001 - re-raised below unless it is a retryable dead socket
-            if getattr(self._tl, "reused", False) and not getattr(self._tl, "mutated", False) and _is_transport_error(e):
-                self._drop_client()
-                self._tl.mutated = False
-                return method(self, *args, **kwargs)
-            raise
-    return wrapper
+# Retry once on a dead reused connection, and ONLY then (the policy is in callctx.retry_once_if_safe): a pooled connection can
+# be closed by the server between calls, and that failure surfaces on the next request rather than at hand-out time. Never after
+# a write (a PUT or DELETE is never replayed), never on a brand-new connection, and the retry always uses a brand-new one.
+_reconnecting = callctx.retry_once_if_safe(_is_transport_error)
 
 
 class _Conn:
@@ -724,13 +707,14 @@ class CalendarService:
         # connection was reused, and whether a write has been issued (which forbids a retry).
         self._pool_lock = threading.Lock()
         self._pool: list[_Conn] = []
-        self._tl = threading.local()
+        self._tl = callctx.CallState()
         self._last_activity = 0.0
         self._ticking = False
 
     # -- the connection pool ------------------------------------------------------
     def _open(self) -> _Conn:
         s = self.s
+        callctx.stage("CalDAV sign-in")
         client = caldav.DAVClient(url=s.caldav_url, username=s.caldav_username, password=s.app_password, require_tls=s.caldav_require_tls)
         try:
             return _Conn(client, client.principal(), time.monotonic())
@@ -825,13 +809,15 @@ class CalendarService:
         try:
             conn, reused = self._checkout(fresh)
         except caldav.error.AuthorizationError as e:
-            raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
+            raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password. Run icloud_check_health to see which service is failing.") from e
+        except Exception as e:  # noqa: BLE001 - the cause stays attached, so the retry rule still sees a dead connection
+            raise CalendarError(f"Could not connect to iCloud Calendar ({type(e).__name__}). Run icloud_check_health to see which service is failing.") from e
         tl.conn, tl.reused = conn, reused
         try:
             yield conn.principal
         except caldav.error.AuthorizationError as e:
             self._close(conn)
-            raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
+            raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password. Run icloud_check_health to see which service is failing.") from e
         except Exception as e:  # noqa: BLE001 - re-raised; this only decides whether the connection may be reused
             if _is_transport_error(e):
                 self._close(conn)
@@ -894,7 +880,7 @@ class CalendarService:
         want = calendar.strip().lower()
         hit = [c for c in cals if self._cal_name(c).lower() == want or str(c.url).rstrip("/").endswith(want)]
         if not hit:
-            raise CalendarError(f"No calendar named '{calendar}'. Available: {', '.join(self._cal_name(c) for c in cals)}")
+            raise CalendarError(f"No calendar named '{calendar}'. Use one of: {', '.join(self._cal_name(c) for c in cals)}.")
         return hit
 
     @_reconnecting
@@ -916,8 +902,9 @@ class CalendarService:
             raise CalendarError("Range too large; request at most ~2 years at a time.")
         want = (query or "").lower()
         rows: list[tuple[datetime, str, icalendar.Component]] = []
+        not_read: list[str] = []
         with self._principal() as p:
-            for name, comp in self._occurrences(p, calendar, s_dt, e_dt):
+            for name, comp in self._occurrences(p, calendar, s_dt, e_dt, not_read):
                 if want and want not in " ".join(_text(comp, k) or "" for k in ("summary", "location", "description")).lower():
                     continue
                 rows.append((_as_dt(comp.get("dtstart").dt, tz), name, comp))
@@ -929,6 +916,9 @@ class CalendarService:
             "range": {"start": s_dt.isoformat(), "end": e_dt.isoformat()},
             "total": len(rows),
             "events": events,
+            "complete": not not_read,
+            **({"not_read": sorted(not_read), "warning": "These calendars could not be read, so events in them are missing: "
+                "do not treat their time as free. Run icloud_check_health."} if not_read else {}),
         }
         if any(e.get("description_truncated") for e in events):
             out["hint"] = f"Descriptions are cut at {_DESCRIPTION_CHARS} characters; calendar_get_event returns the whole text."
@@ -999,6 +989,19 @@ class CalendarService:
             results[i] = read(cals[i])
         return results
 
+    def _each_calendar_or_skip(self, principal: Any, cals: list[Any], read: Any, not_read: list[str]) -> list[Any]:
+        """_each_calendar, but a calendar the server refuses to answer for (a DAV error, not a dead connection) is named in
+        not_read and skipped, so one broken calendar does not hide the others. A connection failure is still raised."""
+        def guarded(cal: Any) -> Any:
+            try:
+                return read(cal)
+            except caldav.error.DAVError as e:
+                if _is_transport_error(e):
+                    raise
+                not_read.append(self._cal_name(cal))
+                return None
+        return self._each_calendar(principal, cals, guarded)
+
     def prewarm(self, connections: int = 3) -> None:
         """Warm-up: read the calendar list, then open a few more pooled connections in the background, so calls can read
         calendars in parallel from the start. Never raises for the extra connections."""
@@ -1008,14 +1011,18 @@ class CalendarService:
             with contextlib.suppress(Exception):
                 self._checkin(f.result())
 
-    def _occurrences(self, principal: Any, calendar: str | None, s_dt: datetime, e_dt: datetime) -> Iterator[tuple[str, icalendar.Component]]:
+    def _occurrences(self, principal: Any, calendar: str | None, s_dt: datetime, e_dt: datetime,
+                     not_read: list[str] | None = None) -> Iterator[tuple[str, icalendar.Component]]:
         """Every event occurrence overlapping [s_dt, e_dt) in the chosen calendars, recurring events expanded (client-side:
         iCloud's own expansion turns all-day events into UTC date-times, see docs/PERFORMANCE.md)."""
         cals = self._pick(principal, calendar)
         names = [self._cal_name(c) for c in cals]
-        found = self._each_calendar(principal, cals, lambda cal: [o.data for o in cal.search(start=s_dt, end=e_dt, event=True, expand=True)])
+        callctx.stage(f"CalDAV search in {len(cals)} calendar(s)")
+        search = lambda cal: [o.data for o in cal.search(start=s_dt, end=e_dt, event=True, expand=True)]   # noqa: E731
+        found = (self._each_calendar_or_skip(principal, cals, search, not_read) if not_read is not None
+                 else self._each_calendar(principal, cals, search))
         for name, datas in zip(names, found):
-            for data in datas:
+            for data in datas or []:
                 for comp in icalendar.Calendar.from_ical(data).walk("VEVENT"):
                     if comp.get("dtstart") is not None:
                         yield name, comp
@@ -1054,8 +1061,9 @@ class CalendarService:
         busy: list[tuple[datetime, datetime]] = []
         all_day: list[dict[str, Any]] = []
         not_busy: list[dict[str, Any]] = []
+        not_read: list[str] = []
         with self._principal() as p:
-            for name, comp in self._occurrences(p, calendar, s_dt, e_dt):
+            for name, comp in self._occurrences(p, calendar, s_dt, e_dt, not_read):
                 dtstart = comp.get("dtstart").dt
                 summary = _text(comp, "summary") or "(no title)"
                 reason = not_busy_reason(comp, own)
@@ -1105,6 +1113,9 @@ class CalendarService:
             "rules": ("Busy = timed events, including Apple travel time before them. Not busy: events marked free, cancelled "
                       "events and invitations you declined. All-day events are listed separately and do not block slots: check "
                       "them yourself (a trip blocks the day, a birthday does not). Each slot is a whole opening; book any part of it."),
+            "complete": not not_read,
+            **({"not_read": sorted(not_read), "warning": "These calendars could not be read, so their events are NOT counted: these "
+                "slots may not really be free. Say so to the user and run icloud_check_health."} if not_read else {}),
         }
 
     @staticmethod
@@ -1161,7 +1172,7 @@ class CalendarService:
                     self._uid_cache[uid] = (str(cal.url), time.monotonic())
                     return cal, obj
         self._uid_cache.pop(uid, None)
-        raise CalendarError(f"No event with uid '{uid}' found.")
+        raise CalendarError(f"No event with uid '{uid}' found. The uid comes from calendar_list_events; name the calendar to search faster.")
 
     @staticmethod
     def _master(parsed: icalendar.Calendar) -> icalendar.Event:
@@ -1510,7 +1521,7 @@ class CalendarService:
                 except Exception as e:  # noqa: BLE001 - never leave the event in two calendars
                     with contextlib.suppress(Exception):
                         copy.delete()
-                    raise CalendarError(f"Could not remove the event from '{src_name}', so nothing was moved: {e}") from e
+                    raise CalendarError(f"Could not remove the event from '{src_name}', so nothing was moved: {e}. Try again once.") from e
             elif not 200 <= status < 300:
                 raise CalendarError(f"The server refused to move the event (HTTP {status}). Nothing was moved.")
             self._uid_cache[uid] = (str(dst.url), time.monotonic())

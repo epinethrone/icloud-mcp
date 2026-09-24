@@ -166,7 +166,7 @@ class Settings:
             host=_str("MCP_HOST", "127.0.0.1"),
             port=_int("MCP_PORT", 8000),
             stateless_http=_bool("MCP_STATELESS", True),
-            tool_timeout=_int("TOOL_TIMEOUT_SECONDS", 90),
+            tool_timeout=_int("TOOL_TIMEOUT_SECONDS", 60),
             allowed_redirect_hosts=tuple(
                 h.lower() for h in _list("OAUTH_ALLOWED_REDIRECT_HOSTS", "claude.ai,claude.com,localhost,127.0.0.1")
             ),

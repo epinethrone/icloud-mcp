@@ -152,10 +152,15 @@ class Job:
     args: dict[str, Any]
     deadline: float
     state: str = "queued"                 # queued | running | done | cancelled
+    created: float = field(default_factory=time.time)
+    started: float | None = None
     ok: bool = False
     result: Any = None
     error: str = ""
     event: threading.Event = field(default_factory=threading.Event)
+
+
+JOB_MARGIN = 3     # seconds: the helper stops a job this much before the server stops waiting, so its report still arrives
 
 
 class MacBridge:
@@ -166,6 +171,7 @@ class MacBridge:
         self._jobs: dict[str, Job] = {}
         self.last_seen: float | None = None
         self.agent: dict[str, str] = {}
+        self._durations: list[float] = []      # seconds from request to answer, last 20 jobs
 
     # -- state --------------------------------------------------------------------
     def _online_locked(self) -> bool:
@@ -177,8 +183,12 @@ class MacBridge:
     def status(self) -> dict[str, Any]:
         with self._cond:
             ago = None if self.last_seen is None else round(time.time() - self.last_seen)
+            waiting = sum(1 for j in self._queue if j.state == "queued")
+            recent = sorted(self._durations)
+            median = round(recent[len(recent) // 2], 2) if recent else None
             return {"online": self._online_locked(), "last_seen_seconds_ago": ago, "helper": dict(self.agent),
-                    "jobs_waiting": sum(1 for j in self._queue if j.state == "queued")}
+                    "jobs_waiting": waiting, "queue_length": waiting + sum(1 for j in self._jobs.values() if j.state == "running"),
+                    "median_job_seconds": median}
 
     def _offline_message(self) -> str:
         if self.last_seen is None:
@@ -191,6 +201,8 @@ class MacBridge:
 
     # -- called by tools (worker threads) ---------------------------------------------
     def call(self, op: str, args: dict[str, Any] | None = None) -> Any:
+        from .callctx import stage
+        stage(f"waiting for the Mac helper ({op})")
         clean = validate_args(op, args)
         with self._cond:
             if not self._online_locked():
@@ -201,14 +213,23 @@ class MacBridge:
             self._cond.notify_all()
         if not job.event.wait(self.timeout):
             with self._cond:
+                picked_up = job.state == "running"
                 if job.state in ("queued", "running"):
                     job.state = "cancelled"
                     if job in self._queue:
                         self._queue.remove(job)
-            raise BridgeError(f"The Mac helper did not answer within {self.timeout}s. The operation may still complete on the Mac, "
-                              "so check before repeating a change.")
+            if picked_up:
+                raise BridgeError(f"The Mac picked up the request but did not finish within {self.timeout}s: the Mac is slow or busy "
+                                  "(Notes in particular can be). The operation may still complete there, so check before repeating a "
+                                  "change; try again in a minute, or run mac_helper_status to see how long jobs take.")
+            raise BridgeError(f"The Mac did not pick up the request within {self.timeout}s: it may have just gone to sleep or lost its "
+                              "connection. Run mac_helper_status, and tell the user instead of retrying repeatedly.")
         if not job.ok:
-            raise BridgeError(job.error or "The Mac helper reported an error.")
+            err = job.error or "The Mac helper reported an error."
+            if "-1728" in err:                                     # Apple's "object not found"
+                err += (" The reminder, note or list is not there any more (deleted or moved on another device): list again "
+                        "(reminders_list, notes_list) for current ids.")
+            raise BridgeError(err)
         return job.result
 
     # -- called by the bridge HTTP app -----------------------------------------------------
@@ -226,7 +247,7 @@ class MacBridge:
                 while self._queue:
                     job = self._queue.pop(0)
                     if job.state == "queued" and job.deadline > now:
-                        job.state = "running"
+                        job.state, job.started = "running", now
                         return job
                 remaining = end - time.monotonic()
                 if remaining <= 0:
@@ -242,6 +263,7 @@ class MacBridge:
                 return False
             job.state, job.ok, job.result, job.error = "done", bool(ok), result, str(error or "")[:500]
             self.last_seen = time.time()
+            self._durations = (self._durations + [self.last_seen - job.created])[-20:]
             job.event.set()
             return True
 
@@ -325,7 +347,7 @@ def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
     async def read_json(request: Request, limit: int = MAX_BODY) -> Any:
         body = await request.body()
         if len(body) > limit:
-            raise BridgeError("request body too large")
+            raise BridgeError("The request body is too large.")
         return json.loads(body or b"{}")
 
     async def ping(request: Request) -> Response:
@@ -343,7 +365,7 @@ def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
         job = await asyncio.to_thread(bridge.next_job, meta, wait)
         if job is None:
             return Response(status_code=204)
-        return JSONResponse({"id": job.id, "op": job.op, "args": job.args, "seconds": max(1, int(job.deadline - time.time()))})
+        return JSONResponse({"id": job.id, "op": job.op, "args": job.args, "seconds": max(1, int(job.deadline - time.time()) - JOB_MARGIN)})
 
     async def result(request: Request) -> Response:
         if (bad := denied(request)) is not None:

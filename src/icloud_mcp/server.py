@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
+from . import callctx
 from .approvals import register_outbox_routes
 from .auth import SCOPE, OwnerOAuthProvider, register_routes
 from .bridge import BridgeError, MacBridge, build_bridge_app, ensure_tls, start_bridge_listener
@@ -206,6 +207,7 @@ class Attachment(BaseModel):
 
 _tool_timeout = 90.0     # set from TOOL_TIMEOUT_SECONDS in create_server()
 _executor: ThreadPoolExecutor | None = None   # runs tool calls; sized by TOOL_WORKERS in create_server()
+_STARTED = time.monotonic()                    # for icloud_check_health's uptime
 _error_secrets: tuple[str, ...] = ()   # passwords and tokens: masked in every tool error (set in create_server)
 _error_ids: tuple[str, ...] = ()       # account identifiers: masked in unexpected errors, which may quote server responses
 _DRIVE_PATH = "Path inside iCloud Drive, relative to its root, e.g. 'Documents/Tax'. '' or omitted = the root."
@@ -217,19 +219,22 @@ def _guard(fn):
     """Run a blocking service call in a worker thread and convert domain errors into tool errors.
     A call that runs longer than the tool timeout is abandoned with an error, so a client never waits on a hang."""
 
-    def run(*args, **kwargs):
+    def run(holder, *args, **kwargs):
+        callctx.begin(holder)                       # services name the step in progress here, for the timeout message
         return clean_deep(fn(*args, **kwargs))      # cleaned in the worker thread, so a large result never blocks the event loop
 
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
+        holder: dict[str, Any] = {"stage": None}
         try:
-            call = functools.partial(run, *args, **kwargs)
+            call = functools.partial(run, holder, *args, **kwargs)
             return await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(_executor, call), timeout=_tool_timeout)
         except asyncio.TimeoutError as e:
+            slow = f" The slow step was: {holder['stage']}." if holder.get("stage") else ""
             raise ToolError(
-                f"{getattr(fn, '__name__', 'The tool')} took longer than {_tool_timeout:g}s and was abandoned. Try again; if it keeps "
-                "happening the server or iCloud is slow. The operation may still have completed, so check before repeating a write "
-                "(for example look in Sent before sending again)."
+                f"{getattr(fn, '__name__', 'The tool')} took longer than {_tool_timeout:g}s and was abandoned.{slow} Try again once; if "
+                "it keeps happening run icloud_check_health. The operation may still have completed, so check before repeating a "
+                "write (for example look in Sent before sending again)."
             ) from e
         except (MailError, CalendarError, ContactsError, BridgeError) as e:
             raise ToolError(scrub_error(str(e), _error_secrets)) from e
@@ -424,6 +429,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     writable = not s.read_only
     health: dict[str, Any] = {}                 # area -> zero-argument check, filled in as each area registers
     warm: dict[str, Any] = {}                   # area -> zero-argument warm-up, run in the background at start (WARMUP_ON_START)
+    pools: dict[str, Any] = {}                  # area -> zero-argument view of its kept connections, for the health check
     mcp._icloud_warmups = warm
 
     # ------------------------------------------------------------------ mail
@@ -431,6 +437,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         mail = MailService(s)
         health["mail"] = mail.health
         warm["mail"] = lambda: mail.list_folders() and None       # one pooled login plus the folder list
+        pools["mail"] = lambda: {"warm": bool(mail._pool), "imap_kept": len(mail._pool), "imap_pool_size": s.imap_pool_size,
+                                 "smtp_connected": mail._smtp is not None}
         if s.allow_send and writable and s.require_approval and provider is not None:
             register_outbox_routes(mcp, provider, s, mail)
 
@@ -703,6 +711,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         cal = CalendarService(s)
         health["calendar"] = lambda: {"calendars": len(cal.list_calendars())}
         warm["calendar"] = cal.prewarm                           # the calendar list, plus spare connections for parallel reads
+        pools["calendar"] = lambda: {"warm": bool(cal._pool), "caldav_kept": len(cal._pool), "caldav_pool_size": s.caldav_pool_size,
+                                     "keepalive_seconds": s.caldav_keepalive_seconds}
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -862,6 +872,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         contacts = ContactsService(s)
         health["contacts"] = lambda: {"contacts": contacts.search("", limit=1).get("total_matches")}
         warm["contacts"] = lambda: contacts.search("", limit=1) and None   # fills the address-book cache
+        pools["contacts"] = lambda: {"warm": contacts._cache is not None,
+                                     "cached_cards": len(contacts._cache[2]) if contacts._cache else 0}
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -949,7 +961,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
     # ------------------------------------------------ Reminders / Notes, through the helper on the owner's Mac
     if s.bridge_enabled:
-        bridge = MacBridge(timeout=s.bridge_job_timeout)
+        # The bridge stops waiting for the Mac at least 5 s before the tool call times out, so its own message ("the Mac picked
+        # up the request but was slow" / "never picked it up") reaches the agent instead of the generic timeout.
+        bridge = MacBridge(timeout=min(s.bridge_job_timeout, max(1, s.tool_timeout - 5)))
         health["mac_helper"] = lambda: (lambda st: {**st, "ok": bool(st.get("online"))})(bridge.status())
         mcp._icloud_bridge = bridge          # main() serves it on its own private port
 
@@ -989,7 +1003,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 data = bridge.call("reminders_list", _given(list=list_name, list_id=list_id, query=query, refresh=refresh or None, limit=max(1, limit)))
                 if isinstance(data, list):                    # an older helper answers with a bare list
                     data = {"reminders": data}
-                return {"notice": _MAC_NOTICE, "count": len(data["reminders"]), **data}
+                return {"notice": _MAC_NOTICE, "count": len(data["reminders"]), **data, "complete": True}
 
             if writable:
 
@@ -1292,12 +1306,18 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     @_guard
     def icloud_check_health() -> dict[str, Any]:
         """Check every enabled area in one call: signs in to mail (IMAP), lists calendars (CalDAV), reads the address book
-        (CardDAV) and asks whether the Mac helper is online, with how long each took. Read-only. Use it when something
-        fails, before telling the user a service is down."""
+        (CardDAV) and asks whether the Mac helper is online, with how long each took, plus the server's uptime and whether
+        each area had warm (kept) connections before this check. Read-only. Use it when something fails, before telling the
+        user a service is down."""
         secrets = (s.app_password, s.owner_password, s.bridge_token, s.username, s.email_address,
                    s.imap_username, s.smtp_username, s.caldav_username, s.carddav_username)
+        before = {area: view() for area, view in pools.items()}          # read first: the checks below warm things up
         results = {area: _timed(check, secrets) for area, check in health.items()}
-        return {"ok": all(r["ok"] for r in results.values()), "areas": results}
+        for area, view in before.items():
+            if area in results:
+                results[area]["connections"] = view
+        return {"ok": all(r["ok"] for r in results.values()), "since_start_seconds": round(time.monotonic() - _STARTED),
+                "areas": results}
 
 def build_app(s: Settings, mcp: MCPServer):
     """The ASGI app exactly as served in production (used by main() and by the tests)."""
