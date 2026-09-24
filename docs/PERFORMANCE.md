@@ -184,3 +184,25 @@ idle pooled connections, and warm-up opens up to three spares in the background.
 **Server-side recurrence expansion on iCloud** (plan 2.2), measured read-only on a real account with caldav 3.3: iCloud accepts
 `server_expand` and its replies are 40 to 70 % smaller, but it turns all-day events into UTC date-times (a DATE start came back
 as midnight UTC), which would break `all_day` and shift the day for anyone east or west of UTC. Expansion stays client-side.
+
+## Phase 2b: partial mail fetches
+
+`mail_get_messages` reads a message that carries more than 64 KB of non-text parts as a skeleton (every part's headers and the
+text bodies, not the attachments' contents); `mail_get_attachment` fetches only the part asked for. Structures from a search
+are remembered, so search-then-read costs no extra round trip.
+
+| scenario | median s | p90 s | bytes | notice chars | tcp connects | imap commands | imap kb in | caldav requests | carddav requests |
+|---|---|---|---|---|---|---|---|---|---|
+| mail_search 20 | 0.132 | 0.173 | 9938 | 85 | 0 | 3 | 12 | 0 | 0 |
+| mail_search 20 + get_messages 10 | 0.320 | 0.321 | 30276 | 249 | 0 | 7 | 55 | 0 | 0 |
+| mail_search all_folders | 0.337 | 0.442 | 11256 | 85 | 0 | 19 | 31 | 0 | 0 |
+| mail_get_attachment (300 KB pdf) | 0.305 | 0.307 | 419759 | 170 | 0 | 7 | 424 | 0 | 0 |
+
+| scenario | before | phase 2b |
+|---|---|---|
+| `mail_search` 20 + `mail_get_messages` 10 (two with a 300 KB PDF) | 465 KB received from the IMAP server | 55 KB (12 %) |
+| `mail_search` 20 hits, result size (computed offline, same messages) | 8,946 bytes at 0.5.0 | 6,447 bytes (-28 %) |
+
+Checked read-only against iCloud on three real messages with attachments: the skeleton gives the same text and the same
+attachment list as the whole message, and every attachment fetched on its own is byte-for-byte identical. The largest message
+was 1.3 MB whole and 26 KB as a skeleton.
