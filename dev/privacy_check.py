@@ -33,8 +33,8 @@ def scan(where: str, text: str) -> list[str]:
         if "privacy-ok" in line:
             continue
         for what, rx in PATTERNS:
-            if m := rx.search(line):
-                found.append(f"{where}:{n}: {what}: {m.group(0)}")
+            if rx.search(line):
+                found.append(f"{where}:{n}: {what}")   # never the value itself: CI logs of a public repo are public
     return found
 
 
