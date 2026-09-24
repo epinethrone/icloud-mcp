@@ -1,0 +1,23 @@
+name: privacy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                     # the whole history, so every commit in a pull request is checked
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: No private addresses, home paths or secrets
+        run: python dev/privacy_check.py ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
