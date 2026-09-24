@@ -699,18 +699,22 @@ class MailService:
             uv, modseq, uidnext = (info.get(b"UIDVALIDITY"), info.get(b"HIGHESTMODSEQ"), info.get(b"UIDNEXT"))
             if modseq is None or uv is None or uidnext is None:
                 raise MailError("This mail server does not report changes (no CONDSTORE); use mail_search with since instead.")
-            token = f"v1:{int(uv)}:{int(modseq)}:{int(uidnext)}"
+            token = f"v2:{folder}:{int(uv)}:{int(modseq)}:{int(uidnext)}"
             base = {"notice": UNTRUSTED_NOTICE, "folder": folder, "uidvalidity": int(uv), "token": token}
             if not since:
                 unread = len(c.search(["UNSEEN"]))
                 return {**base, "first_call": True, "messages": info.get(b"EXISTS"), "unread": unread,
                         "note": "Keep this token and pass it as 'since' next time to get only what changed."}
             try:
-                version, old_uv, old_modseq, old_next = since.split(":")
-                assert version == "v1"
+                version, rest = since.split(":", 1)
+                old_folder, old_uv, old_modseq, old_next = rest.rsplit(":", 3)
                 old_uv, old_modseq, old_next = int(old_uv), int(old_modseq), int(old_next)
-            except (ValueError, AssertionError) as e:
+            except ValueError as e:
                 raise MailError("That token is not one this tool returned; call without 'since' to start.") from e
+            if version != "v2":
+                raise MailError("That token is not one this tool returned; call without 'since' to start.")
+            if old_folder != folder:
+                raise MailError(f"That token belongs to the folder '{old_folder}', not '{folder}'. Use each folder's own token.")
             if old_uv != int(uv):
                 return {**base, "start_over": True, "note": "The server renumbered this folder since that token, so changes cannot be "
                                                             "listed. Use this new token from now on and search the folder normally."}
