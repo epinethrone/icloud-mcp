@@ -43,6 +43,8 @@
 !assets/logo.svg
 !assets/logo-512.png
 !assets/social-preview.png
+!assets/readme/
+!assets/readme/*.svg
 !tests/
 !tests/*.py
 !tests/*.js
