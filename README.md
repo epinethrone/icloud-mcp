@@ -415,6 +415,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `MCP_HOST`, `MCP_PORT`, `MCP_EXTRA_ALLOWED_HOSTS` | 0.0.0.0, 8000, empty | Bind address and extra allowed `Host` headers |
 | `MCP_STATELESS` | true | No server-side MCP sessions, so a restart never breaks a connected client ("Missing session ID") |
 | `TOOL_TIMEOUT_SECONDS` | 90 | A tool call running longer is abandoned with an error instead of hanging |
+| `IMAP_POOL_SIZE`, `IMAP_IDLE_SECONDS` | 2, 600 | Logged-in mail connections kept for reuse (0 = log in on every call), and how long an unused one is kept |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
@@ -494,7 +495,7 @@ These only show up against Apple's real servers, never against local test server
 
 - Reminders, Notes and iCloud Drive need the Mac helper and a Mac that is on. Contact photos and notes are deliberately not exposed to agents, and deleting a contact is permanent.
 - One identity: aliases can't be used as the From address. Attachments that aren't text come back as base64 and are size-capped.
-- Each tool call opens a fresh connection, about 1.5 to 5 seconds per call against iCloud.
+- Mail calls reuse up to two logged-in connections, which saves the login (about a second) on each call after the first; calendar and contacts calls take about 1.5 to 5 seconds against iCloud.
 - Claude doesn't show custom icons for custom connectors yet ([open request](https://github.com/anthropics/claude-ai-mcp/issues/152)). The server serves and advertises the project logo anyway, so clients that do show icons, and your browser tab on the approval and outbox pages, display it.
 
 </details>
