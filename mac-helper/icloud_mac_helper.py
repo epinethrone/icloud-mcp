@@ -32,7 +32,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
@@ -192,7 +192,28 @@ def build_command(op, args):
     return [OSASCRIPT, "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
 
 
+_NOTES_LIST_SECONDS = 30.0      # Notes listing through JXA is the slow path (0.5 to 22 s); a repeat within this time is served from here
+_NOTES_WRITES = frozenset({"note_create", "note_delete", "note_move", "note_update", "note_folder_create"})
+_NOTES_CACHE = {}
+
+
 def run_op(op, args, timeout=60, extra=None):
+    """run_one(), with notes_list results kept for _NOTES_LIST_SECONDS and dropped by any Notes write."""
+    if op in _NOTES_WRITES:
+        _NOTES_CACHE.clear()
+    if op == "notes_list" and extra is None:
+        key = json.dumps(args, sort_keys=True, default=str)
+        hit = _NOTES_CACHE.get(key)
+        if hit is not None and time.monotonic() - hit[0] < _NOTES_LIST_SECONDS:
+            return hit[1]
+        out = run_one(op, args, timeout)
+        if out[0]:
+            _NOTES_CACHE[key] = (time.monotonic(), out)
+        return out
+    return run_one(op, args, timeout, extra)
+
+
+def run_one(op, args, timeout=60, extra=None):
     """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
     `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
     if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS and op not in SHORTCUT_OPS):
@@ -266,23 +287,64 @@ def _connect(cfg, timeout):
     return conn
 
 
-def request(cfg, method, path, payload=None, timeout=40):
-    conn = _connect(cfg, timeout)
-    try:
+class Link(object):
+    """One pinned HTTPS connection to the server, kept open across polls and results: one TLS handshake per session instead
+    of two per job. http.client's own silent reconnect is switched off (auto_open = 0), because it would skip the certificate
+    pinning in _connect(); every new connection goes through _connect(). A reused connection that turns out to be dead is
+    replaced once; a fresh one that fails is a real failure."""
+
+    def __init__(self):
+        self.conn, self.key = None, None
+
+    def close(self):
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self.conn = None
+
+    def request(self, cfg, method, path, payload=None, timeout=40):
+        key = (cfg["server"], _norm_fp(cfg["fingerprint"]), cfg["token"])
         body = None if payload is None else json.dumps(payload).encode()
         headers = {"Authorization": "Bearer " + cfg["token"], "Content-Type": "application/json", "User-Agent": "icloud-mac-helper/" + VERSION}
-        conn.request(method, path, body=body, headers=headers)
-        resp = conn.getresponse()
-        raw = resp.read(MAX_RESPONSE + 1)
-        if len(raw) > MAX_RESPONSE:
-            raise HelperError("the server response was too large")
-        try:
-            data = json.loads(raw.decode("utf-8")) if raw else None
-        except ValueError:
-            data = None
-        return resp.status, data
-    finally:
-        conn.close()
+        for attempt in (0, 1):
+            fresh = self.conn is None or self.key != key
+            if fresh:
+                self.close()
+                self.conn = _connect(cfg, timeout)
+                self.conn.auto_open = 0
+                self.key = key
+            try:
+                self.conn.timeout = timeout
+                if self.conn.sock is not None:
+                    self.conn.sock.settimeout(timeout)
+                self.conn.request(method, path, body=body, headers=headers)
+                resp = self.conn.getresponse()
+                raw = resp.read(MAX_RESPONSE + 1)
+                if resp.will_close:
+                    self.close()
+            except (OSError, ssl.SSLError, http.client.HTTPException):
+                self.close()
+                if fresh or attempt:
+                    raise
+                continue                                               # the kept connection had died: once more, freshly
+            if len(raw) > MAX_RESPONSE:
+                self.close()
+                raise HelperError("the server response was too large")
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else None
+            except ValueError:
+                data = None
+            return resp.status, data
+        raise HelperError("could not reach the server")               # pragma: no cover
+
+
+_LINK = Link()
+
+
+def request(cfg, method, path, payload=None, timeout=40):
+    return _LINK.request(cfg, method, path, payload, timeout)
 
 
 def handle_one(cfg, runner=run_op, wait=25):
@@ -300,11 +362,27 @@ def handle_one(cfg, runner=run_op, wait=25):
     return "done"
 
 
+_CFG = {"key": None, "cfg": None}
+
+
+def current_config(path=None):
+    """load_config(), re-read only when the file changed (checked by modification time and size on every poll)."""
+    where = path or os.environ.get("ICLOUD_MAC_HELPER_CONFIG") or DEFAULT_CONFIG
+    try:
+        st = os.stat(where)
+        key = (where, st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is None or key != _CFG["key"] or _CFG["cfg"] is None:
+        _CFG["cfg"], _CFG["key"] = load_config(path), key
+    return _CFG["cfg"]
+
+
 def run_forever(cfg_path=None):
     backoff = 2
     while True:
         try:
-            cfg = load_config(cfg_path)
+            cfg = current_config(cfg_path)
             outcome = handle_one(cfg, runner=run_op)
             backoff = 2
             if outcome == "refused":
