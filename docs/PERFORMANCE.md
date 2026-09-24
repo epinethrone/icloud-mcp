@@ -261,7 +261,7 @@ by each tool's own model, not by the published schema.
 
 | | 0.5.0 (65 tools) | after 4b (67 tools) | after 4c |
 |---|---|---|---|
-| schema chars | 51,951 | 54,961 | 37,911 (-27% on 0.5.0, -31% on 4b) |
+| schema chars | 51,951 | 54,961 | 37,956 (-27% on 0.5.0, -31% on 4b) |
 | description chars | 18,006 | 18,740 | 18,740 |
 | instructions chars | 4,331 | 6,143 | 6,143 |
 
@@ -270,7 +270,7 @@ by each tool's own model, not by the published schema.
 | tool | description chars | schema chars |
 |---|---|---|
 | calendar_create_event | 457 | 2881 |
-| calendar_update_event | 331 | 2379 |
+| calendar_update_event | 331 | 2377 |
 | contacts_update | 241 | 2347 |
 | mail_reply | 689 | 1733 |
 | contacts_create | 224 | 1898 |
@@ -281,8 +281,8 @@ by each tool's own model, not by the published schema.
 | mail_forward | 398 | 1258 |
 | calendar_list_events | 518 | 1094 |
 | contacts_search | 738 | 533 |
-| drive_search_content | 464 | 600 |
+| drive_search_content | 464 | 631 |
 | notes_update | 512 | 527 |
 | mail_find_correspondent | 511 | 509 |
 
-**67 tools**: 18,740 description chars, 37,911 schema chars; instructions 6,143 chars.
+**67 tools**: 18,740 description chars, 37,956 schema chars; instructions 6,143 chars.

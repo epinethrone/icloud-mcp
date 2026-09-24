@@ -77,8 +77,10 @@ def test_an_explicit_null_is_still_accepted(mcp):
     ("calendar_create_event", "attendees", "iCloud emails each one an invitation"),
     ("calendar_create_event", "request_id", "never a second copy"),
     ("contacts_create", "request_id", "never a second copy"),
-    ("calendar_delete_event", "occurrence_start", "Omit for the whole series"),
-    ("calendar_update_event", "occurrence_start", "Omit for the whole series"),
+    ("calendar_delete_event", "occurrence_start", "'recurrence_id' if set, else its 'start'. Omit to delete the whole series"),
+    ("calendar_update_event", "occurrence_start", "'recurrence_id' if set, else its 'start'"),
+    ("calendar_rsvp", "occurrence_start", "'recurrence_id' if set, else its 'start'"),
+    ("drive_search_content", "download", "kept on the Mac"),
 ])
 def test_the_safety_sentences_survive(mcp, tool, param, phrase):
     assert phrase in listed(mcp)[tool].input_schema["properties"][param]["description"]
