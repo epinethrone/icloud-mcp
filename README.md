@@ -185,7 +185,7 @@ Claude Desktop: Settings → Developer → Edit Config, add this to `claude_desk
 If Claude Desktop can't find `uvx`, use its full path (`which uvx`). Without uv, `pip install icloud-mcp-server` and use `icloud-mcp` as the command.
 
 > [!TIP]
-> **Fewer tools, better choices.** Clients pick the right tool more reliably from a short list. Add `TOOLS=essential` for a core of 19: search, read and reply to mail; list events, find free time and create or update events; find contacts; the main Reminders, Notes and Drive tools; and the health check. Add exact names to it as needed, for example `TOOLS=essential,mail_move`.
+> **Fewer tools, better choices.** Clients pick the right tool more reliably from a short list. Add `TOOLS=essential` for a core of 19: search, read and reply to mail; list events, find free time and create or update events; find contacts; the main Reminders, Notes and Drive tools; and the health check. Add exact names to it as needed, for example `TOOLS=essential,mail_move`, or pick whole areas: `TOOLS=mail`, `TOOLS=mail,calendar` (also `contacts`, `reminders`, `notes`, `drive`; the health check always stays).
 
 **How sending works locally.** There is no approval page, so with the default `SEND_REQUIRES_APPROVAL=true` every message Claude sends is saved to your **Drafts** folder instead, and the result says so. You review it in Mail and press Send yourself. Set `SEND_REQUIRES_APPROVAL=false` to let Claude send directly; your client's own "ask before use" setting is then the only check.
 
@@ -416,7 +416,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `DEFAULT_TIMEZONE`, `DEFAULT_CALENDAR` | `UTC`, auto | Timezone for times without an offset (an IANA name such as `Europe/Amsterdam`); calendar for new events (else "Calendar" or "Home", else the first) |
 | `ENABLE_MAIL`, `ENABLE_CALENDAR`, `ENABLE_CONTACTS` | true | Switch whole areas off |
 | `ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE` | false | Areas that go through the Mac helper (need `BRIDGE_TOKEN`) |
-| `TOOLS` | all | `essential` and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
+| `TOOLS` | all | `essential`, areas (`mail`, `calendar`, `contacts`, `reminders`, `notes`, `drive`) and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
 | `BRIDGE_HOST` | 127.0.0.1 (0.0.0.0 in the Docker image) | Address the bridge binds to inside the process. Loopback unless the helper's Mac reaches this process over the network |
 | `SHORTCUTS_ALLOW` | empty | Exact names of Shortcuts the assistant may run through the Mac helper, separated by commas (or by `;` when a name contains a comma); the Mac must list them too (see below) |
@@ -439,6 +439,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `CALDAV_POOL_SIZE`, `CALDAV_KEEPALIVE_SECONDS` | 4, 600 | Calendar connections kept for reuse, and how long they are kept warm after the last call (0 = no keep-alive) |
 | `WARMUP_ON_START` | true | Sign in to mail, calendar and contacts in the background right after start, so the first call is fast |
 | `TOOL_WORKERS` | 8 | Tool calls that can run at the same time |
+| `AGENT_NOTES_FILE` | (none) | Your own rules for agents, added to the instructions and served as `icloud://agent-notes` (see `docs/agent-notes.example.md`) |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |

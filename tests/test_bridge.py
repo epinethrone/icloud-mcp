@@ -349,7 +349,7 @@ def test_reminders_list_passes_the_new_arguments_and_shapes_the_answer(s):
 
 
 def test_instructions_mention_the_mac_only_when_enabled(s):
-    assert "REMINDERS / NOTES" in build_instructions(s) and "offline, tell the user" in build_instructions(s)
+    assert "REMINDERS / NOTES" in build_instructions(s) and "if it is offline, say so" in build_instructions(s)
     assert "REMINDERS / NOTES" not in build_instructions(dataclasses.replace(s, enable_reminders=False))
 
 
