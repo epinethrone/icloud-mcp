@@ -231,3 +231,13 @@ def test_delivery_report_reads_icloud_schedule_status():
     out = {}
     _attach_delivery(out, rep)
     assert out["delivery"] == rep and "typo@exmaple.org" in out["delivery_warning"] and "anna" not in out["delivery_warning"]
+
+
+def test_a_rule_that_cannot_be_expanded_refuses_instead_of_guessing(monkeypatch):
+    import dateutil.rrule
+    master = vevents(Obj(series_ical()))[0]
+    assert occurs_in_series(master, datetime(2030, 3, 11, 19, 0, tzinfo=TZ)) is True
+    def boom(*a, **k):
+        raise ValueError("unsupported rule")
+    monkeypatch.setattr(dateutil.rrule, "rrulestr", boom)
+    assert occurs_in_series(master, datetime(2030, 3, 11, 19, 0, tzinfo=TZ)) is False     # unverifiable = refused

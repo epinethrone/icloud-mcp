@@ -516,8 +516,8 @@ def occurs_in_series(master: icalendar.Component, rid: Any) -> bool:
             text = re.sub(r"UNTIL=(\d{8}T\d{6})Z", r"UNTIL=\1", text)
         series = rrulestr(text, dtstart=s)
         return bool(series.between(r - timedelta(seconds=1), r + timedelta(seconds=1), inc=True))
-    except Exception:  # noqa: BLE001 - an exotic rule we cannot expand: trust the caller's occurrence
-        return True
+    except Exception:  # noqa: BLE001 - a rule we cannot expand: refuse rather than act on a date we could not verify
+        return False
 
 
 _SCHEDULE_MEANINGS = {"1": "sent", "2": "delivered", "3": "not sent: iCloud refused the request (often an invalid address)",
