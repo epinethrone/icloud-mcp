@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (20 tools), Calendar (9), Contacts (6), Reminders (6), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (20 tools), Calendar (9), Contacts (6), Reminders (7), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -255,8 +255,8 @@ A connector that can read your mail and act for you is a prompt-injection target
 | Agent sends mail on injected instructions | Sending only **queues** the message for your approval at `/outbox` (locally: saves it to Drafts) | `SEND_REQUIRES_APPROVAL=true` |
 | Agent emails invitations to strangers | Attendee changes are **blocked** | `ALLOW_CALENDAR_INVITES=false` |
 | Agent mails arbitrary addresses | Any address, at most 25 per message | `SEND_ALLOWLIST`, `MAX_RECIPIENTS` |
-| Agent destroys mail or reminders | Delete moves mail to Trash; permanent deletion (mail from Trash, reminders) is off | `ALLOW_PERMANENT_DELETE=false` |
-| Agent destroys notes or files | Notes go to Recently Deleted, Drive files to the Trash. Nothing through the Mac helper is deleted permanently, except reminders (which have no trash) once `ALLOW_PERMANENT_DELETE` is on | always on |
+| Agent destroys mail | Delete moves mail to Trash; deleting from Trash is off | `ALLOW_PERMANENT_DELETE=false` |
+| Agent destroys notes or files | Notes go to Recently Deleted, Drive files to the Trash. Reminders have no trash, so a deleted reminder is gone (it is one line, easily recreated); moving one between lists never deletes it | always |
 | Agent changes anything at all | Everything writable | `READ_ONLY=true` for a read-only connector |
 
 In Claude you can also set the send, reply, forward and delete tools to "ask before use". Anyone who obtains the app-specific password has **full access to mail, calendar and contacts** (Apple offers no narrower scope), so protect the server and its `.env` accordingly.
@@ -277,7 +277,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**64 tools.** 36 for Mail, Calendar, Contacts and the health check, 26 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**65 tools.** 36 for Mail, Calendar, Contacts and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 <details>
 <summary><b>Mail</b> &nbsp;·&nbsp; 20 tools</summary>
@@ -332,9 +332,9 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>Reminders</b> &nbsp;·&nbsp; 6 tools, with the Mac helper</summary>
+<summary><b>Reminders</b> &nbsp;·&nbsp; 7 tools, with the Mac helper</summary>
 
-`reminders_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete` (only with `ALLOW_PERMANENT_DELETE=true`, because Reminders has no Recently Deleted)
+`reminders_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_move` (the same reminder to another list, nothing deleted), `reminders_delete` (Reminders has no Recently Deleted, so this is final)
 
 - Runs through Apple's EventKit: every read is live and takes about 20 to 40 ms, however long your lists are. Only active reminders are returned.
 - List names can repeat across accounts, so tools accept a `list_id` and refuse an ambiguous name. Due dates are validated as real dates (a bare date means 09:00 local time).
@@ -428,7 +428,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `ALLOW_CALENDAR_INVITES` | false | Allow attendees (iCloud then emails invitations, updates and cancellations) |
 | `SEND_ALLOWLIST` | empty | Only these addresses or domains may receive mail (`@example.org,friend@example.com`) |
 | `MAX_RECIPIENTS` | 25 | Per message |
-| `ALLOW_PERMANENT_DELETE` | false | Allow deleting mail from Trash, and deleting reminders (Reminders has no Recently Deleted) |
+| `ALLOW_PERMANENT_DELETE` | false | Allow deleting mail from Trash |
 | `SAVE_SENT_COPY` | true | Copy sent mail to Sent (iCloud doesn't do it itself) |
 | `MAX_BODY_CHARS`, `MAX_ATTACHMENT_BYTES` | 30000, 5 MiB | Result size caps |
 | `MCP_PUBLIC_URL`, `MCP_OWNER_PASSWORD` | required when hosted | Public https address; owner password (12+ characters) |

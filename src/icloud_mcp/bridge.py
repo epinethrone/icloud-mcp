@@ -60,6 +60,7 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
                         "clear_due": ("bool", False, 0), "priority": ("int", False, 9)},
     "reminder_complete": {"id": ("str", True, 500), "completed": ("bool", False, 0)},
     "reminder_delete": {"id": ("str", True, 500)},
+    "reminder_move": {"id": ("str", True, 500), "list": ("str", False, 200), "list_id": ("str", False, 200)},
     # Notes
     "note_folders": {},
     "notes_list": {"folder": ("str", False, 200), "query": ("str", False, 200), "search_body": ("bool", False, 0), "limit": ("int", False, 100)},

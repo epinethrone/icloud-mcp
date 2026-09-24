@@ -1,4 +1,4 @@
-// The six Reminders operations of icloud-mac-helper, through EventKit. Built on the Mac by install.sh (never shipped compiled), with
+// The seven Reminders operations of icloud-mac-helper, through EventKit. Built on the Mac by install.sh (never shipped compiled), with
 // Info.plist embedded in __TEXT,__info_plist and an ad-hoc signature carrying the same bundle id: without that usage string macOS 27
 // shows no permission prompt at all and the request silently never succeeds.
 //
@@ -322,6 +322,30 @@ case "reminder_delete":
     let title = r.title ?? ""
     do { try store.remove(r, commit: true) } catch { fail("could not delete: \(error.localizedDescription)") }
     printJSON(["deleted": bareId(id), "title": title])
+
+case "reminder_move":
+    // Moves the SAME reminder to another list (its id, notes, due date, priority and completion stay), so nothing is deleted and
+    // recreated. EventKit cannot move an item between accounts (sources); that is refused with a clear message instead.
+    ensureAccess()
+    guard let id = args["id"] as? String else { fail("id is required") }
+    guard args["list_id"] as? String != nil || args["list"] as? String != nil else { fail("list or list_id is required") }
+    let target = findList(id: args["list_id"] as? String, name: args["list"] as? String)
+    let r = findReminder(id: id)
+    let from = r.calendar.title
+    if r.calendar.calendarIdentifier == target.calendarIdentifier {
+        var out = reminderJSON(r); out["moved"] = false; out["from"] = from
+        printJSON(out)
+        exit(0)
+    }
+    guard target.allowsContentModifications else { fail("the list '\(target.title)' is read-only") }
+    guard r.calendar.source.sourceIdentifier == target.source.sourceIdentifier else {
+        fail("'\(from)' and '\(target.title)' are in different accounts (\(r.calendar.source.title), \(target.source.title)); "
+             + "EventKit cannot move a reminder between accounts: create a copy with reminders_create, then delete the original")
+    }
+    r.calendar = target
+    saveOrFail(r)
+    var out = reminderJSON(r); out["moved"] = true; out["from"] = from
+    printJSON(out)
 
 default:
     fail("unknown operation \(op)")

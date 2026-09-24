@@ -1013,15 +1013,26 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     """Mark a reminder done, or not done."""
                     return {"reminder": bridge.call("reminder_complete", {"id": id, "completed": completed})}
 
-                if s.allow_permanent_delete:     # EventKit has no Recently Deleted: a removed reminder is gone, so this needs the same opt-in as permanent mail deletion
+                @mcp.tool(annotations=_IDEMPOTENT_WRITE)
+                @_guard
+                def reminders_move(
+                    id: Annotated[str, _d("Reminder id from reminders_list.")],
+                    list_name: Annotated[str | None, _d("List to move it to (name from reminders_lists). An error if several lists share the name.")] = None,
+                    list_id: Annotated[str | None, _d("List to move it to, by id from reminders_lists (use it when names repeat).")] = None,
+                ) -> dict[str, Any]:
+                    """Move a reminder to another list. The same reminder moves, keeping its title, notes, due date, priority and
+                    state; nothing is deleted or recreated. Lists in different accounts cannot be moved between."""
+                    if not (list_name or list_id):
+                        raise ToolError("Pass list_name or list_id: the list to move the reminder to.")
+                    return {"reminder": bridge.call("reminder_move", _given(id=id, list=list_name, list_id=list_id))}
 
-                    @mcp.tool(annotations=_DESTRUCTIVE)
-                    @_guard
-                    def reminders_delete(id: Annotated[str, _d("Reminder id from reminders_list.")]) -> dict[str, Any]:
-                        """Permanently delete a reminder. This cannot be undone (Reminders has no Recently Deleted), which is why the
-                        operator had to enable ALLOW_PERMANENT_DELETE. Use only when the user asks to remove that exact reminder;
-                        reminders_complete is the reversible alternative."""
-                        return {"deleted": bridge.call("reminder_delete", {"id": id})}
+                # On by default, unlike permanent mail deletion: a reminder is a single line that is easily recreated.
+                @mcp.tool(annotations=_DESTRUCTIVE)
+                @_guard
+                def reminders_delete(id: Annotated[str, _d("Reminder id from reminders_list.")]) -> dict[str, Any]:
+                    """Delete a reminder. Reminders has no Recently Deleted, so it cannot be recovered. Use only when the user asks to
+                    remove that exact reminder; reminders_complete marks it done instead, and reminders_move puts it on another list."""
+                    return {"deleted": bridge.call("reminder_delete", {"id": id})}
 
         if s.enable_notes:
 
