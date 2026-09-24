@@ -55,6 +55,8 @@
 !dev/*.py
 !dev/*.conf
 !dev/*.sh
+!docs/
+!docs/*.md
 
 # Belt and braces: these must never be tracked, whatever the rules above say.
 .env
