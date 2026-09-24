@@ -286,3 +286,20 @@ by each tool's own model, not by the published schema.
 | mail_find_correspondent | 511 | 509 |
 
 **67 tools**: 18,740 description chars, 37,956 schema chars; instructions 6,143 chars.
+
+## Live check (0.6.0, 24 September 2026)
+
+`dev/bench.py --live` against a real iCloud account from the Netherlands, 5 runs, scratch calendar for the write test. Compared
+with the live reference measured by hand on 22 September:
+
+| | 22 September | 0.6.0 |
+|---|---|---|
+| `calendar_list_events` 30 days | 3.1 s | 0.70 s |
+| `calendar_list_events` 7 days | 2.6 s | 0.78 s |
+| `calendar_list_calendars`, warm | 0.64 s | under 1 ms |
+| create + update + delete one event | 4.8 s | 3.7 s |
+| `contacts_search` warm / cold | 2 ms / 1.7 s | 1 ms / 1.8 s |
+| `mail_search` 20 | | 1.1 s |
+
+With 20 seconds between calls, 10 mail searches needed one login in total. The calendar keep-alive kept most calls warm,
+but a few still reconnected (slowest 5.5 s).
