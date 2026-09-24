@@ -32,7 +32,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")

@@ -1,6 +1,7 @@
 """The tool surface every client loads: slim, still valid JSON Schema, still accepting an explicit null, and still carrying the
 sentences that keep an agent from doing damage."""
 import asyncio
+import json
 
 import jsonschema
 import pytest
@@ -39,7 +40,6 @@ def leftovers(node):
 
 
 def test_every_schema_is_valid_and_the_total_stays_in_budget(mcp):
-    import json
     total = 0
     for tool in listed(mcp).values():
         jsonschema.Draft202012Validator.check_schema(tool.input_schema)
@@ -84,3 +84,58 @@ def test_an_explicit_null_is_still_accepted(mcp):
 ])
 def test_the_safety_sentences_survive(mcp, tool, param, phrase):
     assert phrase in listed(mcp)[tool].input_schema["properties"][param]["description"]
+
+
+# ------------------------------------------------------------------------------------------------ names
+PREFIXES = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "shortcuts", "icloud")
+VERBS = {"append", "check", "complete", "create", "delete", "extract", "find", "forward", "get", "list", "mark", "move", "read",
+         "reply", "rsvp", "run", "search", "send", "trash", "undo", "unsubscribe", "update", "write"}
+
+
+def test_every_tool_name_is_prefix_verb_noun(mcp):
+    for name in listed(mcp):
+        prefix, _, rest = name.partition("_")
+        assert prefix in PREFIXES and rest.split("_")[0] in VERBS, name
+
+
+def served_text(server):
+    """Everything an agent reads: instructions, tool and parameter descriptions, and every prompt as rendered."""
+    parts = [server.instructions or ""]
+    for tool in asyncio.run(server.list_tools()):
+        parts += [tool.name, tool.description or "", json.dumps(tool.input_schema)]
+    for prompt in asyncio.run(server.list_prompts()):
+        args = {a.name: "x" for a in (prompt.arguments or []) if a.required}
+        parts.append(str(asyncio.run(server.get_prompt(prompt.name, args))))
+    return "\n".join(parts)
+
+
+def test_no_old_tool_name_is_served_anywhere(mcp, monkeypatch):
+    import dataclasses
+    import re
+
+    from icloud_mcp import bridge as bridge_mod
+    from icloud_mcp.server import RENAMED
+    old = re.compile(r"\b(?:" + "|".join(RENAMED) + r")\b")
+    s = Settings.from_env()
+    for extra in ({}, {"read_only": True, "allow_send": False}, {"require_approval": False}, {"local_mode": True},
+                  {"enable_reminders": False, "enable_notes": False, "enable_drive": False}):
+        server, _ = create_server(dataclasses.replace(s, **extra))
+        found = set(old.findall(served_text(server)))
+        assert not found - {"drive_info"}, (found, extra)
+    bridge_source = open(bridge_mod.__file__).read()
+    assert not set(old.findall(bridge_source)) - {"drive_info"}          # drive_info stays the helper operation's name
+
+
+def test_tools_setting_still_accepts_the_old_names(mcp, caplog):
+    import logging
+
+    from icloud_mcp.server import apply_tool_filter
+    server, _ = create_server(Settings.from_env())
+    with caplog.at_level(logging.WARNING):
+        apply_tool_filter(server, ("mail_changes", "icloud_now", "mail_search"))
+    assert set(listed(server)) == {"mail_list_changes", "icloud_get_time", "mail_search"}
+    assert "renamed to mail_list_changes" in caplog.text
+
+
+def test_the_stale_name_check_would_see_a_leftover(mcp):
+    assert "mail_list_senders" in served_text(mcp) and "replies" in served_text(mcp).lower()   # tools and prompts are really read

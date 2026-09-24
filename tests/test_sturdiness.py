@@ -233,4 +233,4 @@ def test_the_bridge_gives_up_before_the_tool_timeout_so_its_message_arrives(s):
     assert bridge.timeout == 3                                                   # min(60, 8 - 5)
     bridge.next_job({}, 0)                                                       # the Mac was seen, then never picks anything up
     with pytest.raises(Exception, match="did not pick up the request"):
-        asyncio.run(mcp.call_tool("reminders_lists", {}))
+        asyncio.run(mcp.call_tool("reminders_list_lists", {}))

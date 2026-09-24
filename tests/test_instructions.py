@@ -59,7 +59,7 @@ def test_the_rules_follow_the_settings(s):
     assert "read-only" in ro and "mail_reply" not in ro and "SENDING" not in ro and "mail_reply" not in tools
     only_mail, tools = served(dataclasses.replace(s, tools=("mail",)))
     assert "calendar_create_event" not in only_mail and "icloud_check_health" in tools
-    assert all(t.startswith("mail_") or t in ("icloud_check_health", "mac_helper_status") for t in tools)
+    assert all(t.startswith("mail_") or t in ("icloud_check_health", "icloud_get_helper_status") for t in tools)
 
 
 def test_owner_notes_are_appended_capped_cleaned_and_served_as_a_resource(s, tmp_path, caplog):

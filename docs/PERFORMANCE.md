@@ -69,7 +69,7 @@ of them newsletters, six with a 300 KB PDF), 20 archived, 10 sent, five calendar
 | mail_reply | 689 | 2515 |
 | contacts_update | 241 | 2961 |
 | contacts_create | 224 | 2617 |
-| mail_bulk_action | 550 | 1907 |
+| mail_run_bulk_action | 550 | 1907 |
 | mail_send | 688 | 1684 |
 | mail_search | 379 | 1969 |
 | mail_forward | 398 | 1805 |
@@ -249,7 +249,7 @@ for every combination of areas and modes); the security rules always come first;
 follow, capped at 8,000 characters and also served as the `icloud://agent-notes` resource. Five prompts cover the common
 workflows. Instructions grew from 4,331 to 6,143 characters (cap 6,500).
 
-**4b, tools that replace hand-written rules**: `icloud_now`, `mail_awaiting_reply`, conflict and duplicate checks on
+**4b, tools that replace hand-written rules**: `icloud_get_time`, `mail_list_awaiting_reply`, conflict and duplicate checks on
 `calendar_create_event`, `needs_reply` and `starting_within_minutes` on `calendar_list_events`, `add_attendees` /
 `remove_attendees`, `people_only` / `unanswered_only` / `since_hours` on `mail_search`, `add_emails` / `add_phones` on
 `contacts_update`. 67 tools; the parameter schemas reached 54,961 characters.
@@ -276,7 +276,7 @@ by each tool's own model, not by the published schema.
 | contacts_create | 224 | 1898 |
 | mail_search | 402 | 1716 |
 | mail_send | 688 | 1204 |
-| mail_bulk_action | 550 | 1285 |
+| mail_run_bulk_action | 550 | 1285 |
 | calendar_find_free_time | 468 | 1326 |
 | mail_forward | 398 | 1258 |
 | calendar_list_events | 518 | 1094 |
@@ -303,3 +303,9 @@ with the live reference measured by hand on 22 September:
 
 With 20 seconds between calls, 10 mail searches needed one login in total. The calendar keep-alive kept most calls warm,
 but a few still reconnected (slowest 5.5 s).
+
+## 0.7.0: names
+
+Eleven tools renamed to a strict `area_verb_noun` pattern (tested against a fixed verb list), attachment sources described on
+`mail_send` / `mail_reply`, and a line in the instructions saying what the Mac helper adds when its areas are off. Schema
+37,900 characters (budget 38,000), instructions 6,153.

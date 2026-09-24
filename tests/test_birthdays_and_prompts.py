@@ -66,4 +66,4 @@ def test_prompts_follow_the_enabled_areas_and_always_ask_first(s):
 
 def test_the_birthday_tool_is_registered_with_contacts(s):
     mcp, _ = create_server(s)
-    assert "contacts_upcoming_birthdays" in {t.name for t in asyncio.run(mcp.list_tools())}
+    assert "contacts_list_birthdays" in {t.name for t in asyncio.run(mcp.list_tools())}
