@@ -73,6 +73,8 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     # iCloud Drive (paths are relative to the Drive; see ops/drive.py)
     "drive_list": {"path": ("str", False, 1000), "include_hidden": ("bool", False, 0), "limit": ("int", False, 1000)},
     "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
+    "drive_search_content": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 100),
+                             "download": ("bool", False, 0)},
     "drive_info": {"path": ("str", True, 1000)},
     "drive_read": {"path": ("str", True, 1000), "max_chars": ("int", False, 200000), "offset": ("int", False, 50000000)},
     "drive_get_file": {"path": ("str", True, 1000), "max_bytes": ("int", False, 7340032)},
