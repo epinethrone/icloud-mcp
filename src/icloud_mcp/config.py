@@ -107,6 +107,7 @@ class Settings:
     tools: tuple[str, ...] = ()   # TOOLS: 'essential' and/or tool names to expose; empty = every tool of the enabled areas
     imap_pool_size: int = 2       # IMAP_POOL_SIZE: logged-in IMAP connections kept for reuse (0 = log in for every call)
     imap_idle_seconds: int = 600  # IMAP_IDLE_SECONDS: a pooled connection unused for longer is closed instead of reused
+    shortcuts_allow: tuple[str, ...] = ()   # SHORTCUTS_ALLOW: exact Shortcut names the assistant may run (the Mac keeps its own list too)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -170,12 +171,13 @@ class Settings:
             tools=tuple(_list("TOOLS")),
             imap_pool_size=max(0, min(_int("IMAP_POOL_SIZE", 2), 8)),
             imap_idle_seconds=max(30, _int("IMAP_IDLE_SECONDS", 600)),
+            shortcuts_allow=tuple(n.strip() for n in _str("SHORTCUTS_ALLOW").split(";" if ";" in _str("SHORTCUTS_ALLOW") else ",") if n.strip()),
         )
 
     # ------------------------------------------------------------------
     @property
     def bridge_enabled(self) -> bool:
-        return self.enable_reminders or self.enable_notes or self.enable_drive
+        return self.enable_reminders or self.enable_notes or self.enable_drive or bool(self.shortcuts_allow)
 
     @property
     def public_host(self) -> str:
@@ -194,7 +196,7 @@ class Settings:
     def _validate_bridge_and_areas(self) -> None:
         if self.bridge_enabled:
             if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
-                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE need BRIDGE_TOKEN: a random secret of at least 32 characters "
+                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
                                  "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
             if self.owner_password and self.bridge_token == self.owner_password:
                 raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")

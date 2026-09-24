@@ -1100,6 +1100,31 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     attachments, and notes in Recently Deleted. The old version is saved as a backup on the Mac first."""
                     return _note_change("replace", id, title, content_hash, text)
 
+        if s.shortcuts_allow and writable:
+            allowed_names = list(s.shortcuts_allow)
+
+            @mcp.tool(annotations=_READ)
+            @_guard
+            def shortcuts_list() -> dict[str, Any]:
+                """The Shortcuts the owner allows the assistant to run, by exact name. Nothing else on the Mac can be run."""
+                return {"allowed": allowed_names,
+                        "note": "The Mac keeps its own list as well; a name must be on both to run."}
+
+            @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True))
+            @_guard
+            def shortcuts_run(
+                name: Annotated[str, _d("Exact name of an allowed shortcut, from shortcuts_list.")],
+                input: Annotated[str | None, _d("Optional text passed to the shortcut as its input.")] = None,
+            ) -> dict[str, Any]:
+                """Run one of the owner's allowed Shortcuts on their Mac and return its text output. A shortcut can do anything it
+                was built to do (send messages, control devices, change settings), so run one only when the user asked for it or
+                for exactly that purpose. Only names from shortcuts_list work."""
+                if name not in allowed_names:
+                    return {"ran": False, "reason": f"'{name}' is not an allowed shortcut. Allowed: {', '.join(allowed_names)}."}
+                got = bridge.call("shortcut_run", _given(name=name, input=input))
+                found = warnings_for(str(got.get("output") or "")) if isinstance(got, dict) else []
+                return {"notice": _MAC_NOTICE, **got, **({"safety_warnings": found} if found else {})}
+
         if s.enable_drive:
             @mcp.tool(annotations=_READ)
             @_guard

@@ -73,6 +73,8 @@ OPS = {
     "drive_mkdir": {"path": ("str", True, 1000)},
     "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
     "drive_trash": {"path": ("str", True, 1000)},
+    # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
+    "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
 # Reminders: one EventKit binary, one process per operation (measured ~21 ms fixed cost, 20-40 ms per operation end to end, against
 # 0.5-22 s for the JXA scripts, which scan a whole list per request). There is deliberately NO fallback to the JXA Reminders scripts:
@@ -83,6 +85,9 @@ EVENTKIT_BIN = os.path.join(HERE, "bin", "reminders-eventkit")
 # iCloud Drive: plain file operations, run by Apple's own Python (the one running this helper) from a fixed script with one JSON argument.
 DRIVE_SCRIPT = os.path.join(OPS_DIR, "drive.py")
 DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
+# Shortcuts: one fixed script, run by the same Apple Python, which checks the Mac's own allowlist before `shortcuts run`.
+SHORTCUT_SCRIPT = os.path.join(OPS_DIR, "shortcut.py")
+SHORTCUT_OPS = frozenset({"shortcut_run"})
 EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete"})
 REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
 OP_FILES = {
@@ -180,19 +185,21 @@ def build_command(op, args):
         return [EVENTKIT_BIN, op, payload]
     if op in DRIVE_OPS:
         return [sys.executable, "-I", DRIVE_SCRIPT, op, payload]
+    if op in SHORTCUT_OPS:
+        return [sys.executable, "-I", SHORTCUT_SCRIPT, op, payload]
     return ["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
 
 
 def run_op(op, args, timeout=60, extra=None):
     """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
     `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
-    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS):
+    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS and op not in SHORTCUT_OPS):
         return False, None, "unknown operation"
     try:
         clean = validate_args(op, args)
     except HelperError as e:
         return False, None, str(e)
-    if op in DRIVE_OPS:                                                   # how long a read may wait for an offloaded file
+    if op in DRIVE_OPS or op in SHORTCUT_OPS:                             # how long the script may take within the job
         clean = dict(clean, budget=max(1, timeout - 10))
     if extra:
         clean = dict(clean, **extra)

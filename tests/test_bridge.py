@@ -57,7 +57,7 @@ def test_the_real_operation_table_is_exactly_the_reminders_notes_and_drive_opera
     assert set(bridge_mod.OPS) == {"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete",
                                    "note_folders", "notes_list", "note_read", "note_create", "note_delete",
                                    "note_folder_create", "note_move", "note_update",
-                                   "drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file", "drive_write", "drive_mkdir", "drive_move", "drive_trash"}
+                                   "drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file", "drive_write", "drive_mkdir", "drive_move", "drive_trash", "shortcut_run"}
     assert validate_args("reminder_lists", None) == {} and validate_args("reminders_list", {"query": "x", "limit": 5})["limit"] == 5
 
 
