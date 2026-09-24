@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 from datetime import date, timedelta
+from html import escape as html_escape
 from typing import Any, Iterator
 from urllib.parse import quote, urljoin, urlsplit
 from xml.etree import ElementTree as ET
@@ -35,6 +36,10 @@ NO_EMAIL_NOTE = "Some contacts have no email address on file. Never guess one: a
 
 _NS = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:carddav", "cs": "http://calendarserver.org/ns/"}
 _CACHE_SECONDS = 120        # re-check freshness (cheap ctag request) at most this often
+# After an edit elsewhere, an address book this size or larger is refreshed by change detection (ETags, then only the changed
+# cards); a smaller one is simply downloaded again in one request, which measured faster (115 cards on iCloud: 0.64 s for the
+# download against 0.77 s for the two requests change detection needs).
+_CHANGES_FROM_CARDS = 300
 _MAX_LIMIT = 50
 
 
@@ -178,13 +183,26 @@ def _digits(s: str) -> str:
     return re.sub(r"\D", "", s)
 
 
+def _indexed(c: dict[str, Any]) -> dict[str, Any]:
+    """The normalised fields search compares against, worked out once per card when it is loaded (kept under '_n')."""
+    n = c.get("_n")
+    if n is None:
+        name = _norm(c["name"])
+        n = c["_n"] = {
+            "name": name,
+            "words": name.split() + _norm(c["nickname"]).split(),
+            "fields_name": " ".join([name, _norm(c["given_name"]), _norm(c["family_name"]), _norm(c["nickname"])]),
+            "org": _norm(c["organization"]),
+            "emails": [_norm(e["address"]) for e in c["emails"]],
+            "phones": [_digits(p["number"]) for p in c["phones"]],
+            "all_words": _name_words(c),
+        }
+    return n
+
+
 def _score(c: dict[str, Any], tokens: list[str], full: str) -> int:
-    name = _norm(c["name"])
-    words = name.split() + _norm(c["nickname"]).split()
-    fields_name = " ".join([name, _norm(c["given_name"]), _norm(c["family_name"]), _norm(c["nickname"])])
-    org = _norm(c["organization"])
-    emails = [_norm(e["address"]) for e in c["emails"]]
-    phones = [_digits(p["number"]) for p in c["phones"]]
+    n = _indexed(c)
+    name, words, fields_name, org, emails, phones = n["name"], n["words"], n["fields_name"], n["org"], n["emails"], n["phones"]
     total = 0
     if full and full == name:
         total += 100
@@ -506,28 +524,61 @@ class ContactsService:
         except ContactsError:
             return None                                              # freshness check is best-effort
 
+    def _cards(self, r: httpx.Response, book: str) -> list[dict[str, Any]]:
+        out = []
+        for resp in self._xml(r).findall("d:response", _NS):
+            data = resp.find(".//c:address-data", _NS)
+            if data is None or not data.text:
+                continue
+            try:
+                card = parse_vcard(data.text)
+            except Exception:  # noqa: BLE001 - one malformed card must not hide the rest
+                log.warning("Skipping an unparseable vCard")
+                continue
+            if card:
+                card["_href"] = urljoin(str(r.url), resp.findtext("d:href", "", _NS))
+                card["_etag"] = resp.findtext(".//d:getetag", None, _NS)
+                card["_book"] = book
+                _indexed(card)
+                out.append(card)
+        return out
+
+    @staticmethod
+    def _sorted(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        by_uid = {c["uid"]: c for c in cards}
+        return sorted(by_uid.values(), key=lambda c: _indexed(c)["name"])
+
     def _fetch(self, client: httpx.Client, books: list[str]) -> list[dict[str, Any]]:
         body = ('<c:addressbook-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">'
                 "<d:prop><d:getetag/><c:address-data/></d:prop></c:addressbook-query>")
-        out: dict[str, dict[str, Any]] = {}
+        cards: list[dict[str, Any]] = []
         for book in books:
-            r = self._dav(client, "REPORT", book, body, "1")
-            for resp in self._xml(r).findall("d:response", _NS):
-                data = resp.find(".//c:address-data", _NS)
-                if data is None or not data.text:
-                    continue
-                try:
-                    card = parse_vcard(data.text)
-                except Exception:  # noqa: BLE001 - one malformed card must not hide the rest
-                    log.warning("Skipping an unparseable vCard")
-                    continue
-                if card:
-                    href = resp.findtext("d:href", "", _NS)
-                    card["_href"] = urljoin(str(r.url), href)
-                    card["_etag"] = resp.findtext(".//d:getetag", None, _NS)
-                    card["_book"] = book
-                    out[card["uid"]] = card
-        return sorted(out.values(), key=lambda c: _norm(c["name"]))
+            cards += self._cards(self._dav(client, "REPORT", book, body, "1"), book)
+        return self._sorted(cards)
+
+    def _changed(self, client: httpx.Client, book: str, cached: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The book's cards after an edit elsewhere, downloading only what changed: every card's ETag (one PROPFIND), then
+        the new and changed cards in one addressbook-multiget. Cards whose ETag is unchanged are kept as they are, cards that
+        are gone are dropped. Raises ContactsError when the server does not play along; the caller then downloads the book."""
+        r = self._dav(client, "PROPFIND", book, '<d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>', "1")
+        now: dict[str, str] = {}
+        for resp in self._xml(r).findall("d:response", _NS):
+            href = urljoin(str(r.url), resp.findtext("d:href", "", _NS))
+            etag = resp.findtext(".//d:getetag", None, _NS)
+            if etag and href.rstrip("/") != urljoin(str(r.url), book).rstrip("/"):
+                now[href] = etag
+        old = {c["_href"]: c for c in cached if c.get("_book") == book}
+        kept = [c for h, c in old.items() if c.get("_etag") and now.get(h) == c["_etag"]]
+        wanted = [h for h, e in now.items() if h not in old or old[h].get("_etag") != e]
+        fetched: list[dict[str, Any]] = []
+        for i in range(0, len(wanted), 100):
+            hrefs = "".join(f"<d:href>{html_escape(urlsplit(h).path)}</d:href>" for h in wanted[i:i + 100])
+            body = ('<c:addressbook-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">'
+                    f"<d:prop><d:getetag/><c:address-data/></d:prop>{hrefs}</c:addressbook-multiget>")
+            fetched += self._cards(self._dav(client, "REPORT", book, body, "1"), book)
+        if len(fetched) < len(wanted) - sum(1 for h in wanted if h.endswith("/")):
+            raise ContactsError("The address book did not return every changed card.")
+        return kept + fetched
 
     def _all(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -544,6 +595,18 @@ class ContactsService:
                         if self._cache and all(ctags) and ctags == self._cache[1]:
                             self._cache = (now, ctags, self._cache[2])        # unchanged on the server: reuse
                             return self._cache[2]
+                        if self._cache and len(self._cache[1]) == len(ctags) and len(self._cache[2]) >= _CHANGES_FROM_CARDS:
+                            cached = self._cache[2]
+                            try:                                              # only the books that changed, only their changed cards
+                                cards: list[dict[str, Any]] = []
+                                for book, new, old in zip(self._books, ctags, self._cache[1]):
+                                    mine = [c for c in cached if c.get("_book") == book]
+                                    cards += mine if (new and new == old) else self._changed(client, book, mine)
+                                contacts = self._sorted(cards)
+                                self._cache = (now, ctags, contacts)
+                                return contacts
+                            except ContactsError:
+                                log.info("Contacts change detection failed; downloading the address book")
                         contacts = self._fetch(client, self._books)
                         self._cache = (now, ctags, contacts)
                         return contacts
@@ -553,6 +616,17 @@ class ContactsService:
                         self._books = []                                      # stale address-book URL: discover again once
             raise ContactsError("Could not load contacts.")                    # pragma: no cover
 
+    def _patch(self, remove: str | None = None, add: dict[str, Any] | None = None) -> None:
+        """Apply one write to the cached address book (a new list, so a search running meanwhile never sees half an edit).
+        The stored ctags are kept: the next freshness check sees the server's new ctag and downloads only changed cards."""
+        if self._cache is None:
+            return
+        cards = [c for c in self._cache[2] if c["uid"] != remove and (add is None or c["uid"] != add["uid"])]
+        if add is not None:
+            _indexed(add)
+            cards.append(add)
+        self._cache = (self._cache[0], self._cache[1], self._sorted(cards))
+
     # -- tools ----------------------------------------------------------------------------
     def search(self, query: str = "", *, with_email: bool = False, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         contacts = self._all()
@@ -560,7 +634,7 @@ class ContactsService:
         tokens = q.split()
         if tokens:
             scored = [(_score(c, tokens, q), c) for c in contacts]
-            hits = [c for s, c in sorted((x for x in scored if x[0] > 0), key=lambda x: (-x[0], _norm(x[1]["name"])))]
+            hits = [c for s, c in sorted((x for x in scored if x[0] > 0), key=lambda x: (-x[0], _indexed(x[1])["name"]))]
         else:
             hits = list(contacts)
         if with_email:
@@ -591,10 +665,10 @@ class ContactsService:
         for c in contacts:
             if with_email and not c["has_email"]:
                 continue
-            sim = fuzzy_match_all(tokens, _name_words(c))
+            sim = fuzzy_match_all(tokens, _indexed(c)["all_words"])
             if sim > 0:
                 scored.append((sim, c))
-        scored.sort(key=lambda x: (-x[0], _norm(x[1]["name"])))
+        scored.sort(key=lambda x: (-x[0], _indexed(x[1])["name"]))
         return [{**_brief(c), "similarity": round(sim, 2)} for sim, c in scored[:limit]]
 
     def upcoming_birthdays(self, days: int = 30, today: date | None = None) -> dict[str, Any]:
@@ -661,7 +735,10 @@ class ContactsService:
             if response.status_code == 412:
                 return {"created": False, "already_existed": True, "uid": uid, "name": parse_vcard(raw)["name"],
                         "note": "A contact with this request_id was already created, so nothing new was added."}
-            self._clear_cache()
+            card = parse_vcard(raw)
+            if card:
+                card.update(_href=target, _etag=response.headers.get("etag"), _book=self._books[0])
+                self._patch(add=card)
         return {"created": True, "uid": uid, "name": parse_vcard(raw)["name"]}
 
     def update(self, uid: str, **updates: Any) -> dict[str, Any]:
@@ -675,8 +752,13 @@ class ContactsService:
                 # the address-book listing and in a GET (verified), so the cached value is valid here.
                 etag = record.get("_etag") or r.headers.get("etag")
                 new_raw = _replace_vcard_fields(raw, **updates)
-                self._mutate(client, "PUT", record["_href"], data=new_raw, etag=etag)
-                self._clear_cache()
+                response = self._mutate(client, "PUT", record["_href"], data=new_raw, etag=etag)
+                card = parse_vcard(new_raw)
+                if card:
+                    card.update(_href=record["_href"], _etag=response.headers.get("etag"), _book=record.get("_book"))
+                    self._patch(remove=uid, add=card)
+                else:
+                    self._clear_cache()
         return {"updated": True, "uid": uid, "name": parse_vcard(new_raw)["name"]}
 
     def delete(self, uid: str) -> dict[str, Any]:
@@ -684,5 +766,5 @@ class ContactsService:
             record = self._record(uid)
             with self._client() as client:
                 self._mutate(client, "DELETE", record["_href"], etag=record.get("_etag"))
-                self._clear_cache()
+                self._patch(remove=uid)
         return {"deleted": True, "uid": uid}

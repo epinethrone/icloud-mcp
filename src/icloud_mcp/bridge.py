@@ -364,6 +364,6 @@ def start_bridge_listener(app: Starlette, port: int, certfile: str, keyfile: str
     import uvicorn
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, ssl_certfile=certfile, ssl_keyfile=keyfile,
-                                           log_level="warning", access_log=False))
+                                           log_level="warning", access_log=False, timeout_keep_alive=30))   # the helper reuses its connection
     threading.Thread(target=server.run, name="mac-bridge", daemon=True).start()
     return server

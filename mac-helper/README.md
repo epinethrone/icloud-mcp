@@ -77,6 +77,10 @@ it is never run automatically.
 ## Notes
 
 * Log file: `~/Library/Logs/icloud-mac-helper/helper.log` (errors only, no content).
+* The helper keeps one HTTPS connection to the server open between polls (one TLS handshake per session). Every new connection
+  is checked against the pinned fingerprint; Python's own silent reconnect is switched off so it cannot skip that check. The
+  config file is read again only when it changes.
+* A Notes listing is kept for 30 seconds (listing notes through Notes' scripting interface is slow); any Notes change clears it.
 * Reminders go through EventKit and every read is live: about 20-40 ms per operation, whatever the size of your lists. Reminder ids are
   EventKit's; ids in the older `x-apple-reminder://...` form are still accepted. Completed reminders are never returned.
 * The Reminders program is rebuilt only when its source changes, and the same source always gives the same program, so reinstalling
