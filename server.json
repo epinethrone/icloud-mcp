@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/epinethrone/icloud-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "icloud-mcp-server",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "runtimeHint": "uvx",
       "transport": { "type": "stdio" },
       "packageArguments": [
@@ -25,7 +25,11 @@
         { "name": "ICLOUD_APP_PASSWORD", "description": "An app-specific password from account.apple.com (not your Apple password).", "isRequired": true, "isSecret": true },
         { "name": "ICLOUD_DISPLAY_NAME", "description": "Name shown on mail you send." },
         { "name": "DEFAULT_TIMEZONE", "description": "IANA timezone for calendar times, e.g. Europe/Berlin.", "default": "UTC" },
-        { "name": "SEND_REQUIRES_APPROVAL", "description": "true: mail Claude sends is saved to Drafts for you to send. false: sent directly.", "default": "true", "choices": ["true", "false"] }
+        { "name": "SEND_REQUIRES_APPROVAL", "description": "true: mail Claude sends is saved to Drafts for you to send. false: sent directly.", "default": "true", "choices": ["true", "false"] },
+        { "name": "AGENT_NOTES_FILE", "description": "Path to a file with your own rules for agents, added to the instructions." },
+        { "name": "OWNER_ADDRESSES", "description": "Your aliases, comma-separated, so invitations to them count as yours." },
+        { "name": "WARMUP_ON_START", "description": "Sign in to mail, calendar and contacts in the background at start.", "default": "true", "choices": ["true", "false"] },
+        { "name": "TOOL_WORKERS", "description": "Tool calls that can run at the same time.", "default": "8" }
       ]
     }
   ]

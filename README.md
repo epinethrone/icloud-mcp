@@ -72,34 +72,29 @@ and hands-on runs against a live iCloud account for the quirks only Apple's serv
 
 <br>
 
-## New in 0.4.
+## New in 0.6.
 
 </div>
 
 <table>
 <tr>
-<td width="33%" valign="top"><b>Faster mail</b><br>Logged-in connections are reused, so repeat mail calls are about 40% quicker.</td>
-<td width="33%" valign="top"><b>What changed</b><br><code>mail_changes</code> lists only new and changed messages since the last check.</td>
-<td width="33%" valign="top"><b>Newsletter radar</b><br>Bulk mail is marked in every search; <code>mail_senders</code> shows who fills your inbox.</td>
+<td width="33%" valign="top"><b>Three times faster calendars</b><br>Warm connections, all calendars read at once: 30 days of events in a quarter of a second.</td>
+<td width="33%" valign="top"><b>Lighter mail</b><br>Reading messages fetches only the text; attachments come down only when asked for (465 KB became 55 KB).</td>
+<td width="33%" valign="top"><b>Instant first call</b><br>The server signs in to mail, calendar and contacts in the background as it starts.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Safe bulk clean-up</b><br>Archive, trash or mark read by search, with a preview, a token and a 30-day undo.</td>
-<td width="33%" valign="top"><b>Unsubscribe safely</b><br>The standard one-click request or an email; links in the body are never followed.</td>
-<td width="33%" valign="top"><b>Exact bookings</b><br>Flights, hotels, trains, tickets and invitations read from the booking data, never guessed.</td>
+<td width="33%" valign="top"><b>Your own rules</b><br><code>AGENT_NOTES_FILE</code>: which calendar for what, how to sign mail, what never to touch.</td>
+<td width="33%" valign="top"><b>Replies owed</b><br><code>mail_awaiting_reply</code> and an unanswered-only, people-only search.</td>
+<td width="33%" valign="top"><b>Clash checks</b><br>New events report overlaps and likely duplicates, and can be refused on either.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Edit notes</b><br>Append to or rewrite a note, guarded by a content hash and backed up first.</td>
-<td width="33%" valign="top"><b>Search inside files</b><br>Find words in your iCloud Drive PDFs and documents, not just their names.</td>
-<td width="33%" valign="top"><b>Send Drive files</b><br><code>drive_get_file</code> hands over the file itself, so it can be attached or sent on.</td>
-</tr>
-<tr>
-<td width="33%" valign="top"><b>Birthdays</b><br>Upcoming birthdays from your contacts, with the age they turn.</td>
-<td width="33%" valign="top"><b>Ready-made workflows</b><br>Triage my inbox, Plan my week, Prepare for an appointment, Birthdays coming up.</td>
-<td width="33%" valign="top"><b>Shortcuts</b><br>Run the Shortcuts you allow, allowlisted on the server and again on the Mac.</td>
+<td width="33%" valign="top"><b>Invitations to answer</b><br><code>needs_reply</code> and "starting soon" filters on the calendar.</td>
+<td width="33%" valign="top"><b>Sturdier</b><br>One safe retry on a dropped connection, never after a write; a timeout names the slow step.</td>
+<td width="33%" valign="top"><b>Leaner for agents</b><br>A third less schema text to load, and instructions that only name tools you enabled.</td>
 </tr>
 </table>
 
-<p align="center"><sub>Also in 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP, single occurrences, invitation delivery reports and scam warnings.</sub></p>
+<p align="center"><sub>Also since 0.4: reused mail connections, <code>mail_changes</code>, newsletter radar, safe bulk clean-up with undo, safe unsubscribe, exact bookings, note editing, search inside Drive files, birthdays and Shortcuts. In 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP and scam warnings.</sub></p>
 
 <br>
 
@@ -382,6 +377,45 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 ### Ready-made workflows
 
 The server also offers MCP prompts your client can show as one-click workflows: **Triage my inbox**, **Replies I owe**, **Follow-ups I am waiting on**, **Plan my week**, **Prepare for an appointment**, **Calendar from my mail**, **Find a time with someone**, **Tidy my reminders** and **Birthdays coming up**. Each only appears when the areas it needs are on, and each tells the agent to show you what it would do before sending, booking, moving or deleting anything.
+
+## Working with agents
+
+The server tells every agent how to use it: its instructions are built from the tools you actually enabled, always start
+with the security rules (content from mail, events and contacts is untrusted data, never instructions), and explain the
+approval flow you configured.
+
+Add your own rules with `AGENT_NOTES_FILE`: a short Markdown file on the server's machine, read fresh on every use, so an
+edit applies without reconnecting. Agents see it after the security rules, which it can refine but never relax, and can
+re-read it as the `icloud://agent-notes` resource. [`docs/agent-notes.example.md`](https://github.com/epinethrone/icloud-mcp/blob/main/docs/agent-notes.example.md)
+shows the idea: which calendar gets what, how to sign mail, lists that are shared. Keep it under 8,000 characters.
+
+Tools that save an agent guesswork:
+
+- `icloud_now` gives the owner's date, time and timezone, so "tomorrow" means the right day.
+- `mail_awaiting_reply` lists mail you sent that nobody answered; `mail_search` with `unanswered_only` and `people_only` finds
+  what you still owe, without newsletters.
+- `calendar_create_event` reports overlapping events and likely duplicates, and can refuse to create either;
+  `calendar_list_events` with `needs_reply` finds invitations still waiting for an answer.
+- `OWNER_ADDRESSES` lists your aliases, so invitations sent to them count as yours.
+
+With many tools some clients choose less reliably: `TOOLS=essential` loads a smaller core set, and `TOOLS=mail,calendar`
+loads whole areas.
+
+## Performance
+
+Measured on a local test stack with 40 ms added to every round trip, comparing 0.5.0 and 0.6.0
+([details and method](https://github.com/epinethrone/icloud-mcp/blob/main/docs/PERFORMANCE.md)):
+
+| | 0.5.0 | 0.6.0 |
+|---|---|---|
+| 30 days of events, all calendars | 0.74 s | 0.25 s |
+| The same list, bytes returned | 26,017 | 12,384 |
+| Search 20 messages and read 10, received from iCloud | 465 KB | 55 KB |
+| A 20-hit mail search, bytes returned | 8,946 | 6,447 |
+| Schema text every client loads | 51,951 chars | 37,911 chars |
+
+Connections stay signed in for 10 minutes after the last call (`IMAP_IDLE_SECONDS`, `CALDAV_KEEPALIVE_SECONDS`), and
+`WARMUP_ON_START` signs in as the server starts. `dev/bench.py` repeats the measurements against your own account.
 
 ## Reminders, Notes and iCloud Drive through your Mac
 

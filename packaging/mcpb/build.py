@@ -43,6 +43,17 @@ USER_CONFIG = {
     "tools": {"type": "string", "title": "Tools to load", "required": False, "default": "",
               "description": "Leave empty for all tools, or type 'essential' for a smaller core set that clients choose from "
                              "more reliably."},
+    "agent_notes": {"type": "file", "title": "Your rules for Claude", "required": False,
+                    "description": "Optional. A short text or Markdown file with your own rules (which calendar for what, how "
+                                   "to sign mail). Read fresh on every use; it can refine the safety rules, never relax them."},
+    "owner_addresses": {"type": "string", "title": "Your other addresses", "required": False, "default": "",
+                        "description": "Optional. Aliases that are also you, separated by commas, so invitations to them "
+                                       "count as yours."},
+    "warmup": {"type": "boolean", "title": "Sign in at start", "default": True,
+               "description": "Sign in to mail, calendar and contacts in the background as soon as Claude starts the "
+                              "extension, so the first request is fast."},
+    "tool_workers": {"type": "number", "title": "Parallel requests", "required": False, "default": 8, "min": 2, "max": 32,
+                     "description": "How many requests can run at the same time."},
 }
 
 ENV = {
@@ -54,6 +65,10 @@ ENV = {
     "ALLOW_CALENDAR_INVITES": "${user_config.allow_invites}",
     "READ_ONLY": "${user_config.read_only}",
     "TOOLS": "${user_config.tools}",
+    "AGENT_NOTES_FILE": "${user_config.agent_notes}",
+    "OWNER_ADDRESSES": "${user_config.owner_addresses}",
+    "WARMUP_ON_START": "${user_config.warmup}",
+    "TOOL_WORKERS": "${user_config.tool_workers}",
 }
 
 LONG_DESCRIPTION = """Connects Claude to your iCloud **Mail, Calendar and Contacts** using Apple's own protocols (IMAP, SMTP,
