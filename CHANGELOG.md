@@ -13,6 +13,8 @@ Update the Mac helper before the server whenever its version changes.
   calendar; one with events only after a preview and its token).
 - Contact groups, in the format the Contacts app uses: list, read, create, rename, add and remove members, delete (only the
   group, never its members). A contact shows the groups it is in. Fixed: a group card was listed as if it were a person.
+- Reminders (Mac helper 0.5.0): repeating reminders, extra alerts, listing completed reminders with when they were done, and
+  creating, renaming and deleting lists (deleting a list with reminders needs a preview and its token: Reminders has no trash).
 - A server call that needs a newer Mac helper says so and asks for the update, instead of failing with "unknown operation".
 
 ## 0.8.0

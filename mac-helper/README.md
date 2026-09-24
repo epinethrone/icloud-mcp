@@ -63,7 +63,8 @@ install if you enable Notes on the server and macOS has not granted access. It a
 whether the helper is online.
 
 To also prove the write operations on this Mac, run it with `--selftest-write`. It creates, edits (including through an old-style
-`x-apple-reminder://` id), completes and deletes one temporary reminder
+`x-apple-reminder://` id), completes and deletes one temporary reminder; creates a temporary list with a repeating reminder
+with alerts, lists it as completed, renames the list and deletes it
 and creates and deletes one temporary note (both named `icloud-mac-helper selftest ...`), removing them even if a step fails. It touches your data, so
 it is never run automatically.
 
@@ -82,7 +83,8 @@ it is never run automatically.
   config file is read again only when it changes.
 * A Notes listing is kept for 30 seconds (listing notes through Notes' scripting interface is slow); any Notes change clears it.
 * Reminders go through EventKit and every read is live: about 20-40 ms per operation, whatever the size of your lists. Reminder ids are
-  EventKit's; ids in the older `x-apple-reminder://...` form are still accepted. Completed reminders are never returned.
+  EventKit's; ids in the older `x-apple-reminder://...` form are still accepted. Completed reminders are listed only when asked for
+  (`completed=only` or `all`). Since 0.5.0: repeat rules (daily or coarser), extra alerts, and creating, renaming and deleting lists.
 * The Reminders program is rebuilt only when its source changes, and the same source always gives the same program, so reinstalling
   keeps the Reminders permission. The JXA Reminders scripts in `ops/` are no longer run; they stay as reference for things EventKit
   cannot do (subtasks, tags, sections, attachments).

@@ -88,6 +88,8 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("REMINDERS / NOTES", "Pass list_id, not a name (names repeat across accounts). Lists can be shared: never put private detail "
                           "on a list you have not confirmed is private.", ("reminders_create",)),
     ("REMINDERS / NOTES", "Move a reminder with reminders_move.", ("reminders_move",)),
+    ("REMINDERS / NOTES", "A repeat needs a due date; alerts come on top of the due-date alert. reminders_delete_list deletes every "
+                          "reminder in the list for good: show the preview and act only on the owner's yes.", ("reminders_delete_list",)),
     ("REMINDERS / NOTES", "Add to a note with notes_append before rewriting it with notes_update.", ("notes_append", "notes_update")),
     ("REMINDERS / NOTES", "Tidy-ups touch only exact duplicates or clearly finished items; report before deleting.",
      ("reminders_delete",)),

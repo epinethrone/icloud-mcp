@@ -44,7 +44,14 @@ _MAX_FAILURES, _FAILURE_WINDOW = 20, 900
 # Operations that need a newer Mac helper than the first one that had them, with that version. A call is refused with an
 # update message when the helper has reported an older version; an unknown version (not polled yet) is let through, so the
 # helper itself can still refuse an operation it does not know.
-OP_MIN_HELPER: dict[str, str] = {}
+OP_MIN_HELPER: dict[str, str] = {
+    **{op: "0.5.0" for op in ("reminder_list_create", "reminder_list_update", "reminder_list_delete")},
+    # "op.argument": an argument an older helper would reject as unknown
+    **{f"{op}.{arg}": "0.5.0" for op, args in (("reminders_list", ("completed", "completed_since", "completed_before")),
+                                               ("reminder_create", ("repeat", "alerts_before", "alerts_at")),
+                                               ("reminder_update", ("repeat", "clear_repeat", "alerts_before", "alerts_at")))
+       for arg in args},
+}
 
 
 def _version(text: str) -> tuple[int, ...] | None:
@@ -64,14 +71,20 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     # Reminders
     "reminder_lists": {},
     "reminders_list": {"list": ("str", False, 200), "list_id": ("str", False, 200), "query": ("str", False, 200), "refresh": ("bool", False, 0),
-                       "limit": ("int", False, 200)},
+                       "limit": ("int", False, 200), "completed": ("str", False, 4), "completed_since": ("iso", False, 40),
+                       "completed_before": ("iso", False, 40)},
     "reminder_create": {"title": ("str", True, 500), "list": ("str", False, 200), "list_id": ("str", False, 200), "notes": ("str", False, 20000), "due": ("iso", False, 40),
-                        "priority": ("int", False, 9)},
+                        "priority": ("int", False, 9), "repeat": ("str", False, 300), "alerts_before": ("str", False, 200),
+                        "alerts_at": ("str", False, 600)},
     "reminder_update": {"id": ("str", True, 500), "title": ("str", False, 500), "notes": ("str", False, 20000), "due": ("iso", False, 40),
-                        "clear_due": ("bool", False, 0), "priority": ("int", False, 9)},
+                        "clear_due": ("bool", False, 0), "priority": ("int", False, 9), "repeat": ("str", False, 300),
+                        "clear_repeat": ("bool", False, 0), "alerts_before": ("str", False, 200), "alerts_at": ("str", False, 600)},
     "reminder_complete": {"id": ("str", True, 500), "completed": ("bool", False, 0)},
     "reminder_delete": {"id": ("str", True, 500)},
     "reminder_move": {"id": ("str", True, 500), "list": ("str", False, 200), "list_id": ("str", False, 200)},
+    "reminder_list_create": {"name": ("str", True, 200), "account": ("str", False, 200)},
+    "reminder_list_update": {"list_id": ("str", True, 200), "name": ("str", True, 200)},
+    "reminder_list_delete": {"list_id": ("str", True, 200), "name": ("str", True, 200), "delete_reminders": ("bool", False, 0)},
     # Notes
     "note_folders": {},
     "notes_list": {"folder": ("str", False, 200), "query": ("str", False, 200), "search_body": ("bool", False, 0), "limit": ("int", False, 100)},
@@ -218,10 +231,13 @@ class MacBridge:
         with self._cond:
             if not self._online_locked():
                 raise BridgeError(self._offline_message())
-            need, have = OP_MIN_HELPER.get(op), self.agent.get("version", "")
-            if need and _version(have) is not None and _version(have) < _version(need):
-                raise BridgeError(f"The Mac helper is {have} but {op} needs {need} or newer: update the helper on the Mac "
-                                  "(mac-helper/install.sh), then try again.")
+            have = self.agent.get("version", "")
+            for key in (op, *(f"{op}.{a}" for a in clean)):
+                need = OP_MIN_HELPER.get(key)
+                if need and _version(have) is not None and _version(have) < _version(need):
+                    what = op if key == op else f"{key.split('.', 1)[1]} on {op}"
+                    raise BridgeError(f"The Mac helper is {have} but {what} needs {need} or newer: update the helper on the Mac "
+                                      "(mac-helper/install.sh), then try again.")
             job = Job(id=secrets.token_urlsafe(9), op=op, args=clean, deadline=time.time() + self.timeout)
             self._jobs[job.id] = job
             self._queue.append(job)
