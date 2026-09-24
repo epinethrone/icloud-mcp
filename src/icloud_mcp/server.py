@@ -913,6 +913,28 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_WRITE)
             @_guard
+            def calendar_create_calendar(name: Annotated[str, _d("Name of the new calendar.")]) -> dict[str, Any]:
+                """Create a new iCloud calendar (it appears on the owner's devices). Refused if the name is taken."""
+                return cal.create_calendar(name)
+
+            @mcp.tool(annotations=_IDEMPOTENT_WRITE)
+            @_guard
+            def calendar_update_calendar(calendar: Annotated[str, _d("The calendar to rename, by name.")],
+                                         new_name: Annotated[str, _d("Its new name.")]) -> dict[str, Any]:
+                """Rename one of the owner's calendars. Events stay where they are."""
+                return cal.update_calendar(calendar, new_name)
+
+            @mcp.tool(annotations=_DESTRUCTIVE)
+            @_guard
+            def calendar_delete_calendar(calendar: Annotated[str, _d("The calendar to delete, by name.")],
+                                         confirm_token: Annotated[str | None, _d("From the preview; needed when it holds events.")] = None) -> dict[str, Any]:
+                """Delete a calendar and its events. The default calendar is refused. One with events is previewed first (count,
+                next events, confirm_token): show the owner and only with their yes call again with the token. iCloud.com can
+                restore a deleted calendar for about 30 days."""
+                return cal.delete_calendar(calendar, confirm_token=confirm_token)
+
+            @mcp.tool(annotations=_WRITE)
+            @_guard
             def calendar_rsvp(
                 uid: EventUid,
                 response: Annotated[str, _d("accepted, tentative or declined.")],

@@ -338,6 +338,23 @@ def test_calendar_crud_and_recurrence(cal):
         cal.get_event(uid)
 
 
+def test_calendars_are_created_renamed_and_deleted_behind_a_preview(cal):
+    names = lambda: [c["name"] for c in cal.list_calendars()]          # noqa: E731
+    for n in ("Scratch cal", "Scratch cal renamed"):
+        if n in names():
+            with contextlib.suppress(Exception):
+                cal.delete_calendar(n, confirm_token=cal.delete_calendar(n).get("confirm_token"))
+    assert cal.create_calendar("Scratch cal")["created"] is True and "Scratch cal" in names()
+    with pytest.raises(CalendarError, match="already a calendar"):
+        cal.create_calendar("scratch cal")
+    assert cal.update_calendar("Scratch cal", "Scratch cal renamed")["renamed"] is True and "Scratch cal renamed" in names()
+    cal.create_event(summary="Scratch event", start="2026-11-02T10:00", end="2026-11-02T11:00", calendar="Scratch cal renamed")
+    preview = cal.delete_calendar("Scratch cal renamed")
+    assert preview["deleted"] is False and preview["events"] == 1 and "Scratch cal renamed" in names()
+    done = cal.delete_calendar("Scratch cal renamed", confirm_token=preview["confirm_token"])
+    assert done["deleted"] is True and "Scratch cal renamed" not in names()
+
+
 def test_an_all_day_series_expands_to_dates(cal):
     """The reason expansion is client-side: server-side expansion turns all-day events into UTC date-times."""
     uid = cal.create_event(summary="Bins out", start="2026-10-05", end="2026-10-05", rrule="FREQ=WEEKLY;COUNT=3")["uid"]

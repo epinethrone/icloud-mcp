@@ -70,6 +70,8 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
                  "by mail.", ("calendar_rsvp", "calendar_list_events")),
     ("CALENDAR", "Move an event to another calendar with calendar_move_event; never delete and recreate it.",
      ("calendar_move_event",)),
+    ("CALENDAR", "calendar_delete_calendar deletes a calendar with its events: preview first, and only on the owner's yes.",
+     ("calendar_delete_calendar",)),
     ("CALENDAR", "A cancellation notice means marking or moving the event, not deleting it, unless the owner says so.",
      ("calendar_delete_event",)),
 

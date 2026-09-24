@@ -16,12 +16,14 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import caldav
+from caldav.elements import dav as dav_elements
 import icalendar
 
 from . import callctx
 from .config import Settings
 from .keepalive import TICKER
-from .safety import compact, warnings_for
+from .safety import compact, confirm_problem, warnings_for
+from .safety import confirm_token as make_confirm_token
 
 # caldav logs fragments of calendar data (titles, locations, attendees) when iCloud's iCalendar is non-standard.
 logging.getLogger("caldav").setLevel(logging.ERROR)
@@ -755,12 +757,13 @@ _reconnecting = callctx.retry_once_if_safe(_is_transport_error)
 
 class _Conn:
     """One logged-in CalDAV client with its principal, as held in the pool."""
-    __slots__ = ("client", "principal", "created", "last_used", "cals", "cals_at")
+    __slots__ = ("client", "principal", "created", "last_used", "cals", "cals_at", "cals_gen")
 
     def __init__(self, client: Any, principal: Any, now: float):
         self.client, self.principal, self.created, self.last_used = client, principal, now, now
         self.cals: list[Any] | None = None
         self.cals_at = 0.0
+        self.cals_gen = 0
 
 
 class CalendarService:
@@ -768,6 +771,7 @@ class CalendarService:
         self.s = settings
         self._vevent_cache: dict[str, tuple[bool, float]] = {}
         self._name_cache: dict[str, tuple[str, float]] = {}
+        self._cals_gen = 0                  # bumped when a calendar is created, renamed or deleted: every cached list is stale then
         self._uid_cache: dict[str, tuple[str, float]] = {}
         # Opening a CalDAV connection costs a TLS handshake plus the principal PROPFINDs, about 1.3 s against iCloud. Logged-in
         # connections are therefore kept in a small pool. Each is used by ONE call at a time (a requests session is not safe
@@ -919,12 +923,18 @@ class CalendarService:
         """principal.calendars(), kept for a while on the connection it was read with (calendar objects are bound to it)."""
         conn = getattr(self._tl, "conn", None)
         now = time.monotonic()
-        if conn is not None and conn.principal is principal and conn.cals is not None and now - conn.cals_at < _CALENDARS_SECONDS:
+        if (conn is not None and conn.principal is principal and conn.cals is not None and now - conn.cals_at < _CALENDARS_SECONDS
+                and conn.cals_gen == self._cals_gen):
             return conn.cals
         cals = principal.calendars()
         if conn is not None and conn.principal is principal:
-            conn.cals, conn.cals_at = cals, now
+            conn.cals, conn.cals_at, conn.cals_gen = cals, now, self._cals_gen
         return cals
+
+    def _calendars_changed(self) -> None:
+        self._cals_gen += 1
+        self._name_cache.clear()
+        self._vevent_cache.clear()
 
     def _event_calendars(self, principal: Any) -> list[Any]:
         # Which calendars hold events does not change between calls, so ask iCloud once per calendar, not on every tool call.
@@ -956,6 +966,70 @@ class CalendarService:
     def list_calendars(self) -> list[dict[str, Any]]:
         with self._principal() as p:
             return [{"name": self._cal_name(c), "id": str(c.url)} for c in self._event_calendars(p)]
+
+    # -- managing calendars ---------------------------------------------------------------
+    @staticmethod
+    def _calendar_name(name: str) -> str:
+        name = re.sub(r"\s+", " ", name or "").strip()
+        if not 1 <= len(name) <= 100 or any(ord(ch) < 32 for ch in name):
+            raise CalendarError("A calendar name must be 1 to 100 characters, on one line.")
+        return name
+
+    @_reconnecting
+    def create_calendar(self, name: str) -> dict[str, Any]:
+        name = self._calendar_name(name)
+        with self._principal() as p:
+            if any(self._cal_name(c).lower() == name.lower() for c in self._calendars(p)):
+                raise CalendarError(f"There is already a calendar called '{name}'.")
+            self._tl.mutated = True
+            cal = p.make_calendar(name=name, cal_id=str(uuid.uuid4()))
+        self._calendars_changed()
+        return {"created": True, "name": name, "id": str(cal.url)}
+
+    @_reconnecting
+    def update_calendar(self, calendar: str, new_name: str) -> dict[str, Any]:
+        new_name = self._calendar_name(new_name)
+        with self._principal() as p:
+            cal = self._pick(p, calendar)[0]
+            old = self._cal_name(cal)
+            if new_name.lower() != old.lower() and any(self._cal_name(c).lower() == new_name.lower() for c in self._calendars(p)):
+                raise CalendarError(f"There is already a calendar called '{new_name}'.")
+            self._tl.mutated = True
+            cal.set_properties([dav_elements.DisplayName(new_name)])
+        self._calendars_changed()
+        return {"renamed": True, "from": old, "to": new_name}
+
+    @_reconnecting
+    def delete_calendar(self, calendar: str, *, confirm_token: str | None = None) -> dict[str, Any]:
+        """Delete a calendar. The default calendar is refused. One with events is previewed first (count and the next few), and
+        deleted only with that preview's confirm_token. iCloud keeps deleted calendars restorable for about 30 days."""
+        restore = "Recoverable for about 30 days at iCloud.com: Settings, then Restore Calendars."
+        with self._principal() as p:
+            cals = self._event_calendars(p)
+            cal = self._pick(p, calendar)[0]
+            name = self._cal_name(cal)
+            if str(cal.url) == str(self._default_calendar(cals).url):
+                raise CalendarError(f"'{name}' is where new events go by default, so it is not deleted. Pick another calendar.")
+            callctx.stage(f"CalDAV counting events in {name}")
+            count = len(cal.search(event=True))
+            if count and confirm_token is None:
+                now = datetime.now(get_tz(self.s.default_timezone))
+                upcoming = sorted(((_as_dt(c.get("dtstart").dt, now.tzinfo), str(c.get("summary") or "(no title)"))
+                                   for _, c in self._occurrences(p, name, now, now + timedelta(days=365))), key=lambda t: t[0])[:3]
+                return {"deleted": False, "calendar": name, "events": count,
+                        "next": [{"start": when.isoformat(), "summary": title} for when, title in upcoming],
+                        "confirm_token": make_confirm_token("calendar", str(cal.url), count),
+                        "note": "Show the owner the count. To go ahead, call again with this confirm_token. " + restore}
+            if count and (why := confirm_problem(confirm_token, "calendar", str(cal.url), count)):
+                raise CalendarError(why)
+            self._tl.mutated = True
+            try:
+                cal.delete()
+            except Exception as e:  # noqa: BLE001
+                raise CalendarError(f"iCloud refused to delete '{name}' (a shared or subscribed calendar cannot be deleted "
+                                    f"here): {e}") from e
+        self._calendars_changed()
+        return {"deleted": True, "calendar": name, **({"events_deleted": count, "note": restore} if count else {})}
 
     @_reconnecting
     def list_events(self, start: str | None = None, end: str | None = None, *, calendar: str | None = None, query: str | None = None,
