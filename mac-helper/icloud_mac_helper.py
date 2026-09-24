@@ -59,6 +59,8 @@ OPS = {
     "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
     "note_folder_create": {"name": ("str", True, 200), "account": ("str", False, 200), "parent_id": ("str", False, 500)},
     "note_move": {"id": ("str", True, 500), "title": ("str", True, 500), "folder_id": ("str", False, 500), "folder": ("str", False, 200)},
+    "note_update": {"id": ("str", True, 500), "title": ("str", True, 500), "expected_hash": ("str", True, 8), "text": ("str", True, 100000),
+                    "mode": ("str", True, 7)},
     # iCloud Drive (paths are relative to the Drive; see ops/drive.py)
     "drive_list": {"path": ("str", False, 1000), "include_hidden": ("bool", False, 0), "limit": ("int", False, 1000)},
     "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
@@ -83,7 +85,7 @@ EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create",
 REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
 OP_FILES = {
     "note_folders": "note_folders.js", "notes_list": "notes_list.js", "note_read": "note_read.js", "note_create": "note_create.js",
-    "note_delete": "note_delete.js", "note_folder_create": "note_folder_create.js", "note_move": "note_move.js",
+    "note_delete": "note_delete.js", "note_folder_create": "note_folder_create.js", "note_move": "note_move.js", "note_update": "note_update.js",
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
