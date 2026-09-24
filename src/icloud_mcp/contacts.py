@@ -22,6 +22,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from . import callctx
 from .config import Settings
 from .matching import fuzzy_match_all, norm as _norm_shared
 
@@ -452,11 +453,11 @@ class ContactsService:
         try:
             r = client.request(method, url, content=body.encode(), headers={"Depth": depth, "Content-Type": "application/xml; charset=utf-8"})
         except httpx.HTTPError as e:
-            raise ContactsError(f"CardDAV request failed: {e}") from e
+            raise ContactsError(f"CardDAV request failed: {e}. Run icloud_check_health to see which service is failing.") from e
         if r.status_code == 401:
-            raise ContactsError("CardDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password (or set CARDDAV_USERNAME).")
+            raise ContactsError("CardDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password (or set CARDDAV_USERNAME). Run icloud_check_health to see which service is failing.")
         if r.status_code >= 400:
-            raise ContactsError(f"CardDAV {method} failed with HTTP {r.status_code}.")
+            raise ContactsError(f"CardDAV {method} failed with HTTP {r.status_code}. Run icloud_check_health to see which service is failing.")
         return r
 
     def _mutate(self, client: httpx.Client, method: str, url: str, *, data: str | None = None,
@@ -471,21 +472,21 @@ class ContactsService:
         try:
             r = client.request(method, url, content=data.encode() if data is not None else None, headers=headers)
         except httpx.HTTPError as e:
-            raise ContactsError(f"CardDAV {method} request failed: {e}") from e
+            raise ContactsError(f"CardDAV {method} request failed: {e}. Run icloud_check_health to see which service is failing.") from e
         if r.status_code == 401:
-            raise ContactsError("CardDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password (or set CARDDAV_USERNAME).")
+            raise ContactsError("CardDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password (or set CARDDAV_USERNAME). Run icloud_check_health to see which service is failing.")
         if r.status_code == 412:
             if create and data:
                 try:
                     stored = client.get(url)
                 except httpx.HTTPError as e:
-                    raise ContactsError(f"CardDAV GET request failed: {e}") from e
+                    raise ContactsError(f"CardDAV GET request failed: {e}. Run icloud_check_health to see which service is failing.") from e
                 if (stored.status_code == 200 and (requested := parse_vcard(data))
                         and (card := parse_vcard(stored.text)) and card["uid"] == requested["uid"]):
                     return r
             raise ContactsError("This contact changed since it was read. Search it again, review the latest version, then retry.")
         if r.status_code >= 400:
-            raise ContactsError(f"CardDAV {method} failed with HTTP {r.status_code}.")
+            raise ContactsError(f"CardDAV {method} failed with HTTP {r.status_code}. Run icloud_check_health to see which service is failing.")
         return r
 
     @staticmethod
@@ -493,7 +494,7 @@ class ContactsService:
         try:
             return ET.fromstring(r.content)
         except ET.ParseError as e:
-            raise ContactsError(f"Unreadable CardDAV response: {e}") from e
+            raise ContactsError(f"Unreadable CardDAV response: {e}. Run icloud_check_health to see which service is failing.") from e
 
     # -- discovery + fetching -----------------------------------------------------------
     def _discover(self, client: httpx.Client) -> list[str]:
@@ -501,13 +502,13 @@ class ContactsService:
         r = self._dav(client, "PROPFIND", start, '<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>', "0")
         href = self._xml(r).find(".//d:current-user-principal/d:href", _NS)
         if href is None or not href.text:
-            raise ContactsError("CardDAV discovery found no user principal.")
+            raise ContactsError("CardDAV discovery found no user principal. Run icloud_check_health to see which service is failing.")
         principal = urljoin(str(r.url), href.text)
         r = self._dav(client, "PROPFIND", principal,
                       '<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav"><d:prop><c:addressbook-home-set/></d:prop></d:propfind>', "0")
         href = self._xml(r).find(".//c:addressbook-home-set/d:href", _NS)
         if href is None or not href.text:
-            raise ContactsError("CardDAV discovery found no address book home.")
+            raise ContactsError("CardDAV discovery found no address book home. Run icloud_check_health to see which service is failing.")
         home = urljoin(str(r.url), href.text)                       # may be on a different host than the discovery URL
         r = self._dav(client, "PROPFIND", home, '<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>', "1")
         books = [urljoin(str(r.url), resp.findtext("d:href", "", _NS)) for resp in self._xml(r).findall("d:response", _NS)
@@ -581,6 +582,7 @@ class ContactsService:
         return kept + fetched
 
     def _all(self) -> list[dict[str, Any]]:
+        callctx.stage("CardDAV address book")
         with self._lock:
             now = time.monotonic()
             if self._cache and now - self._cache[0] < _CACHE_SECONDS:
@@ -614,7 +616,7 @@ class ContactsService:
                         if fresh_discovery or attempt == 1:
                             raise
                         self._books = []                                      # stale address-book URL: discover again once
-            raise ContactsError("Could not load contacts.")                    # pragma: no cover
+            raise ContactsError("Could not load contacts. Run icloud_check_health to see which service is failing.")                    # pragma: no cover
 
     def _patch(self, remove: str | None = None, add: dict[str, Any] | None = None) -> None:
         """Apply one write to the cached address book (a new list, so a search running meanwhile never sees half an edit).
@@ -642,7 +644,8 @@ class ContactsService:
         limit = max(1, min(int(limit), _MAX_LIMIT))
         offset = max(0, int(offset))
         page = [_brief(c) for c in hits[offset:offset + limit]]
-        out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "total_matches": len(hits), "offset": offset, "returned": len(page), "contacts": page}
+        out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "total_matches": len(hits), "offset": offset, "returned": len(page), "contacts": page,
+                               "complete": True}                    # the whole address book was read
         if not hits and tokens:
             similar = self._similar(contacts, tokens, with_email)
             if similar:

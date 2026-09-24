@@ -219,3 +219,25 @@ was 1.3 MB whole and 26 KB as a skeleton.
 - **Contacts writes** made through the connector update the cached address book in place, so the next search needs no download.
 - **Mac helper:** one pinned HTTPS connection kept across polls instead of two TLS handshakes per job; Notes listings kept 30 s.
   The helper is not part of the CI bench (it needs a Mac); its connection reuse is covered by tests against the real bridge server.
+
+## Phase 3: sturdiness
+
+**Retry policy** (one place: `callctx.retry_once_if_safe`, used by mail and calendar; CardDAV keeps its one rediscovery of a
+stale address-book URL). A call is retried once, and only when all of these hold:
+
+1. the failure is the connection, not the request (a dead socket, a dropped TLS session, a timeout, an IMAP abort);
+2. the connection came from a pool (a brand-new connection that fails is a real failure, reported as such);
+3. nothing was written on this call yet: after a STORE, APPEND, EXPUNGE, PUT, DELETE or SMTP send the write may have landed,
+   and repeating it could duplicate or double-delete.
+
+The retry always opens a brand-new connection. Mail retries only its read calls (and `mail_get_message` until it marks the
+message read). A send is never retried.
+
+**Timeouts**: `TOOL_TIMEOUT_SECONDS` is 60 (was 90). Each service names the step in progress ("IMAP SELECT Archive", "CalDAV
+search in 5 calendar(s)", "CardDAV address book", "waiting for the Mac helper (notes_list)"), and a timeout says which one was
+slow. The Mac helper stops a job 3 seconds before the server stops waiting, so "the script did not finish" reaches the agent,
+and the bridge tells "the Mac picked up the request but was slow" apart from "the Mac never picked it up".
+
+**Partial reads**: list results carry `complete` and, when a source could not be read, `not_read` (a folder in an all-folder
+search, a calendar the server refused). One broken calendar no longer fails a whole calendar read, and `calendar_find_free_time`
+warns that its slots may not really be free when a calendar is missing.

@@ -11,7 +11,7 @@ import pytest
 
 from icloud_mcp import mailbulk
 from icloud_mcp.config import Settings
-from icloud_mcp.mail import MailService
+from icloud_mcp.mail import MailError, MailService
 from icloud_mcp.server import create_server
 
 SPECIAL = {"inbox": "INBOX", "archive": "Archive", "trash": "Deleted Messages", "junk": "Junk"}
@@ -205,7 +205,7 @@ def test_a_bulk_action_needs_a_preview_and_its_token(box):
     dry = mailbulk.bulk_action(svc, "INBOX", "archive", from_="news@shop.example")
     assert dry["dry_run"] and dry["total_matches"] == 2 and dry["confirm_token"] and len(dry["sample"]) == 2
     assert mb.subjects("Archive") == []                                             # the preview changed nothing
-    with pytest.raises(ValueError, match="confirm_token"):
+    with pytest.raises(MailError, match="confirm_token"):
         mailbulk.bulk_action(svc, "INBOX", "archive", from_="news@shop.example", dry_run=False, confirm_token="wrong")
     done = mailbulk.bulk_action(svc, "INBOX", "archive", from_="news@shop.example", dry_run=False, confirm_token=dry["confirm_token"])
     assert done["done"] == 2 and mb.subjects("Archive") == ["Sale 1", "Sale 2"] and "Sale 1" not in mb.subjects("INBOX")
@@ -215,7 +215,7 @@ def test_mail_that_arrived_after_the_preview_invalidates_the_token(box):
     svc, mb = box
     dry = mailbulk.bulk_action(svc, "INBOX", "trash", from_="news@shop.example")
     mb.add("INBOX", msg(8, "Shop <news@shop.example>", "Sale 3"))
-    with pytest.raises(ValueError, match="confirm_token"):
+    with pytest.raises(MailError, match="confirm_token"):
         mailbulk.bulk_action(svc, "INBOX", "trash", from_="news@shop.example", dry_run=False, confirm_token=dry["confirm_token"])
     assert "Sale 3" in mb.subjects("INBOX")
 
@@ -241,11 +241,11 @@ def test_mark_read_and_its_undo(box):
 
 def test_refusals_whole_folder_trash_to_trash_and_the_log_is_private(box, tmp_path):
     svc, _ = box
-    with pytest.raises(ValueError, match="at least one filter"):
+    with pytest.raises(MailError, match="at least one filter"):
         mailbulk.bulk_action(svc, "INBOX", "trash")
-    with pytest.raises(ValueError, match="never delete permanently"):
+    with pytest.raises(MailError, match="never delete permanently"):
         mailbulk.bulk_action(svc, "Deleted Messages", "trash", from_="x")
-    with pytest.raises(ValueError, match="needs a destination"):
+    with pytest.raises(MailError, match="needs a destination"):
         mailbulk.bulk_action(svc, "INBOX", "move", from_="x")
     dry = mailbulk.bulk_action(svc, "INBOX", "archive", subject="Weekly")
     mailbulk.bulk_action(svc, "INBOX", "archive", subject="Weekly", dry_run=False, confirm_token=dry["confirm_token"])

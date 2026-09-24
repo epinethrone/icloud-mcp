@@ -120,10 +120,36 @@ def test_a_helper_that_never_answers_times_out_and_the_job_is_cancelled():
     b = MacBridge(timeout=1)
     b.next_job({}, 0)
     started = time.monotonic()
-    with pytest.raises(BridgeError, match="did not answer within 1s"):
+    with pytest.raises(BridgeError, match="did not pick up the request within 1s"):
         b.call("reminder_lists")
     assert time.monotonic() - started < 3
     assert b.next_job({}, 0) is None                               # the cancelled job is never handed out late
+
+
+def test_a_job_the_mac_picked_up_but_did_not_finish_says_the_mac_was_slow():
+    b = MacBridge(timeout=1)
+    b.next_job({}, 0)
+    got = []
+    t = poll_in_thread(b, got)                                     # the helper takes the job and then never answers
+    with pytest.raises(BridgeError, match="picked up the request but did not finish within 1s"):
+        b.call("reminder_lists")
+    t.join(5)
+    assert got
+
+
+def test_status_reports_queue_and_typical_job_time():
+    b = MacBridge(timeout=5)
+    b.next_job({}, 0)
+    for _ in range(3):
+        got = []
+        t = poll_in_thread(b, got)
+        c = threading.Thread(target=lambda: b.call("reminder_lists"))
+        c.start()
+        t.join(5)
+        b.complete(got[0].id, True, [], "")
+        c.join(5)
+    st = b.status()
+    assert st["queue_length"] == 0 and st["median_job_seconds"] is not None and st["median_job_seconds"] < 5
 
 
 def test_results_for_unknown_or_finished_jobs_are_ignored():
@@ -209,7 +235,8 @@ async def test_poll_and_result_round_trip_over_http(s):
             r = await c.post("/bridge/poll", headers=AUTH, json={"wait": 1, "host": "m"})
             if r.status_code == 200:
                 job = r.json(); break
-        assert job and job["op"] == "reminder_lists" and job["args"] == {} and job["seconds"] >= 1
+        assert job and job["op"] == "reminder_lists" and job["args"] == {} and 1 <= job["seconds"] <= 5 - bridge_mod.JOB_MARGIN
+        # the helper stops its work JOB_MARGIN seconds before the server stops waiting, so a "too slow" report still arrives
         done = await c.post("/bridge/result", headers=AUTH, json={"job": job["id"], "ok": True, "result": []})
         assert done.json() == {"accepted": True}
         caller.join(3)

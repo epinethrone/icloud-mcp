@@ -434,7 +434,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `MCP_PUBLIC_URL`, `MCP_OWNER_PASSWORD` | required when hosted | Public https address; owner password (12+ characters) |
 | `MCP_HOST`, `MCP_PORT`, `MCP_EXTRA_ALLOWED_HOSTS` | 127.0.0.1 (0.0.0.0 in the Docker image), 8000, empty | Bind address and extra allowed `Host` headers |
 | `MCP_STATELESS` | true | No server-side MCP sessions, so a restart never breaks a connected client ("Missing session ID") |
-| `TOOL_TIMEOUT_SECONDS` | 90 | A tool call running longer is abandoned with an error instead of hanging |
+| `TOOL_TIMEOUT_SECONDS` | 60 | A tool call running longer is abandoned with an error that names the slow step |
 | `IMAP_POOL_SIZE`, `IMAP_IDLE_SECONDS` | 3, 600 | Logged-in mail connections kept for reuse (0 = log in on every call), and how long they are kept warm after the last call |
 | `CALDAV_POOL_SIZE`, `CALDAV_KEEPALIVE_SECONDS` | 4, 600 | Calendar connections kept for reuse, and how long they are kept warm after the last call (0 = no keep-alive) |
 | `WARMUP_ON_START` | true | Sign in to mail, calendar and contacts in the background right after start, so the first call is fast |
@@ -471,7 +471,7 @@ Start by asking Claude to *"check my iCloud connection"*: `icloud_check_health` 
 | The approval or outbox page won't accept your password | After 10 wrong passwords in 15 minutes the pages lock for everyone. Wait, then use the owner password from `.env`, not your Apple password. |
 | New tools or changed settings don't show up in Claude | Claude caches tool definitions. Reconnect the connector in Claude's settings and start a new chat. |
 | "Missing session ID" after the server restarted | Leave `MCP_STATELESS=true` (the default). If you turned it off, reconnect the connector after every restart. |
-| A tool call times out | iCloud can be slow; a call is abandoned after `TOOL_TIMEOUT_SECONDS` (90 by default). Retry, and check the server logs if it keeps happening. |
+| A tool call times out | iCloud can be slow; a call is abandoned after `TOOL_TIMEOUT_SECONDS` (60 by default) with an error naming the slow step. Retry, and check the server logs if it keeps happening. |
 
 </details>
 
