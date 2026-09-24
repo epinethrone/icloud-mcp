@@ -206,3 +206,16 @@ are remembered, so search-then-read costs no extra round trip.
 Checked read-only against iCloud on three real messages with attachments: the skeleton gives the same text and the same
 attachment list as the whole message, and every attachment fetched on its own is byte-for-byte identical. The largest message
 was 1.3 MB whole and 26 KB as a skeleton.
+
+## Phase 2c: contacts and the Mac helper
+
+- **Contacts, warm search:** search fields are normalised once per card when it is loaded; a warm `contacts_search` went from
+  3 ms to 1 ms in the CI bench.
+- **Contacts after an edit elsewhere:** change detection (every card's ETag in one PROPFIND, then one addressbook-multiget of
+  only the new or changed cards) was checked read-only against iCloud and rebuilds exactly what a full download gives. On a
+  115-card address book it was *slower* than simply downloading again (0.77 s against 0.64 s: two requests instead of one small
+  one), so it only runs for address books of 300 cards or more; smaller ones are downloaded again in one request, as before.
+  The plan's "under 40 % of a full refetch" holds only for large address books.
+- **Contacts writes** made through the connector update the cached address book in place, so the next search needs no download.
+- **Mac helper:** one pinned HTTPS connection kept across polls instead of two TLS handshakes per job; Notes listings kept 30 s.
+  The helper is not part of the CI bench (it needs a Mac); its connection reuse is covered by tests against the real bridge server.
