@@ -64,6 +64,12 @@ def clean_deep(value: Any) -> Any:
     return value
 
 
+def compact(d: dict[str, Any], keep: tuple[str, ...] = ()) -> dict[str, Any]:
+    """d without keys whose value is empty (None, "", [], {}, False), except the keys in `keep`. For list results, where the
+    same empty fields repeated on every item were a large share of the bytes; a missing field means "none"."""
+    return {k: v for k, v in d.items() if k in keep or v not in (None, "", [], {}, False)}
+
+
 def warnings_for(*texts: str | None) -> list[str]:
     """Plain-language warnings for untrusted text; an empty list when nothing looks off."""
     joined = "\n".join(t for t in texts if t)

@@ -153,7 +153,8 @@ def test_limit_is_applied_before_events_are_converted(cal, monkeypatch):
 
 def test_summary_fields_and_capped_descriptions(cal, monkeypatch):
     compact = cal.list_events("2026-10-05", "2026-10-08", fields="summary")["events"][0]
-    assert set(compact) == {"uid", "calendar", "summary", "start", "end", "all_day", "location", "status", "has_attendees"}
+    assert set(compact) <= {"uid", "calendar", "summary", "start", "end", "all_day", "location", "status", "has_attendees"}
+    assert {"uid", "calendar", "summary", "start", "end", "all_day", "has_attendees"} <= set(compact)   # empty ones left out
     assert compact["has_attendees"] is True
     long = "x" * 5000
     monkeypatch.setitem(DATA, "Health", [("h1", 5)])

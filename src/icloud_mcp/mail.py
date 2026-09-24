@@ -35,7 +35,7 @@ from imapclient import IMAPClient
 from .config import Settings
 from .keepalive import TICKER
 from .matching import fuzzy_match_all, norm, similar_enough
-from .safety import warnings_for
+from .safety import compact, warnings_for
 from .mailbulk import bulk_view
 from .outbox import Outbox, OutboxFull, QueuedMessage
 
@@ -749,7 +749,7 @@ class MailService:
             hkey = next((k for k in d if isinstance(k, bytes) and k.startswith(b"BODY[HEADER")), None)
             hdr = email.message_from_bytes(d.get(hkey, b""), policy=policy.default)
             has_att = "attachment" in repr(d.get(b"BODYSTRUCTURE", "")).lower()
-            out.append(
+            out.append(compact(
                 {
                     "uid": uid,
                     "folder": folder,
@@ -764,8 +764,7 @@ class MailService:
                     "has_attachments": has_att,
                     **_flag_view(d.get(b"FLAGS", ())),
                     **bulk_view(hdr),
-                }
-            )
+                }, keep=("uid", "folder", "subject", "from", "date", "unread", "flagged")))   # empty fields left out
         return out
 
     def search(

@@ -20,7 +20,7 @@ import icalendar
 
 from .config import Settings
 from .keepalive import TICKER
-from .safety import warnings_for
+from .safety import compact, warnings_for
 
 # caldav logs fragments of calendar data (titles, locations, attendees) when iCloud's iCalendar is non-standard.
 logging.getLogger("caldav").setLevel(logging.ERROR)
@@ -939,11 +939,12 @@ class CalendarService:
         d = event_to_dict(comp, name)
         if fields == "summary":
             keep = ("uid", "calendar", "summary", "start", "end", "all_day", "location", "status", "safety_warnings")
-            return {**{k: d[k] for k in keep if k in d}, "has_attendees": bool(d.get("attendees"))}
+            return compact({**{k: d[k] for k in keep if k in d}, "has_attendees": bool(d.get("attendees"))},
+                           keep=("uid", "calendar", "summary", "start", "end", "all_day", "has_attendees"))
         text = d.get("description")
         if text and len(text) > _DESCRIPTION_CHARS:
             d["description"], d["description_truncated"] = text[:_DESCRIPTION_CHARS], True
-        return d
+        return compact(d, keep=("uid", "calendar", "summary", "start", "end", "all_day"))
 
     def _take_idle(self, n: int) -> list[_Conn]:
         """Up to n pooled connections that are ready now. Never opens one: a new CalDAV connection costs more than reading a

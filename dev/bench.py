@@ -311,6 +311,7 @@ async def run(args, settings, meter: Meter) -> list[dict]:
         hit = next((m for m in (prev or {}).get("messages", []) if m.get("has_attachments")), None)
         return {"folder": "INBOX", "uid": hit["uid"], "index": 0} if hit else None
 
+    await b.measure("mail_search 20", [("mail_search", {"folder": "INBOX", "limit": 20})], mcp=warm)
     await b.measure("mail_search 20 + get_messages 10", [("mail_search", {"folder": "INBOX", "limit": 20}),
                                                          ("mail_get_messages", first_uids)], mcp=warm)
     await b.measure("mail_search all_folders", [("mail_search", {"all_folders": True, "limit": 20})], mcp=warm)
