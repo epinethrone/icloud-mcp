@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (14 tools), Calendar (8), Contacts (5), Reminders (6), Notes (7) and iCloud Drive (9), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (20 tools), Calendar (8), Contacts (6), Reminders (6), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -67,37 +67,39 @@ Everything Claude reads is marked as someone else's words, not instructions.<br>
 Hidden characters are stripped, and phishing tricks are called out.
 
 **Tested where it counts.**<br>
-313 offline tests on every change, integration tests against real mail and calendar servers,<br>
+385 offline tests on every change, integration tests against real mail and calendar servers,<br>
 and hands-on runs against a live iCloud account for the quirks only Apple's servers have.
 
 <br>
 
-## New in 0.3.
+## New in 0.4.
 
 </div>
 
 <table>
 <tr>
-<td width="33%" valign="top"><b>One-click install</b><br>A Claude Desktop extension. Double-click, fill in a short form, done.</td>
-<td width="33%" valign="top"><b>No server needed</b><br><code>--local</code> runs it on your computer for Claude Desktop and Claude Code.</td>
-<td width="33%" valign="top"><b>Keychain storage</b><br><code>--store-password</code> keeps your app-specific password out of every file.</td>
+<td width="33%" valign="top"><b>Faster mail</b><br>Logged-in connections are reused, so repeat mail calls are about 40% quicker.</td>
+<td width="33%" valign="top"><b>What changed</b><br><code>mail_changes</code> lists only new and changed messages since the last check.</td>
+<td width="33%" valign="top"><b>Newsletter radar</b><br>Bulk mail is marked in every search; <code>mail_senders</code> shows who fills your inbox.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Find free time</b><br>Openings of any length within your hours. Travel time counts as busy.</td>
-<td width="33%" valign="top"><b>Answer invitations</b><br>Accept, decline or maybe, for a whole series or a single date.</td>
-<td width="33%" valign="top"><b>One date in a series</b><br>Move or cancel one occurrence and leave the rest alone.</td>
+<td width="33%" valign="top"><b>Safe bulk clean-up</b><br>Archive, trash or mark read by search, with a preview, a token and a 30-day undo.</td>
+<td width="33%" valign="top"><b>Unsubscribe safely</b><br>The standard one-click request or an email; links in the body are never followed.</td>
+<td width="33%" valign="top"><b>Exact bookings</b><br>Flights, hotels, trains, tickets and invitations read from the booking data, never guessed.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Delivery you can trust</b><br>See whether each guest's invitation was sent, delivered or refused.</td>
-<td width="33%" valign="top"><b>Search every folder</b><br>Archive, Sent, Junk and your own folders at once. Read 25 messages in one call.</td>
-<td width="33%" valign="top"><b>Safe retries</b><br>A retried create never makes a duplicate. Stale mail ids are refused.</td>
+<td width="33%" valign="top"><b>Edit notes</b><br>Append to or rewrite a note, guarded by a content hash and backed up first.</td>
+<td width="33%" valign="top"><b>Search inside files</b><br>Find words in your iCloud Drive PDFs and documents, not just their names.</td>
+<td width="33%" valign="top"><b>Send Drive files</b><br><code>drive_get_file</code> hands over the file itself, so it can be attached or sent on.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Scam warnings</b><br>Flags text that addresses an AI, asks for codes or says bank details changed.</td>
-<td width="33%" valign="top"><b>A health check</b><br>Tests every service in one call and never shows a secret.</td>
-<td width="33%" valign="top"><b>A smaller menu</b><br><code>TOOLS=essential</code> offers a core of 19 tools that clients choose from more reliably.</td>
+<td width="33%" valign="top"><b>Birthdays</b><br>Upcoming birthdays from your contacts, with the age they turn.</td>
+<td width="33%" valign="top"><b>Ready-made workflows</b><br>Triage my inbox, Plan my week, Prepare for an appointment, Birthdays coming up.</td>
+<td width="33%" valign="top"><b>Shortcuts</b><br>Run the Shortcuts you allow, allowlisted on the server and again on the Mac.</td>
 </tr>
 </table>
+
+<p align="center"><sub>Also in 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP, single occurrences, invitation delivery reports and scam warnings.</sub></p>
 
 <br>
 
@@ -275,10 +277,10 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**51 tools.** 28 for Mail, Calendar, Contacts and the health check, and 23 more with the optional Mac helper. Open a section for the details.
+**63 tools.** 35 for Mail, Calendar, Contacts and the health check, 26 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 <details>
-<summary><b>Mail</b> &nbsp;·&nbsp; 14 tools</summary>
+<summary><b>Mail</b> &nbsp;·&nbsp; 20 tools</summary>
 
 | Kind | Tools |
 |---|---|
@@ -316,7 +318,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>Contacts</b> &nbsp;·&nbsp; 5 tools</summary>
+<summary><b>Contacts</b> &nbsp;·&nbsp; 6 tools</summary>
 
 `contacts_search`, `contacts_get`, `contacts_upcoming_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`
 
@@ -351,7 +353,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>iCloud Drive</b> &nbsp;·&nbsp; 9 tools, with the Mac helper</summary>
+<summary><b>iCloud Drive</b> &nbsp;·&nbsp; 10 tools, with the Mac helper</summary>
 
 `drive_list`, `drive_search`, `drive_search_content`, `drive_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
 
