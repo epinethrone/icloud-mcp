@@ -56,8 +56,8 @@ def test_arguments_are_validated_strictly(rich_ops):
 def test_the_real_operation_table_is_exactly_the_reminders_notes_and_drive_operations():
     assert set(bridge_mod.OPS) == {"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete",
                                    "note_folders", "notes_list", "note_read", "note_create", "note_delete",
-                                   "note_folder_create", "note_move",
-                                   "drive_list", "drive_search", "drive_info", "drive_read", "drive_write", "drive_mkdir", "drive_move", "drive_trash"}
+                                   "note_folder_create", "note_move", "note_update",
+                                   "drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file", "drive_write", "drive_mkdir", "drive_move", "drive_trash", "shortcut_run"}
     assert validate_args("reminder_lists", None) == {} and validate_args("reminders_list", {"query": "x", "limit": 5})["limit"] == 5
 
 
@@ -219,6 +219,16 @@ async def test_oversized_and_malformed_requests_are_rejected_not_crashed(s):
         assert (await c.post("/bridge/poll", headers=AUTH, content=b"x" * 2_000_000)).status_code == 400
         assert (await c.post("/bridge/poll", headers=AUTH, content=b"not json")).status_code == 400
         assert (await c.post("/bridge/result", headers=AUTH, json={"nope": 1})).status_code == 400
+        assert (await c.post("/bridge/result", headers=AUTH, content=b"x" * 13_000_000)).status_code == 400
+
+
+async def test_a_result_may_carry_a_file_but_a_poll_may_not_and_neither_without_the_token(s):
+    b = MacBridge(timeout=5)
+    big = {"job": "no-such-job", "ok": True, "result": {"data_base64": "A" * 7_000_000}}      # a ~5 MB file, base64
+    async with await client(s, b) as c:
+        assert (await c.post("/bridge/result", headers=AUTH, json=big)).json() == {"accepted": False}   # read, parsed, unknown job
+        assert (await c.post("/bridge/poll", headers=AUTH, json=big)).status_code == 400
+        assert (await c.post("/bridge/result", json=big)).status_code == 401
 
 
 async def test_the_token_never_reaches_the_log(s, caplog):
@@ -315,7 +325,7 @@ def test_instructions_mention_the_mac_only_when_enabled(s):
     assert "REMINDERS / NOTES" not in build_instructions(dataclasses.replace(s, enable_reminders=False))
 
 
-DRIVE_READ = {"drive_list", "drive_search", "drive_info", "drive_read"}
+DRIVE_READ = {"drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file"}
 DRIVE_WRITE = {"drive_write", "drive_create_folder", "drive_move", "drive_trash"}
 
 
@@ -340,6 +350,8 @@ def test_drive_tools_pass_exactly_the_given_arguments_to_the_mac(s):
         return json.loads(r.content[0].text)
     out = asyncio.run(go("drive_read", {"path": "Documents/a.pdf", "max_chars": 500}, {"path": "Documents/a.pdf", "text": "hi"}))
     assert seen[-1] == ("drive_read", {"path": "Documents/a.pdf", "max_chars": 500}) and out["text"] == "hi" and "data" in out["notice"]
+    out = asyncio.run(go("drive_get_file", {"path": "CV.pdf"}, {"name": "CV.pdf", "data_base64": "JVBERi0="}))
+    assert seen[-1] == ("drive_get_file", {"path": "CV.pdf", "max_bytes": 5 * 1024 * 1024}) and out["data_base64"] == "JVBERi0="
     asyncio.run(go("drive_create_folder", {"path": "A/B"}, {"path": "A/B"}))
     assert seen[-1] == ("drive_mkdir", {"path": "A/B"})
     asyncio.run(go("drive_move", {"path": "a.txt", "to": "A"}, {"moved": True}))

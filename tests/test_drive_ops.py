@@ -37,7 +37,8 @@ def drive(tmp_path):
 
 def run(drive, op, args):
     root, trash = drive
-    env = {**os.environ, "ICLOUD_DRIVE_ROOT": str(root), "ICLOUD_DRIVE_TEST_TRASH": str(trash)}
+    env = {**os.environ, "ICLOUD_DRIVE_ROOT": str(root), "ICLOUD_DRIVE_TEST_TRASH": str(trash),
+           "ICLOUD_DRIVE_TEXT_CACHE": str(root.parent / "cache" / "text.sqlite")}
     p = subprocess.run([PY, "-I", str(SCRIPT), op, json.dumps(args)], capture_output=True, text=True, env=env, timeout=60)
     if p.returncode == 0:
         return True, json.loads(p.stdout)
@@ -86,6 +87,46 @@ def test_reading_text_and_documents_with_offsets(drive):
     fails(drive, "drive_read", {"path": "Documents/photo.jpg"}, "binary file")
     fails(drive, "drive_read", {"path": "Documents"}, "that is a folder")
     fails(drive, "drive_read", {"path": "Music/Draft.logicx"}, "app document")
+
+
+def test_getting_a_file_hands_over_the_exact_bytes_and_refuses_what_is_not_one_file(drive):
+    import base64
+    got = ok(drive, "drive_get_file", {"path": "Documents/photo.jpg"})
+    assert base64.b64decode(got["data_base64"]) == (drive[0] / "Documents" / "photo.jpg").read_bytes()
+    assert got["name"] == "photo.jpg" and got["mime_type"] == "image/jpeg" and got["bytes"] == (drive[0] / "Documents" / "photo.jpg").stat().st_size
+    fails(drive, "drive_get_file", {"path": "Documents"}, "folder")
+    fails(drive, "drive_get_file", {"path": "Music/Draft.logicx"}, "app document")
+    fails(drive, "drive_get_file", {"path": "notes.md", "max_bytes": 100}, "more than")
+    fails(drive, "drive_get_file", {"path": "escape/secret.txt"}, "")                 # outside the Drive, through a link
+    fails(drive, "drive_get_file", {"path": "../outside/secret.txt"}, "")
+
+
+def test_content_search_finds_words_inside_files_with_an_excerpt_and_remembers_them(drive):
+    root, _ = drive
+    (root / "Documents" / "recipe.txt").write_text("Grandma's Café crème brûlée\nneeds six eggs and cream")
+    first = ok(drive, "drive_search_content", {"query": "cafe CREME", "budget": 40})
+    assert first["complete"] and [i["path"] for i in first["items"]] == ["Documents/recipe.txt"]
+    assert "Café crème" in first["items"][0]["excerpt"] and first["read_now"] >= 3
+    cached = ok(drive, "drive_search_content", {"query": "expenses", "budget": 40})
+    assert [i["path"] for i in cached["items"]] == ["Documents/Tax/2025.txt"] and cached["read_now"] == 0   # all from the cache now
+    if os.path.exists("/usr/bin/textutil"):                                   # RTF/Word text needs macOS's textutil
+        rtf = ok(drive, "drive_search_content", {"query": "heating landlord", "budget": 40})
+        assert [i["path"] for i in rtf["items"]] == ["Documents/letter.rtf"]
+    assert ok(drive, "drive_search_content", {"query": "income", "path": "Documents/Tax"})["count"] == 1
+    assert ok(drive, "drive_search_content", {"query": "nothing matches this"})["count"] == 0
+    cache = root.parent / "cache" / "text.sqlite"
+    assert oct(cache.stat().st_mode & 0o777) == "0o600"
+
+
+def test_content_search_skips_the_trash_hidden_files_links_out_and_changed_files_are_reread(drive):
+    root, _ = drive
+    assert ok(drive, "drive_search_content", {"query": "gone"})["count"] == 0                     # .Trash
+    assert ok(drive, "drive_search_content", {"query": "do not read"})["count"] == 0              # outside, through a link
+    fails(drive, "drive_search_content", {"query": "x", "path": "../outside"}, "")
+    ok(drive, "drive_search_content", {"query": "income"})
+    (root / "Documents" / "Tax" / "2025.txt").write_text("income 999 and a refund")
+    again = ok(drive, "drive_search_content", {"query": "refund"})
+    assert again["count"] == 1 and again["read_now"] == 1
 
 
 def test_writing_never_silently_replaces_and_only_writes_plain_text(drive):
@@ -143,7 +184,7 @@ def test_searching_names_skips_hidden_items_and_the_trash(drive):
 def test_the_helper_runs_drive_operations_through_the_fixed_script_with_a_time_budget(monkeypatch):
     sys.path.insert(0, str(SCRIPT.parent.parent))
     import icloud_mac_helper as h
-    assert h.DRIVE_OPS == {op for op in h.OPS if op.startswith("drive_")} and len(h.DRIVE_OPS) == 8
+    assert h.DRIVE_OPS == {op for op in h.OPS if op.startswith("drive_")} and len(h.DRIVE_OPS) == 10
     cmd = h.build_command("drive_list", {"path": "x"})
     assert cmd[:3] == [sys.executable, "-I", h.DRIVE_SCRIPT] and cmd[3] == "drive_list" and json.loads(cmd[4]) == {"path": "x"}
     seen = {}

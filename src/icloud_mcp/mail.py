@@ -13,6 +13,7 @@ import base64
 import contextlib
 import email
 import html as html_lib
+import json
 import logging
 import mimetypes
 import re
@@ -33,12 +34,14 @@ from imapclient import IMAPClient
 from .config import Settings
 from .matching import fuzzy_match_all, norm, similar_enough
 from .safety import warnings_for
+from .mailbulk import bulk_view
 from .outbox import Outbox, OutboxFull, QueuedMessage
 
 log = logging.getLogger(__name__)
 
 SEEN, FLAGGED, ANSWERED, DRAFT, DELETED = "\\Seen", "\\Flagged", "\\Answered", "\\Draft", "\\Deleted"
-HEADER_FIELDS = "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES"
+HEADER_FIELDS = ("FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES "
+                 "LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST LIST-ID PRECEDENCE AUTO-SUBMITTED")
 _SCAN_INBOX, _SCAN_SENT = 3000, 1500      # most recent messages scanned by default when looking for a correspondent
 _PEOPLE_CACHE_SECONDS = 600
 
@@ -514,10 +517,11 @@ class MailService:
         self.outbox = Outbox(settings.data_dir, settings.outbox_ttl, settings.outbox_max)
         self._people_lock = threading.Lock()
         self._people_cache: dict[bool, tuple[float, dict[str, dict[str, Any]], dict[str, int]]] = {}
+        self._pool_lock = threading.Lock()
+        self._pool: list[tuple[IMAPClient, float]] = []      # idle, logged-in connections and when each was last used
 
     # -- connections ---------------------------------------------------------
-    @contextlib.contextmanager
-    def imap(self) -> Iterator[IMAPClient]:
+    def _login(self) -> IMAPClient:
         s = self.s
         ctx = ssl.create_default_context()
         try:
@@ -528,11 +532,72 @@ class MailService:
             c.login(s.imap_username, s.app_password)
         except Exception as e:  # noqa: BLE001
             raise MailError(f"IMAP connection/login failed: {e}") from e
+        return c
+
+    def _checkout(self) -> IMAPClient | None:
+        """A pooled connection that still answers, or None. Connections idle too long are closed; ones idle for more than
+        30 seconds are checked with a NOOP first (iCloud drops idle sessions without telling us)."""
+        while True:
+            with self._pool_lock:
+                if not self._pool:
+                    return None
+                c, last = self._pool.pop()
+            idle = time.monotonic() - last
+            if idle > self.s.imap_idle_seconds:
+                self._discard(c)
+                continue
+            if idle > 30:
+                try:
+                    c.noop()
+                except Exception:  # noqa: BLE001 - a dead session is simply replaced
+                    self._discard(c)
+                    continue
+            return c
+
+    def _checkin(self, c: IMAPClient) -> None:
+        """Return a connection to the pool with no folder selected. UNSELECT, never CLOSE: CLOSE would permanently expunge every
+        message flagged \\Deleted in the folder, and moves and deletes here only ever expunge the exact messages they handled."""
+        try:
+            if getattr(getattr(c, "_imap", None), "state", "SELECTED") == "SELECTED":   # unknown state counts as selected
+                if not c.has_capability("UNSELECT"):
+                    raise MailError("server cannot UNSELECT")
+                c.unselect_folder()
+        except Exception:  # noqa: BLE001 - anything unexpected: do not reuse this session
+            self._discard(c)
+            return
+        with self._pool_lock:
+            if len(self._pool) < self.s.imap_pool_size:
+                self._pool.append((c, time.monotonic()))
+                return
+        self._discard(c)
+
+    @staticmethod
+    def _discard(c: IMAPClient) -> None:
+        with contextlib.suppress(Exception):
+            c.logout()
+
+    def close_pool(self) -> None:
+        with self._pool_lock:
+            pooled, self._pool = self._pool, []
+        for c, _ in pooled:
+            self._discard(c)
+
+    @contextlib.contextmanager
+    def imap(self, fresh: bool = False) -> Iterator[IMAPClient]:
+        """A logged-in IMAP connection. It comes from a small pool when possible (IMAP_POOL_SIZE, default 2), which saves a TLS
+        handshake and login (about a second against iCloud) on every call. Each connection is used by one call at a time. A call
+        that fails leaves its connection out of the pool, since its state is unknown. fresh=True always logs in anew."""
+        reuse = self.s.imap_pool_size > 0 and not fresh
+        c = (self._checkout() if reuse else None) or self._login()
+        ok = False
         try:
             yield c
+            ok = True
         finally:
-            with contextlib.suppress(Exception):
-                c.logout()
+            if ok and reuse:
+                self._checkin(c)
+            else:
+                self._discard(c)
 
     def resolve_folder(self, c: IMAPClient, name: str) -> str:
         key = (name or "INBOX").strip().lower()
@@ -562,7 +627,7 @@ class MailService:
     # -- reading ---------------------------------------------------------------
     def health(self) -> dict[str, Any]:
         """Sign in and open the inbox read-only: the cheapest proof that IMAP works with these credentials."""
-        with self.imap() as c:
+        with self.imap(fresh=True) as c:                 # a real login: a pooled session could outlive a revoked password
             info = c.select_folder("INBOX", readonly=True) or {}
             return {"inbox_messages": info.get(b"EXISTS"), "can_move": bool(c.has_capability("MOVE") or c.has_capability("UIDPLUS"))}
 
@@ -623,6 +688,7 @@ class MailService:
                     "size": d.get(b"RFC822.SIZE"),
                     "has_attachments": has_att,
                     **_flag_view(d.get(b"FLAGS", ())),
+                    **bulk_view(hdr),
                 }
             )
         return out
@@ -644,6 +710,31 @@ class MailService:
         offset: int = 0,
         all_folders: bool = False,
     ) -> dict[str, Any]:
+        crit, charset = self.criteria(from_=from_, to=to, subject=subject, text=text, since=since, before=before, unread=unread,
+                                      flagged=flagged, message_id=message_id)
+        limit = max(1, min(int(limit), 100))
+        if all_folders:
+            return self._search_everywhere(crit, charset, limit, offset)
+        with self.imap() as c:
+            folder = self.resolve_folder(c, folder)
+            uv = self._select(c, folder)
+            uids = sorted(c.search(crit, charset=charset), reverse=True)
+            page = uids[offset : offset + limit]
+            return {
+                "notice": UNTRUSTED_NOTICE,
+                "folder": folder,
+                **({"uidvalidity": uv} if uv is not None else {}),
+                "total_matches": len(uids),
+                "offset": offset,
+                "returned": len(page),
+                "messages": self._summaries(c, folder, page, uv),
+            }
+
+    @staticmethod
+    def criteria(*, from_: str | None = None, to: str | None = None, subject: str | None = None, text: str | None = None,
+                 since: str | None = None, before: str | None = None, unread: bool | None = None, flagged: bool | None = None,
+                 message_id: str | None = None) -> tuple[list[Any], str | None]:
+        """IMAP SEARCH criteria and charset for the filters every mail search tool shares."""
         crit: list[Any] = []
         if unread is True:
             crit.append("UNSEEN")
@@ -668,23 +759,50 @@ class MailService:
         if not crit:
             crit = ["ALL"]
         charset = None if all(isinstance(x, (date,)) or str(x).isascii() for x in crit) else "UTF-8"
-        limit = max(1, min(int(limit), 100))
-        if all_folders:
-            return self._search_everywhere(crit, charset, limit, offset)
+        return crit, charset
+
+    def changes(self, folder: str = "INBOX", since: str | None = None, *, limit: int = 50) -> dict[str, Any]:
+        """What changed in a folder since a token from the previous call: new messages, and messages whose flags (read, flagged,
+        answered) changed. Uses IMAP CONDSTORE (a per-message change counter), so nothing is re-read. The token carries the
+        folder's uidvalidity; if the server renumbered the folder, the answer says to start over instead of guessing."""
+        limit = max(1, min(int(limit), 200))
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
-            uv = self._select(c, folder)
-            uids = sorted(c.search(crit, charset=charset), reverse=True)
-            page = uids[offset : offset + limit]
-            return {
-                "notice": UNTRUSTED_NOTICE,
-                "folder": folder,
-                **({"uidvalidity": uv} if uv is not None else {}),
-                "total_matches": len(uids),
-                "offset": offset,
-                "returned": len(page),
-                "messages": self._summaries(c, folder, page, uv),
-            }
+            with contextlib.suppress(Exception):          # iCloud applies ENABLE without sending ENABLED back
+                c.enable("CONDSTORE")
+            info = c.select_folder(folder, readonly=True) or {}
+            uv, modseq, uidnext = (info.get(b"UIDVALIDITY"), info.get(b"HIGHESTMODSEQ"), info.get(b"UIDNEXT"))
+            if modseq is None or uv is None or uidnext is None:
+                raise MailError("This mail server does not report changes (no CONDSTORE); use mail_search with since instead.")
+            token = f"v2:{folder}:{int(uv)}:{int(modseq)}:{int(uidnext)}"
+            base = {"notice": UNTRUSTED_NOTICE, "folder": folder, "uidvalidity": int(uv), "token": token}
+            if not since:
+                unread = len(c.search(["UNSEEN"]))
+                return {**base, "first_call": True, "messages": info.get(b"EXISTS"), "unread": unread,
+                        "note": "Keep this token and pass it as 'since' next time to get only what changed."}
+            try:
+                version, rest = since.split(":", 1)
+                old_folder, old_uv, old_modseq, old_next = rest.rsplit(":", 3)
+                old_uv, old_modseq, old_next = int(old_uv), int(old_modseq), int(old_next)
+            except ValueError as e:
+                raise MailError("That token is not one this tool returned; call without 'since' to start.") from e
+            if version != "v2":
+                raise MailError("That token is not one this tool returned; call without 'since' to start.")
+            if old_folder != folder:
+                raise MailError(f"That token belongs to the folder '{old_folder}', not '{folder}'. Use each folder's own token.")
+            if old_uv != int(uv):
+                return {**base, "start_over": True, "note": "The server renumbered this folder since that token, so changes cannot be "
+                                                            "listed. Use this new token from now on and search the folder normally."}
+            new = sorted((u for u in c.search(["UID", f"{old_next}:*"]) if u >= old_next), reverse=True)
+            changed = sorted((u for u in c.search(["MODSEQ", str(old_modseq + 1)]) if u < old_next), reverse=True) \
+                if int(modseq) > old_modseq else []
+            out = {**base, "new_count": len(new), "changed_count": len(changed),
+                   "new": self._summaries(c, folder, new[:limit], int(uv)),
+                   "changed": [{k: m.get(k) for k in ("uid", "subject", "from", "date", "unread", "flagged", "answered")}
+                               for m in self._summaries(c, folder, changed[:limit], int(uv))]}
+            if len(new) > limit or len(changed) > limit:
+                out["note"] = f"Only the newest {limit} of each are listed; use mail_search for the rest."
+            return out
 
     def _search_everywhere(self, crit: list[Any], charset: str | None, limit: int, offset: int) -> dict[str, Any]:
         """The same search in every selectable folder, merged newest first. Mail rules and replies file messages away from
@@ -794,6 +912,18 @@ class MailService:
         if include_html and htm is not None:
             out["html"] = htm[: body_chars * 2]
         return out
+
+    def extract_bookings(self, folder: str, uid: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
+        """Exact bookings and appointments from a message's structured data (schema.org JSON-LD, .ics attachments)."""
+        from .extract import extract
+
+        with self.imap() as c:
+            folder = self.resolve_folder(c, folder)
+            raw, _flags, _internal, uv = self._fetch_raw(c, folder, uid, uidvalidity=uidvalidity)
+        out = extract(raw)
+        found = warnings_for(out.get("subject"), json.dumps(out.get("items"), ensure_ascii=False))
+        return {"notice": UNTRUSTED_NOTICE, "folder": folder, "uid": uid, **({"uidvalidity": uv} if uv is not None else {}), **out,
+                **({"safety_warnings": found} if found else {})}
 
     def get_attachment(self, folder: str, uid: int, index: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:
