@@ -21,7 +21,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v4; runs the Notes and Reminders scripts against a fake object model
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        # (Node runs the Notes and Reminders scripts against a fake object model)
         with:
           node-version: "20"
       - name: Install
