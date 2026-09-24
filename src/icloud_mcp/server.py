@@ -476,6 +476,18 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
+        def mail_changes(
+            folder: Folder = "INBOX",
+            since: Annotated[str | None, _d("The 'token' from the previous mail_changes call. Omit on the first call.")] = None,
+            limit: Annotated[int, _d("At most this many new and this many changed messages are listed (default 50, max 200).")] = 50,
+        ) -> dict[str, Any]:
+            """What changed in a folder since the last check: new messages (as summaries) and messages whose read, flagged or
+            answered state changed. The first call returns a token; pass it as 'since' next time and only the changes come back,
+            with a new token. Much cheaper than searching the folder again. Deleted messages are not listed."""
+            return mail.changes(folder, since, limit=limit)
+
+        @mcp.tool(annotations=_READ)
+        @_guard
         def mail_get_thread(folder: Folder, uid: Uid, uidvalidity: UidValidity = None) -> dict[str, Any]:
             """List the messages in the same conversation as the given message (searched in that folder, INBOX and Sent),
             oldest first, as summaries. Use mail_get_message to read any of them."""
