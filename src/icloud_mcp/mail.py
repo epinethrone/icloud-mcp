@@ -960,13 +960,18 @@ class MailService:
                      if not {"\\Noselect", "\\NonExistent"} & {f.decode() if isinstance(f, bytes) else str(f) for f in flags}]
 
         def one(name: str) -> tuple[str, int, list[dict[str, Any]]] | None:
-            try:
-                with self.imap() as c:
-                    uv = self._select(c, name)
-                    uids = sorted(c.search(crit, charset=charset), reverse=True)
-                    return name, len(uids), (self._summaries(c, name, uids[:want], uv) if uids else [])   # newest uids are enough
-            except Exception:  # noqa: BLE001 - one unreadable folder must not sink the whole search
-                return None
+            for attempt in (0, 1):
+                try:
+                    with self.imap() as c:
+                        uv = self._select(c, name)
+                        uids = sorted(c.search(crit, charset=charset), reverse=True)
+                        return name, len(uids), (self._summaries(c, name, uids[:want], uv) if uids else [])   # newest uids are enough
+                except Exception as e:  # noqa: BLE001 - one unreadable folder must not sink the whole search
+                    if attempt == 0 and self._tl.reused and _mail_transport(e):
+                        self._tl.fresh = True                     # a pooled connection had died: once more on a new one
+                        continue
+                    return None
+            return None
 
         # Folders are searched in parallel, as many at once as there are pooled connections, each on its own connection.
         with ThreadPoolExecutor(max_workers=max(1, min(len(names), self.s.imap_pool_size or 1))) as pool:

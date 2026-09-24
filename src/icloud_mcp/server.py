@@ -961,7 +961,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
     # ------------------------------------------------ Reminders / Notes, through the helper on the owner's Mac
     if s.bridge_enabled:
-        bridge = MacBridge(timeout=s.bridge_job_timeout)
+        # The bridge stops waiting for the Mac at least 5 s before the tool call times out, so its own message ("the Mac picked
+        # up the request but was slow" / "never picked it up") reaches the agent instead of the generic timeout.
+        bridge = MacBridge(timeout=min(s.bridge_job_timeout, max(1, s.tool_timeout - 5)))
         health["mac_helper"] = lambda: (lambda st: {**st, "ok": bool(st.get("online"))})(bridge.status())
         mcp._icloud_bridge = bridge          # main() serves it on its own private port
 

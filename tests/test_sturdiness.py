@@ -223,3 +223,14 @@ def test_a_calendar_that_cannot_be_read_is_named_not_hidden(s, monkeypatch):
     assert out["complete"] is False and out["not_read"] == ["Broken"] and "missing" in out["warning"]
     free = svc.find_free_time("2026-10-05T09:00", "2026-10-06T17:00", 30)
     assert free["complete"] is False and free["not_read"] == ["Broken"] and "may not really be free" in free["warning"]
+
+
+def test_the_bridge_gives_up_before_the_tool_timeout_so_its_message_arrives(s):
+    on = dataclasses.replace(s, enable_reminders=True, enable_calendar=False, enable_contacts=False, bridge_token="t" * 40,
+                             tool_timeout=8, bridge_job_timeout=60)
+    mcp, _ = server_mod.create_server(on)
+    bridge = mcp._icloud_bridge
+    assert bridge.timeout == 3                                                   # min(60, 8 - 5)
+    bridge.next_job({}, 0)                                                       # the Mac was seen, then never picks anything up
+    with pytest.raises(Exception, match="did not pick up the request"):
+        asyncio.run(mcp.call_tool("reminders_lists", {}))
