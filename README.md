@@ -282,7 +282,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 | Kind | Tools |
 |---|---|
-| Read | `mail_list_folders`, `mail_search`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment` |
+| Read | `mail_list_folders`, `mail_search`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
 | Read | `mail_senders` (who fills a folder, busiest first, with bulk and unsubscribe info) |
 | Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder`, `mail_bulk_action`, `mail_bulk_undo`, `mail_unsubscribe` |
 
@@ -292,6 +292,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 - **Newsletters are told apart from people.** Search results mark `bulk` mail (a List-Unsubscribe or List-Id header, bulk precedence, automated or no-reply senders) and say how it can be unsubscribed from; `mail_senders` groups a folder by sender.
 - **Clean up in bulk, safely.** `mail_bulk_action` (move, archive, trash, mark read) always previews first: the count, a sample and a confirm token that stands for exactly those messages. Running needs that token, so mail that arrived since is never touched. Every run is logged by Message-ID and `mail_bulk_undo` reverses it for 30 days. It needs at least one filter and never deletes permanently.
 - **Unsubscribe without following links.** `mail_unsubscribe` uses only the List-Unsubscribe header: the standard one-click request (RFC 8058, HTTPS to public addresses only) or an unsubscribe email through the normal send path, so approval rules apply. Links in the body are never followed, unsubscribe web pages are only handed to you, and mail in Junk is refused.
+- **Bookings come out exact.** `mail_extract_bookings` reads the schema.org booking data airlines, hotels, rail and ticket shops embed (flights, stays, trains, buses, rental cars, restaurants, events) and `.ics` invitations, and returns each with a ready `calendar_create_event` block. Nothing is guessed from the wording; a message without that data says so.
 - **Stale ids are refused.** Every message comes with its folder's `uidvalidity`; tools that act on a uid accept it back and refuse if iCloud has renumbered the folder since, instead of touching a different message.
 - Reading a message does not mark it read. Bcc recipients receive the mail, but the header is stripped on the wire.
 - Recipients accept `a@b.com`, `Name <a@b.com>` or `mailto:a@b.com`. Anything else is rejected with a clear error and never silently dropped.

@@ -13,6 +13,7 @@ import base64
 import contextlib
 import email
 import html as html_lib
+import json
 import logging
 import mimetypes
 import re
@@ -868,6 +869,18 @@ class MailService:
         if include_html and htm is not None:
             out["html"] = htm[: body_chars * 2]
         return out
+
+    def extract_bookings(self, folder: str, uid: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
+        """Exact bookings and appointments from a message's structured data (schema.org JSON-LD, .ics attachments)."""
+        from .extract import extract
+
+        with self.imap() as c:
+            folder = self.resolve_folder(c, folder)
+            raw, _flags, _internal, uv = self._fetch_raw(c, folder, uid, uidvalidity=uidvalidity)
+        out = extract(raw)
+        found = warnings_for(out.get("subject"), json.dumps(out.get("items"), ensure_ascii=False))
+        return {"notice": UNTRUSTED_NOTICE, "folder": folder, "uid": uid, **({"uidvalidity": uv} if uv is not None else {}), **out,
+                **({"safety_warnings": found} if found else {})}
 
     def get_attachment(self, folder: str, uid: int, index: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
         with self.imap() as c:

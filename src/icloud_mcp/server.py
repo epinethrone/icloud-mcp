@@ -454,6 +454,16 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
+        def mail_extract_bookings(folder: Folder, uid: Uid, uidvalidity: UidValidity = None) -> dict[str, Any]:
+            """Exact bookings and appointments from one email: flights, hotels, trains, buses, rental cars, restaurant bookings,
+            event tickets (from the schema.org booking data airlines, hotels and shops embed) and calendar invitations (.ics
+            attachments). Values are copied from that structured data, never guessed from the text. Each item has a
+            'calendar_event' block with calendar_create_event's arguments to review and book. Use it before booking anything
+            from a confirmation email; if it finds nothing, read the message and book only what it states plainly."""
+            return mail.extract_bookings(folder, uid, uidvalidity=uidvalidity)
+
+        @mcp.tool(annotations=_READ)
+        @_guard
         def mail_get_attachment(folder: Folder, uid: Uid, index: Annotated[int, _d("Attachment index from the message's attachments list (starts at 0).")],
                                 uidvalidity: UidValidity = None) -> dict[str, Any]:
             """Fetch one attachment by its index from mail_get_message. Text-like files are returned as text, other
