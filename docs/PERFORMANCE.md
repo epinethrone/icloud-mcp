@@ -241,3 +241,48 @@ and the bridge tells "the Mac picked up the request but was slow" apart from "th
 **Partial reads**: list results carry `complete` and, when a source could not be read, `not_read` (a folder in an all-folder
 search, a calendar the server refused). One broken calendar no longer fails a whole calendar read, and `calendar_find_free_time`
 warns that its slots may not really be free when a calendar is missing.
+
+## Phase 4: agents
+
+**4a, instructions**: built from the tools actually registered, so a rule never names a tool the server does not offer (checked
+for every combination of areas and modes); the security rules always come first; the owner's own rules from `AGENT_NOTES_FILE`
+follow, capped at 8,000 characters and also served as the `icloud://agent-notes` resource. Five prompts cover the common
+workflows. Instructions grew from 4,331 to 6,143 characters (cap 6,500).
+
+**4b, tools that replace hand-written rules**: `icloud_now`, `mail_awaiting_reply`, conflict and duplicate checks on
+`calendar_create_event`, `needs_reply` and `starting_within_minutes` on `calendar_list_events`, `add_attendees` /
+`remove_attendees`, `people_only` / `unanswered_only` / `since_hours` on `mail_search`, `add_emails` / `add_phones` on
+`contacts_update`. 67 tools; the parameter schemas reached 54,961 characters.
+
+**4c, a leaner tool surface**: parameter schemas lose what carries no meaning for an agent (titles derived from parameter
+names, `anyOf [X, null]` around optional parameters, `default: null`), and the longest shared descriptions were shortened
+without dropping a warning (a test pins the safety sentences). An explicit `null` is still accepted: arguments are validated
+by each tool's own model, not by the published schema.
+
+| | 0.5.0 (65 tools) | after 4b (67 tools) | after 4c |
+|---|---|---|---|
+| schema chars | 51,951 | 54,961 | 37,911 (-27% on 0.5.0, -31% on 4b) |
+| description chars | 18,006 | 18,740 | 18,740 |
+| instructions chars | 4,331 | 6,143 | 6,143 |
+
+### Tool surface after 4c (every area on)
+
+| tool | description chars | schema chars |
+|---|---|---|
+| calendar_create_event | 457 | 2881 |
+| calendar_update_event | 331 | 2379 |
+| contacts_update | 241 | 2347 |
+| mail_reply | 689 | 1733 |
+| contacts_create | 224 | 1898 |
+| mail_search | 402 | 1716 |
+| mail_send | 688 | 1204 |
+| mail_bulk_action | 550 | 1285 |
+| calendar_find_free_time | 468 | 1326 |
+| mail_forward | 398 | 1258 |
+| calendar_list_events | 518 | 1094 |
+| contacts_search | 738 | 533 |
+| drive_search_content | 464 | 600 |
+| notes_update | 512 | 527 |
+| mail_find_correspondent | 511 | 509 |
+
+**67 tools**: 18,740 description chars, 37,911 schema chars; instructions 6,143 chars.
