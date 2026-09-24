@@ -5,11 +5,14 @@ Update the Mac helper before the server whenever its version changes.
 
 ## 0.8.0
 
-- **Calendar reads cannot be stalled by a stranger's invitation:** a series that repeats every second or minute is no longer
-  expanded (the calendar library expanded it before our guard saw the rule, so one such invitation could hang a calendar read
-  until the tool timed out). Its dated exceptions still come through, and the result says which series was left unexpanded.
+- **Calendar reads cannot be stalled by a stranger's invitation:** a series that would repeat more than 48 times a day
+  (every second or minute, or an hourly or daily rule multiplied up with BYMINUTE / BYSECOND lists) is no longer expanded.
+  The calendar library expanded such rules before our guard saw them, so one invitation could hang a read until the tool
+  timed out. Only the series' dated exceptions come through; the result counts the skipped series in `series_not_expanded`
+  and never repeats their text. New and updated events refuse such rules too.
 - **Stale message numbers are always caught on destructive mail actions:** `uidvalidity` is now required on `mail_delete`,
-  `mail_move` and `mail_mark` (breaking for callers that left it out; every search result carries it).
+  `mail_move` and `mail_mark`. Breaking: a call without it is refused, and the agent retries with the value every search,
+  thread and changes result carries.
 - **Forwarded state is back:** mail results say `forwarded` again (lost in 0.6.0 when results became leaner).
 - The Mac's hostname is no longer shown by `icloud_get_helper_status`.
 - Mac helper 0.4.2: note backups older than 30 days move to the Trash once a day (never deleted outright).

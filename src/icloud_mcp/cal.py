@@ -508,42 +508,70 @@ def _same_instant(a: Any, b: Any) -> bool:
     return a == b
 
 
-_SUB_HOURLY = re.compile(r"FREQ=(SECONDLY|MINUTELY)\b", re.I)
+_MAX_PER_DAY = 48      # more occurrences a day than this (every 30 minutes) is never a real plan, and expanding it can hang a read
+
+
+def too_frequent(rule: Any) -> bool:
+    """Whether a repeat rule (text or icalendar vRecur, one or several) would produce more than _MAX_PER_DAY occurrences a
+    day: FREQ finer than hourly, or BYSECOND / BYMINUTE / BYHOUR lists that multiply an hourly or daily rule up. Unreadable
+    rules count as too frequent: they are never expanded."""
+    rules = rule if isinstance(rule, list) else [rule]
+    for r in rules:
+        try:
+            rec = icalendar.vRecur.from_ical(r) if isinstance(r, str) else r
+            parts = {str(k).upper(): (v if isinstance(v, list) else [v]) for k, v in dict(rec).items()}
+            freq = str(parts.get("FREQ", [""])[0]).upper()
+            if freq in ("SECONDLY", "MINUTELY"):
+                return True
+            per_hour = len(parts.get("BYMINUTE", [0])) * len(parts.get("BYSECOND", [0]))
+            hours = 24 if freq == "HOURLY" else len(parts.get("BYHOUR", [0]))
+            if per_hour * hours > _MAX_PER_DAY:
+                return True
+        except Exception:  # noqa: BLE001 - a rule we cannot read is not expanded
+            return True
+    return False
 
 
 def parse_rrule(text: str) -> icalendar.vRecur:
     """An agent-supplied repeat rule as a vRecur: one line only (a line break would smuggle a second property into the event),
     and never finer than hourly, which nothing legitimate needs and which would make every expansion of the series enormous."""
     text = re.sub(r"[\r\n]", "", text).removeprefix("RRULE:").strip()
-    if _SUB_HOURLY.search(text):
-        raise CalendarError("Repeat rules finer than HOURLY (SECONDLY, MINUTELY) are not supported.")
     try:
-        return icalendar.vRecur.from_ical(text)
+        rec = icalendar.vRecur.from_ical(text)
     except Exception as e:  # noqa: BLE001
         raise CalendarError(f"Invalid rrule '{text}': {e}. Use a rule like FREQ=WEEKLY;BYDAY=MO;COUNT=6.") from e
+    if too_frequent(rec):
+        raise CalendarError(f"Repeat rules that fire more than {_MAX_PER_DAY} times a day (SECONDLY, MINUTELY, or BYSECOND / "
+                            "BYMINUTE lists) are not supported.")
+    return rec
 
 
-_SUB_HOURLY_RRULE = re.compile(r"^RRULE:[^\n]*FREQ=(SECONDLY|MINUTELY)\b", re.I | re.M)
+_SKIPPED_NOTE = ("series that repeat more than 48 times a day (usually spam invitations) were left unexpanded: only their "
+                 "dated exceptions are included. The rest of the result is complete.")
 
 
-def _search_expanded(cal: Any, s_dt: datetime, e_dt: datetime, unexpanded: list[str]) -> list[str]:
+def _search_expanded(cal: Any, s_dt: datetime, e_dt: datetime, skipped: list[int]) -> list[str]:
     """The events of one calendar in [s_dt, e_dt), recurring ones expanded client-side. caldav's own expand=True expands
     before we see the rule, so a stranger's invitation repeating every second would expand into millions of occurrences
-    and hang the call: fetch unexpanded (the same one REPORT), set such series aside, and let caldav expand the rest
-    exactly as search(expand=True) would. Only the dated exceptions of a set-aside series come back."""
+    and hang the call: fetch unexpanded (the same one REPORT), set such series aside (counted in `skipped`, never named:
+    their text is a stranger's), and let caldav expand the rest exactly as search(expand=True) would. Only the dated
+    exceptions of a set-aside series come back."""
     objs = cal.search(start=s_dt, end=e_dt, event=True, expand=False)
     safe, out = [], []
     for o in objs:
         data = o.data or ""
-        unfolded = re.sub(r"\r?\n[ \t]", "", data)
-        if not _SUB_HOURLY_RRULE.search(unfolded):
+        try:
+            parsed = icalendar.Calendar.from_ical(data)
+        except Exception:  # noqa: BLE001 - caldav would not expand what icalendar cannot read either
             safe.append(o)
             continue
-        parsed = icalendar.Calendar.from_ical(data)
-        for comp in list(parsed.subcomponents):
-            if comp.name == "VEVENT" and comp.get("rrule") is not None:
-                unexpanded.append(str(comp.get("summary") or "(no title)")[:80])
-                parsed.subcomponents.remove(comp)
+        risky = [c for c in parsed.walk("VEVENT") if c.get("rrule") is not None and too_frequent(c.get("rrule"))]
+        if not risky:
+            safe.append(o)
+            continue
+        skipped.append(len(risky))
+        for comp in risky:
+            parsed.subcomponents.remove(comp)
         if any(c.name == "VEVENT" for c in parsed.subcomponents):
             out.append(parsed.to_ical().decode())
     if safe and hasattr(cal, "searcher") and hasattr(safe[0], "icalendar_instance"):
@@ -568,9 +596,9 @@ def occurs_in_series(master: icalendar.Component, rid: Any) -> bool:
     if (s.tzinfo is None) != (r.tzinfo is None):
         s, r = s.replace(tzinfo=None), r.replace(tzinfo=None)
     try:
-        text = rule.to_ical().decode()
-        if _SUB_HOURLY.search(text):                      # a stranger's invitation could carry one; expanding it would take minutes
+        if too_frequent(rule):                            # a stranger's invitation could carry one; expanding it would take minutes
             return False
+        text = rule.to_ical().decode()
         if s.tzinfo is None:                              # dateutil refuses an aware UNTIL with a floating start
             text = re.sub(r"UNTIL=(\d{8}T\d{6})Z", r"UNTIL=\1", text)
         series = rrulestr(text, dtstart=s)
@@ -953,8 +981,9 @@ class CalendarService:
         want = (query or "").lower()
         rows: list[tuple[datetime, str, icalendar.Component]] = []
         not_read: list[str] = []
+        skipped: list[int] = []
         with self._principal() as p:
-            for name, comp in self._occurrences(p, calendar, s_dt, e_dt, not_read):
+            for name, comp in self._occurrences(p, calendar, s_dt, e_dt, not_read, skipped):
                 if want and want not in " ".join(_text(comp, k) or "" for k in ("summary", "location", "description")).lower():
                     continue
                 if needs_reply and not unanswered_invitation(comp, self.s.own_addresses):
@@ -973,6 +1002,7 @@ class CalendarService:
             "total": len(rows),
             "events": events,
             "complete": not not_read,
+            **({"series_not_expanded": sum(skipped), "series_note": _SKIPPED_NOTE} if skipped else {}),
             **({"not_read": sorted(not_read), "warning": "These calendars could not be read, so events in them are missing: "
                 "do not treat their time as free. Run icloud_check_health."} if not_read else {}),
         }
@@ -1068,18 +1098,16 @@ class CalendarService:
                 self._checkin(f.result())
 
     def _occurrences(self, principal: Any, calendar: str | None, s_dt: datetime, e_dt: datetime,
-                     not_read: list[str] | None = None) -> Iterator[tuple[str, icalendar.Component]]:
+                     not_read: list[str] | None = None, skipped: list[int] | None = None) -> Iterator[tuple[str, icalendar.Component]]:
         """Every event occurrence overlapping [s_dt, e_dt) in the chosen calendars, recurring events expanded (client-side:
         iCloud's own expansion turns all-day events into UTC date-times, see docs/PERFORMANCE.md)."""
         cals = self._pick(principal, calendar)
         names = [self._cal_name(c) for c in cals]
         callctx.stage(f"CalDAV search in {len(cals)} calendar(s)")
-        unexpanded: list[str] = []
-        search = lambda cal: _search_expanded(cal, s_dt, e_dt, unexpanded)   # noqa: E731
+        skipped = skipped if skipped is not None else []
+        search = lambda cal: _search_expanded(cal, s_dt, e_dt, skipped)   # noqa: E731
         found = (self._each_calendar_or_skip(principal, cals, search, not_read) if not_read is not None
                  else self._each_calendar(principal, cals, search))
-        if unexpanded and not_read is not None:
-            not_read.extend(f"a series repeating more often than hourly was not expanded: {t}" for t in unexpanded)
         for name, datas in zip(names, found):
             for data in datas or []:
                 for comp in icalendar.Calendar.from_ical(data).walk("VEVENT"):
@@ -1121,8 +1149,9 @@ class CalendarService:
         all_day: list[dict[str, Any]] = []
         not_busy: list[dict[str, Any]] = []
         not_read: list[str] = []
+        skipped: list[int] = []
         with self._principal() as p:
-            for name, comp in self._occurrences(p, calendar, s_dt, e_dt, not_read):
+            for name, comp in self._occurrences(p, calendar, s_dt, e_dt, not_read, skipped):
                 dtstart = comp.get("dtstart").dt
                 summary = _text(comp, "summary") or "(no title)"
                 reason = not_busy_reason(comp, own)
@@ -1174,6 +1203,7 @@ class CalendarService:
                       "events and invitations you declined. All-day events are listed separately and do not block slots: check "
                       "them yourself (a trip blocks the day, a birthday does not). Each slot is a whole opening; book any part of it."),
             "complete": not not_read,
+            **({"series_not_expanded": sum(skipped), "series_note": _SKIPPED_NOTE} if skipped else {}),
             **({"not_read": sorted(not_read), "warning": "These calendars could not be read, so their events are NOT counted: these "
                 "slots may not really be free. Say so to the user and run icloud_check_health."} if not_read else {}),
         }
