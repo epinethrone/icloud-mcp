@@ -18,6 +18,7 @@ import caldav
 import icalendar
 
 from .config import Settings
+from .keepalive import TICKER
 from .safety import warnings_for
 
 # caldav logs fragments of calendar data (titles, locations, attendees) when iCloud's iCalendar is non-standard.
@@ -40,6 +41,7 @@ class CalendarError(Exception):
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+@functools.lru_cache(maxsize=64)
 def get_tz(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
@@ -646,12 +648,13 @@ def build_event(
 _CACHE_SECONDS = 600  # calendar names / event support change rarely; a rename in the iCloud app shows up within this time
 
 
-# iCloud closes an idle CalDAV connection somewhere between 20 and 40 seconds (measured). Reuse has to expire
-# BEFORE that, otherwise the next call meets a dead socket, blocks for the full read timeout of about 30 s and only
-# then retries, which is far worse than simply reconnecting. So reuse is for bursts, a get followed by an update,
-# and anything idler than this pays the ordinary handshake.
+# iCloud closes an idle CalDAV connection somewhere between 20 and 40 seconds (measured). A pooled connection idle for longer than
+# this is not reused: the next call would meet a dead socket and block for the whole read timeout before retrying. The keep-alive
+# (below) pings pooled connections well inside this window while the server is in use, so in practice they stay warm.
 _IDLE_TTL_SECONDS = 15.0
-_MAX_AGE_SECONDS = 240.0
+_MAX_AGE_SECONDS = 240.0      # a connection older than this is replaced (by the keep-alive in the background, when it runs)
+_PING_AFTER_SECONDS = 10.0    # keep-alive: ping a pooled connection idle this long (the ticker runs every 3 s, so before 15 s)
+_CALENDARS_SECONDS = 120.0    # the calendar list per connection; a calendar added in the Calendar app appears within this time
 
 _TRANSPORT_ERRORS = {
     "ConnectionError", "ConnectTimeout", "ConnectTimeoutError", "ReadTimeout", "ReadTimeoutError", "ReadError",
@@ -676,13 +679,16 @@ def _is_transport_error(exc: BaseException | None) -> bool:
 def _reconnecting(method):
     """Retry once on a dead reused connection, and ONLY then.
 
-    A cached connection can be closed by the server between calls, and that failure surfaces on the next request
+    A pooled connection can be closed by the server between calls, and that failure surfaces on the next request
     rather than at hand-out time. Retrying is safe only when the connection was a reused one AND nothing has been
     written yet, so a PUT or DELETE is never replayed. A fresh connection that fails is a real failure and is raised.
+    The retry always uses a brand-new connection, never another pooled one.
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
-        self._tl.mutated = False
+        if getattr(self._tl, "conn", None) is None:     # a new call (not one nested inside another): start from a clean slate
+            self._tl.mutated = False
+            self._tl.reused = False
         try:
             return method(self, *args, **kwargs)
         except Exception as e:  # noqa: BLE001 - re-raised below unless it is a retryable dead socket
@@ -694,63 +700,149 @@ def _reconnecting(method):
     return wrapper
 
 
+class _Conn:
+    """One logged-in CalDAV client with its principal, as held in the pool."""
+    __slots__ = ("client", "principal", "created", "last_used", "cals", "cals_at")
+
+    def __init__(self, client: Any, principal: Any, now: float):
+        self.client, self.principal, self.created, self.last_used = client, principal, now, now
+        self.cals: list[Any] | None = None
+        self.cals_at = 0.0
+
+
 class CalendarService:
     def __init__(self, settings: Settings):
         self.s = settings
         self._vevent_cache: dict[str, tuple[bool, float]] = {}
         self._name_cache: dict[str, tuple[str, float]] = {}
         self._uid_cache: dict[str, tuple[str, float]] = {}
-        # The CalDAV connection is held PER THREAD, never shared. Opening one costs a TLS handshake plus the two
-        # principal PROPFINDs, which was about 1.3 s on every single call. A requests session is not safe to drive
-        # from two threads at once, and this server can run tool calls concurrently, so a thread-local is the reuse
-        # that is actually correct here: each worker reuses its own socket and no state crosses a request boundary.
+        # Opening a CalDAV connection costs a TLS handshake plus the principal PROPFINDs, about 1.3 s against iCloud. Logged-in
+        # connections are therefore kept in a small pool. Each is used by ONE call at a time (a requests session is not safe
+        # from two threads at once), whichever worker thread runs it, and a connection whose call failed on the transport is
+        # never put back. The thread-local only describes the call in progress on this thread: its connection, whether that
+        # connection was reused, and whether a write has been issued (which forbids a retry).
+        self._pool_lock = threading.Lock()
+        self._pool: list[_Conn] = []
         self._tl = threading.local()
+        self._last_activity = 0.0
+        self._ticking = False
+
+    # -- the connection pool ------------------------------------------------------
+    def _open(self) -> _Conn:
+        s = self.s
+        client = caldav.DAVClient(url=s.caldav_url, username=s.caldav_username, password=s.app_password, require_tls=s.caldav_require_tls)
+        try:
+            return _Conn(client, client.principal(), time.monotonic())
+        except Exception:
+            self._close(client)
+            raise
+
+    @staticmethod
+    def _close(conn_or_client: Any) -> None:
+        client = getattr(conn_or_client, "client", conn_or_client)
+        with contextlib.suppress(Exception):
+            client.close()
+
+    def _checkout(self, fresh: bool) -> tuple[_Conn, bool]:
+        """(connection, reused). A pooled connection idle or open too long is closed rather than handed out."""
+        while not fresh:
+            now = time.monotonic()
+            with self._pool_lock:
+                if not self._pool:
+                    break
+                conn = self._pool.pop()
+            if now - conn.last_used > _IDLE_TTL_SECONDS or now - conn.created > _MAX_AGE_SECONDS:
+                self._close(conn)
+                continue
+            return conn, True
+        return self._open(), False
+
+    def _checkin(self, conn: _Conn) -> None:
+        conn.last_used = self._last_activity = time.monotonic()
+        with self._pool_lock:
+            if len(self._pool) < self.s.caldav_pool_size:
+                self._pool.append(conn)
+                conn = None
+        if conn is not None:
+            self._close(conn)
+        if not self._ticking and self.s.caldav_keepalive_seconds > 0:
+            self._ticking = True
+            TICKER.add(self._keepalive)
 
     def _drop_client(self) -> None:
-        tl = self._tl
-        client = getattr(tl, "client", None)
-        tl.client = None
-        tl.principal = None
-        tl.opened_at = 0.0
-        tl.last_used = 0.0
-        tl.reused = False
-        if client is not None:
-            with contextlib.suppress(Exception):
-                client.close()
+        """The call on this thread is about to retry after a dead connection: the retry must use a brand-new one."""
+        self._tl.fresh = True
+
+    def close_pool(self) -> None:
+        with self._pool_lock:
+            pooled, self._pool = self._pool, []
+        for conn in pooled:
+            self._close(conn)
+
+    def _keepalive(self, now: float) -> None:
+        """Run by the keep-alive ticker. While the server was used within CALDAV_KEEPALIVE_SECONDS, ping pooled connections
+        before iCloud's idle timeout and replace ones that are too old, so the next call finds a warm connection. After that
+        window everything is closed and the next call connects afresh."""
+        window = self.s.caldav_keepalive_seconds
+        if window <= 0:
+            return
+        with self._pool_lock:
+            if now - self._last_activity > window:
+                stale, due, self._pool = self._pool, [], []
+            else:
+                stale = []
+                due = [c for c in self._pool if now - c.last_used >= _PING_AFTER_SECONDS]
+                self._pool = [c for c in self._pool if c not in due]
+        for conn in stale:
+            self._close(conn)
+        for conn in due:
+            try:
+                if now - conn.created > _MAX_AGE_SECONDS:
+                    self._close(conn)
+                    conn = self._open()
+                else:
+                    conn.client.propfind(str(conn.principal.url), depth=0)
+            except Exception:  # noqa: BLE001 - a dead connection is simply not put back
+                self._close(conn)
+                continue
+            conn.last_used = time.monotonic()
+            with self._pool_lock:
+                keep = len(self._pool) < self.s.caldav_pool_size
+                if keep:
+                    self._pool.append(conn)
+            if not keep:
+                self._close(conn)
 
     @contextlib.contextmanager
     def _principal(self) -> Iterator[Any]:
-        s, tl = self.s, self._tl
-        client = getattr(tl, "client", None)
-        principal = getattr(tl, "principal", None)
-        now = time.monotonic()
-        idle = now - getattr(tl, "last_used", 0.0)
-        age = now - getattr(tl, "opened_at", 0.0)
-        if client is None or principal is None or idle > _IDLE_TTL_SECONDS or age > _MAX_AGE_SECONDS:
-            self._drop_client()
-            try:
-                client = caldav.DAVClient(url=s.caldav_url, username=s.caldav_username, password=s.app_password, require_tls=s.caldav_require_tls)
-                principal = client.principal()
-            except caldav.error.AuthorizationError as e:
-                self._drop_client()
-                raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
-            except Exception:
-                self._drop_client()
-                raise
-            tl.client, tl.principal, tl.opened_at, tl.reused = client, principal, time.monotonic(), False
-        else:
-            tl.reused = True
-        tl.last_used = time.monotonic()
+        tl = self._tl
+        outer = getattr(tl, "conn", None)
+        if outer is not None:                     # nested use inside one call keeps using that call's connection
+            yield outer.principal
+            return
+        fresh, tl.fresh = getattr(tl, "fresh", False), False
         try:
-            yield principal
-            tl.last_used = time.monotonic()
+            conn, reused = self._checkout(fresh)
         except caldav.error.AuthorizationError as e:
-            self._drop_client()
             raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
-        except Exception as e:  # noqa: BLE001 - re-raised; this only decides whether the socket is still usable
+        tl.conn, tl.reused = conn, reused
+        try:
+            yield conn.principal
+        except caldav.error.AuthorizationError as e:
+            self._close(conn)
+            raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password.") from e
+        except Exception as e:  # noqa: BLE001 - re-raised; this only decides whether the connection may be reused
             if _is_transport_error(e):
-                self._drop_client()
+                self._close(conn)
+            else:
+                if isinstance(e, caldav.error.DAVError):
+                    conn.cals = None              # the calendar list may be what is wrong
+                self._checkin(conn)
             raise
+        else:
+            self._checkin(conn)
+        finally:
+            tl.conn = None
 
     def _cal_name(self, cal: Any) -> str:
         if cal is None:
@@ -767,10 +859,21 @@ class CalendarService:
             hit = self._name_cache[key] = (name or key.rstrip("/").rsplit("/", 1)[-1], now)
         return hit[0]
 
+    def _calendars(self, principal: Any) -> list[Any]:
+        """principal.calendars(), kept for a while on the connection it was read with (calendar objects are bound to it)."""
+        conn = getattr(self._tl, "conn", None)
+        now = time.monotonic()
+        if conn is not None and conn.principal is principal and conn.cals is not None and now - conn.cals_at < _CALENDARS_SECONDS:
+            return conn.cals
+        cals = principal.calendars()
+        if conn is not None and conn.principal is principal:
+            conn.cals, conn.cals_at = cals, now
+        return cals
+
     def _event_calendars(self, principal: Any) -> list[Any]:
         # Which calendars hold events does not change between calls, so ask iCloud once per calendar, not on every tool call.
         out = []
-        for cal in principal.calendars():
+        for cal in self._calendars(principal):
             key, now = str(cal.url), time.monotonic()
             hit = self._vevent_cache.get(key)
             if hit is None or now - hit[1] > _CACHE_SECONDS:

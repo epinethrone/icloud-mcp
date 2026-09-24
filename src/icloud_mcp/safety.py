@@ -44,9 +44,16 @@ def clean(value: str) -> str:
     return _INVISIBLE.sub("", value)
 
 
+_BASE64 = re.compile(r"[A-Za-z0-9+/=\r\n]*")
+_BIG = 256 * 1024
+
+
 def clean_deep(value: Any) -> Any:
-    """clean() applied to every string inside a tool result (dicts, lists, tuples)."""
+    """clean() applied to every string inside a tool result (dicts, lists, tuples). A very large string that is pure base64
+    (an attachment or a file) is passed through as is: it cannot carry invisible characters, and walking it costs time."""
     if isinstance(value, str):
+        if len(value) > _BIG and _BASE64.fullmatch(value):
+            return value
         return clean(value)
     if isinstance(value, dict):
         return {k: clean_deep(v) for k, v in value.items()}

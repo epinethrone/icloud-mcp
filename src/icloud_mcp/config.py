@@ -105,8 +105,12 @@ class Settings:
     bridge_host: str = "127.0.0.1"  # address the bridge port binds to inside this process (0.0.0.0 only inside Docker, set by the image)
     local_mode: bool = False      # stdio for a desktop client on this computer: no OAuth, no public URL, no browser outbox
     tools: tuple[str, ...] = ()   # TOOLS: 'essential' and/or tool names to expose; empty = every tool of the enabled areas
-    imap_pool_size: int = 2       # IMAP_POOL_SIZE: logged-in IMAP connections kept for reuse (0 = log in for every call)
+    imap_pool_size: int = 3       # IMAP_POOL_SIZE: logged-in IMAP connections kept for reuse (0 = log in for every call)
     imap_idle_seconds: int = 600  # IMAP_IDLE_SECONDS: a pooled connection unused for longer is closed instead of reused
+    caldav_pool_size: int = 4     # CALDAV_POOL_SIZE: CalDAV connections kept for reuse (calendars are read in parallel)
+    caldav_keepalive_seconds: int = 600   # CALDAV_KEEPALIVE_SECONDS: keep pooled CalDAV connections warm this long after the last call (0 = off)
+    warmup_on_start: bool = True  # WARMUP_ON_START: log in to mail, calendar and contacts in the background right after start
+    tool_workers: int = 8         # TOOL_WORKERS: threads that run tool calls, so parallel calls do not queue behind each other
     shortcuts_allow: tuple[str, ...] = ()   # SHORTCUTS_ALLOW: exact Shortcut names the assistant may run (the Mac keeps its own list too)
 
     @classmethod
@@ -170,8 +174,12 @@ class Settings:
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),
             bridge_host=_str("BRIDGE_HOST", "127.0.0.1"),
             tools=tuple(_list("TOOLS")),
-            imap_pool_size=max(0, min(_int("IMAP_POOL_SIZE", 2), 8)),
+            imap_pool_size=max(0, min(_int("IMAP_POOL_SIZE", 3), 8)),
             imap_idle_seconds=max(30, _int("IMAP_IDLE_SECONDS", 600)),
+            caldav_pool_size=max(1, min(_int("CALDAV_POOL_SIZE", 4), 8)),
+            caldav_keepalive_seconds=max(0, _int("CALDAV_KEEPALIVE_SECONDS", 600)),
+            warmup_on_start=_bool("WARMUP_ON_START", True),
+            tool_workers=max(2, min(_int("TOOL_WORKERS", 8), 32)),
             shortcuts_allow=tuple(n.strip() for n in _str("SHORTCUTS_ALLOW").split(";" if ";" in _str("SHORTCUTS_ALLOW") else ",") if n.strip()),
         )
 

@@ -8,13 +8,14 @@ query, which it rejects). Notes and photos are never returned to agents.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import threading
 import time
 import uuid
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import quote, urljoin, urlsplit
 from xml.etree import ElementTree as ET
 
@@ -395,6 +396,8 @@ class ContactsService:
     def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None):
         self.s = settings
         self._transport = transport
+        self._http_lock = threading.Lock()
+        self._http: httpx.Client | None = None
         self._lock = threading.RLock()   # re-entrant: update()/delete() hold it while _record() -> _all() takes it again
         self._books: list[str] = []
         self._cache: tuple[float, tuple[str | None, ...], list[dict[str, Any]]] | None = None   # (checked_at, ctags, contacts)
@@ -408,9 +411,26 @@ class ContactsService:
         if (target.hostname or "").split(".")[-2:] != (base.hostname or "").split(".")[-2:]:
             raise ContactsError(f"Refusing to send credentials to an unexpected host: {target.hostname}")
 
-    def _client(self) -> httpx.Client:
-        return httpx.Client(auth=(self.s.carddav_username, self.s.app_password), timeout=30, transport=self._transport,
-                            headers={"User-Agent": "icloud-mcp"})
+    @contextlib.contextmanager
+    def _client(self) -> Iterator[httpx.Client]:
+        """The service's one HTTP client, kept open so its connections are reused (keep-alive) instead of a new TLS handshake
+        per cache refresh or write. httpx clients are safe to share between threads. A transport failure closes it, and the
+        next call builds a new one."""
+        with self._http_lock:
+            if self._http is None:
+                self._http = httpx.Client(auth=(self.s.carddav_username, self.s.app_password), timeout=30, transport=self._transport,
+                                          headers={"User-Agent": "icloud-mcp"})
+            client = self._http
+        try:
+            yield client
+        except Exception as e:
+            if isinstance(e, httpx.TransportError) or isinstance(e.__cause__, httpx.TransportError):
+                with self._http_lock:
+                    if self._http is client:
+                        self._http = None
+                with contextlib.suppress(Exception):
+                    client.close()
+            raise
 
     def _dav(self, client: httpx.Client, method: str, url: str, body: str, depth: str) -> httpx.Response:
         self._check_url(url)

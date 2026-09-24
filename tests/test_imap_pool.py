@@ -127,8 +127,8 @@ def test_parallel_calls_never_share_a_connection_and_the_pool_stays_capped(svc):
     [t.start() for t in threads]
     [t.join(5) for t in threads]
     assert len({id(c) for c in held}) == 4                     # four calls at once, four connections
-    assert len(svc._pool) == svc.s.imap_pool_size == 2          # only two kept, the rest logged out
-    assert sum("logout" in c.calls for c in held) == 2
+    assert len(svc._pool) == svc.s.imap_pool_size == 3          # only three kept (the default), the rest logged out
+    assert sum("logout" in c.calls for c in held) == 1         # four minus the three kept
 
 
 def test_health_proves_a_real_login_and_close_pool_logs_everything_out(svc):

@@ -435,7 +435,10 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `MCP_HOST`, `MCP_PORT`, `MCP_EXTRA_ALLOWED_HOSTS` | 127.0.0.1 (0.0.0.0 in the Docker image), 8000, empty | Bind address and extra allowed `Host` headers |
 | `MCP_STATELESS` | true | No server-side MCP sessions, so a restart never breaks a connected client ("Missing session ID") |
 | `TOOL_TIMEOUT_SECONDS` | 90 | A tool call running longer is abandoned with an error instead of hanging |
-| `IMAP_POOL_SIZE`, `IMAP_IDLE_SECONDS` | 2, 600 | Logged-in mail connections kept for reuse (0 = log in on every call), and how long an unused one is kept |
+| `IMAP_POOL_SIZE`, `IMAP_IDLE_SECONDS` | 3, 600 | Logged-in mail connections kept for reuse (0 = log in on every call), and how long they are kept warm after the last call |
+| `CALDAV_POOL_SIZE`, `CALDAV_KEEPALIVE_SECONDS` | 4, 600 | Calendar connections kept for reuse, and how long they are kept warm after the last call (0 = no keep-alive) |
+| `WARMUP_ON_START` | true | Sign in to mail, calendar and contacts in the background right after start, so the first call is fast |
+| `TOOL_WORKERS` | 8 | Tool calls that can run at the same time |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
