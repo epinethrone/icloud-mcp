@@ -312,11 +312,12 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>Contacts</b> &nbsp;·&nbsp; 5 tools</summary>
 
-`contacts_search`, `contacts_get`, `contacts_create`, `contacts_update`, `contacts_delete`
+`contacts_search`, `contacts_get`, `contacts_upcoming_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`
 
 - Contacts are fetched whole, cached and searched locally by name, nickname, company, email or phone, ignoring accents. A contact with no email comes back with `has_email: false`, so an agent asks instead of guessing.
 - **Misspelled names are handled.** `contacts_search` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.
 - **Postal addresses** are read and written as street, city, region, postcode and country, with home, work or your own labels ("Holiday house"), stored the way Apple's Contacts app expects.
+- **Birthdays coming up.** `contacts_upcoming_birthdays` lists them soonest first, with the age turned when the year is known (Apple's "year unknown" 1604 is understood, and 29 February falls on the 28th in other years).
 - Updates keep every field outside the changed ones and use ETags to refuse stale overwrites. Contact photos and notes are never returned.
 
 </details>
@@ -361,6 +362,10 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 `icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `mac_helper_status` says whether the Mac helper is online, when it was last seen and which version it runs.
 
 </details>
+
+### Ready-made workflows
+
+The server also offers MCP prompts your client can show as one-click workflows: **Triage my inbox**, **Plan my week**, **Prepare for an appointment** and **Birthdays coming up**. Each only appears when the areas it needs are on, and each tells the agent to show you what it would do before sending, booking, moving or deleting anything.
 
 ## Reminders, Notes and iCloud Drive through your Mac
 
