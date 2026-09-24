@@ -128,3 +128,18 @@ def test_the_tool_reads_the_message_without_marking_it_read(tmp_path, monkeypatc
     r = json.loads(asyncio.run(mcp.call_tool("mail_extract_bookings", {"folder": "INBOX", "uid": 9})).content[0].text)
     assert r["items"][0]["kind"] == "hotel" and r["uidvalidity"] == 3 and "untrusted" in r["notice"].lower()
     assert seen[0] is True and "BODY.PEEK[]" in seen[1]                                   # read-only, PEEK: not marked read
+
+
+def test_a_string_airport_does_not_hide_the_rest_of_the_mail():
+    flight = json.loads(json.dumps(FLIGHT))
+    flight["reservationFor"]["departureAirport"], flight["reservationFor"]["arrivalAirport"] = "AMS", "LHR"
+    items = from_json_ld(html_with(flight, HOTEL))
+    assert [i["kind"] for i in items] == ["flight", "hotel"] and items[0]["calendar_event"]["summary"] == "Flight KL1234 AMS to LHR"
+
+
+def test_cancellations_are_never_handed_over_as_bookable():
+    cancelled = dict(HOTEL, reservationStatus="http://schema.org/ReservationCancelled")
+    (c,) = from_json_ld(html_with(cancelled))
+    assert c["kind"] == "cancellation" and c["cancelled_booking"] == "hotel" and "calendar_event" not in c
+    (ics,) = from_ics(ICS.replace(b"METHOD:REQUEST", b"METHOD:CANCEL"))
+    assert ics["kind"] == "cancellation" and "calendar_event" not in ics and ics["uid"] == "abc-123@clinic.example"

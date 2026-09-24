@@ -97,8 +97,9 @@ def _from_reservation(node: dict[str, Any]) -> dict[str, Any] | None:
     if kind == "flight":
         airline = what.get("airline") if isinstance(what.get("airline"), dict) else {}
         code = f"{_text(airline.get('iataCode')) or ''}{_text(what.get('flightNumber')) or ''}".strip() or _text(what.get("flightNumber"))
-        dep, arr = what.get("departureAirport") or {}, what.get("arrivalAirport") or {}
-        dep_name, arr_name = _text(dep.get("iataCode")) or _place(dep), _text(arr.get("iataCode")) or _place(arr)
+        dep, arr = what.get("departureAirport"), what.get("arrivalAirport")
+        dep_name = (_text(dep.get("iataCode")) if isinstance(dep, dict) else None) or _place(dep)   # an airport may be a plain string
+        arr_name = (_text(arr.get("iataCode")) if isinstance(arr, dict) else None) or _place(arr)
         start, end = what.get("departureTime"), what.get("arrivalTime")
         item.update(flight=code, airline=_text(airline.get("name")), departure_airport=_place(dep), arrival_airport=_place(arr),
                     departure=_text(start), arrival=_text(end), seat=_text((node.get("reservedTicket") or {}).get("ticketedSeat"))
@@ -115,6 +116,7 @@ def _from_reservation(node: dict[str, Any]) -> dict[str, Any] | None:
     elif kind in ("train", "bus", "boat"):
         dep = what.get("departureStation") or what.get("departureBusStop") or what.get("departureBoatTerminal") or {}
         arr = what.get("arrivalStation") or what.get("arrivalBusStop") or what.get("arrivalBoatTerminal") or {}
+        dep, arr = (dep if isinstance(dep, dict) else {"name": dep}), (arr if isinstance(arr, dict) else {"name": arr})
         start, end = what.get("departureTime"), what.get("arrivalTime")
         label = _text(what.get("trainNumber") or what.get("busNumber") or what.get("name"))
         item.update(number=label, departure_station=_place(dep), arrival_station=_place(arr), departure=_text(start), arrival=_text(end))
@@ -140,7 +142,12 @@ def _from_reservation(node: dict[str, Any]) -> dict[str, Any] | None:
                     ticket=_text((node.get("reservedTicket") or {}).get("ticketToken")) if isinstance(node.get("reservedTicket"), dict) else None)
         item["calendar_event"] = _event(name or "Event", start, end, item["venue"], [f"Booking {number}" if number else ""])
     item = {k: v for k, v in item.items() if v not in (None, "", [])}
-    return item if item.get("calendar_event", {}).get("start") else None
+    if not item.get("calendar_event", {}).get("start"):
+        return None
+    if (status or "").lower().endswith("cancelled"):                         # never hand over a cancelled booking as bookable
+        item["kind"], item["cancelled_booking"] = "cancellation", kind
+        item.pop("calendar_event")
+    return item
 
 
 def from_json_ld(html: str) -> list[dict[str, Any]]:
@@ -179,10 +186,13 @@ def from_ics(data: bytes) -> list[dict[str, Any]]:
             continue
         summary, location = _text(str(ev.get("summary") or "")) or "Appointment", _text(str(ev.get("location") or ""))
         organizer = str(ev.get("organizer") or "").removeprefix("mailto:").removeprefix("MAILTO:") or None
-        item = {"kind": "invitation" if method == "REQUEST" else "calendar entry", "source": "calendar attachment (.ics)",
+        cancelled = method == "CANCEL" or str(ev.get("status") or "").upper() == "CANCELLED"
+        item = {"kind": "cancellation" if cancelled else "invitation" if method == "REQUEST" else "calendar entry",
+                "source": "calendar attachment (.ics)",
                 "method": method, "uid": _text(str(ev.get("uid") or "")), "organizer": organizer, "summary": summary,
                 "start": start, "end": end, "location": location,
-                "calendar_event": _event(summary, start, end, location, [f"Organizer: {organizer}" if organizer else ""])}
+                **({} if cancelled else {"calendar_event": _event(summary, start, end, location,
+                                                                  [f"Organizer: {organizer}" if organizer else ""])})}
         items.append({k: v for k, v in item.items() if v not in (None, "")})
     return items
 
@@ -208,6 +218,7 @@ def extract(raw: bytes) -> dict[str, Any]:
     return {"subject": _text(str(msg.get("Subject") or "")), "from": _text(str(msg.get("From") or "")), "items": unique[:MAX_ITEMS],
             "found": len(unique),
             "note": ("Copied from the booking data and calendar attachments the sender embedded, never guessed from the text. Check "
-                     "the calendar before booking, and put people in attendees, not in the title." if unique else
+                     "the calendar before booking, and put people in attendees, not in the title. Items of kind 'cancellation' "
+                     "carry no calendar_event: find the existing event and cancel or remove it instead." if unique else
                      "This message carries no structured booking data or calendar attachment. Read it with mail_get_message; "
                      "only book what it states plainly, and confirm the details with the user.")}
