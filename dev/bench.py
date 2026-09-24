@@ -52,6 +52,8 @@ class Meter:
         self.delay = latency_ms / 1000.0
 
     def hit(self, key: str, round_trips: int = 1) -> None:
+        if threading.current_thread().name.startswith(("icloud-mcp-keepalive", "icloud-warmup")):
+            key = "background_" + key                 # keep-alive pings and warm-up: off the call path, counted apart
         with self.lock:
             self.c[key] += 1
         if self.delay and round_trips:
@@ -252,19 +254,30 @@ class Bench:
         print(f"  {name}: {row['median_s']:.3f} s", file=sys.stderr)
 
     async def idle_loop(self, calls: int, gap: float):
-        """Mail searches spaced out in time: every tcp connect or login after the first is a reconnect."""
+        """A mail search and a week of calendar, repeated with long pauses in between, as an agent that checks in now and
+        then does. Without keep-alive every call after a pause reconnects; background_* columns show the pings instead."""
         mcp = self.server()
-        before = self.m.snapshot()
-        times = []
+        today = date.today()
+        steps = [("mail_search", {"folder": "INBOX", "limit": 5}),
+                 ("calendar_list_events", {"start": str(today), "end": str(today + timedelta(days=7))})]
+        times: dict[str, list[float]] = {t: [] for t, _ in steps}
+        deltas: dict[str, Counter] = {t: Counter() for t, _ in steps}
         for i in range(calls):
-            t0 = time.perf_counter()
-            await self.call(mcp, "mail_search", {"folder": "INBOX", "limit": 5})
-            times.append(time.perf_counter() - t0)
+            for tool, a in steps:
+                before = self.m.snapshot()
+                t0 = time.perf_counter()
+                await self.call(mcp, tool, a)
+                times[tool].append(time.perf_counter() - t0)
+                d = self.m.snapshot() - before
+                deltas[tool] += Counter({k: v for k, v in d.items() if not k.startswith("background_")})
             if i < calls - 1:
+                before = self.m.snapshot()
                 await asyncio.sleep(gap)
-        d = self.m.snapshot() - before
-        self.rows.append({"scenario": f"mail_search x{calls}, {gap:g} s apart", "median_s": statistics.median(times),
-                          "p90_s": max(times), "bytes": 0, "notice_chars": 0, **d})
+                bg = self.m.snapshot() - before
+                deltas[steps[1][0]] += Counter({k: v for k, v in bg.items() if k.startswith("background_")})
+        for tool, _ in steps:
+            self.rows.append({"scenario": f"{tool} x{calls}, {gap:g} s apart (totals)", "median_s": statistics.median(times[tool]),
+                              "p90_s": max(times[tool]), "bytes": 0, "notice_chars": 0, **deltas[tool]})
 
 
 async def run(args, settings, meter: Meter) -> list[dict]:
@@ -312,6 +325,7 @@ async def run(args, settings, meter: Meter) -> list[dict]:
 
 def table(rows: list[dict], title: str) -> str:
     counts = ["tcp_connects", "imap_logins", "imap_commands", "smtp_logins", "caldav_requests", "carddav_requests", "bridge_jobs"]
+    counts += ["background_" + c for c in counts]
     shown = [c for c in counts if any(r.get(c) for r in rows)]
     head = ["scenario", "median s", "p90 s", "bytes", "notice chars"] + [c.replace("_", " ") for c in shown]
     out = [f"### {title}", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]

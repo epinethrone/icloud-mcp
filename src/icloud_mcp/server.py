@@ -5,6 +5,9 @@ import asyncio
 import functools
 import logging
 import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any
@@ -201,6 +204,7 @@ class Attachment(BaseModel):
 
 
 _tool_timeout = 90.0     # set from TOOL_TIMEOUT_SECONDS in create_server()
+_executor: ThreadPoolExecutor | None = None   # runs tool calls; sized by TOOL_WORKERS in create_server()
 _error_secrets: tuple[str, ...] = ()   # passwords and tokens: masked in every tool error (set in create_server)
 _error_ids: tuple[str, ...] = ()       # account identifiers: masked in unexpected errors, which may quote server responses
 _DRIVE_PATH = "Path inside iCloud Drive, relative to its root, e.g. 'Documents/Tax'. '' or omitted = the root."
@@ -214,10 +218,14 @@ def _guard(fn):
     """Run a blocking service call in a worker thread and convert domain errors into tool errors.
     A call that runs longer than the tool timeout is abandoned with an error, so a client never waits on a hang."""
 
+    def run(*args, **kwargs):
+        return clean_deep(fn(*args, **kwargs))      # cleaned in the worker thread, so a large result never blocks the event loop
+
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         try:
-            return clean_deep(await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=_tool_timeout))
+            call = functools.partial(run, *args, **kwargs)
+            return await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(_executor, call), timeout=_tool_timeout)
         except asyncio.TimeoutError as e:
             raise ToolError(
                 f"{getattr(fn, '__name__', 'The tool')} took longer than {_tool_timeout:g}s and was abandoned. Try again; if it keeps "
@@ -285,8 +293,10 @@ def _register_prompts(mcp: MCPServer, s: Settings) -> None:
 def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
     """The MCP server with its tools. In local mode (stdio) there is no OAuth provider and no web pages: the desktop client that
     starts the process is the only one talking to it."""
-    global _tool_timeout, _error_secrets, _error_ids
+    global _tool_timeout, _error_secrets, _error_ids, _executor
     _tool_timeout = float(s.tool_timeout)
+    if _executor is None or _executor._max_workers != s.tool_workers:
+        _executor = ThreadPoolExecutor(max_workers=s.tool_workers, thread_name_prefix="icloud-tool")
     _error_secrets = (s.app_password, s.owner_password, s.bridge_token)
     _error_ids = (s.username, s.email_address, s.imap_username, s.smtp_username, s.caldav_username, s.carddav_username)
     if s.local_mode:
@@ -414,11 +424,14 @@ def _timed(check, secrets: tuple[str, ...] = ()) -> dict[str, Any]:
 def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | None = None) -> None:
     writable = not s.read_only
     health: dict[str, Any] = {}                 # area -> zero-argument check, filled in as each area registers
+    warm: dict[str, Any] = {}                   # area -> zero-argument warm-up, run in the background at start (WARMUP_ON_START)
+    mcp._icloud_warmups = warm
 
     # ------------------------------------------------------------------ mail
     if s.enable_mail:
         mail = MailService(s)
         health["mail"] = mail.health
+        warm["mail"] = lambda: mail.list_folders() and None       # one pooled login plus the folder list
         if s.allow_send and writable and s.require_approval and provider is not None:
             register_outbox_routes(mcp, provider, s, mail)
 
@@ -690,6 +703,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     if s.enable_calendar:
         cal = CalendarService(s)
         health["calendar"] = lambda: {"calendars": len(cal.list_calendars())}
+        warm["calendar"] = cal.list_calendars                    # one pooled connection plus the calendar list
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -846,6 +860,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     if s.enable_contacts:
         contacts = ContactsService(s)
         health["contacts"] = lambda: {"contacts": contacts.search("", limit=1).get("total_matches")}
+        warm["contacts"] = lambda: contacts.search("", limit=1) and None   # fills the address-book cache
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -1406,7 +1421,28 @@ def main_local(s: Settings) -> None:
         else:
             log.warning("Bridge port %s is already in use (another icloud-mcp is running?). Reminders, Notes and Drive answer "
                         "'Mac offline' in this session; Mail, Calendar and Contacts work.", s.bridge_port)
+    start_warmup(mcp, s)
     asyncio.run(mcp.run_stdio_async())
+
+
+def start_warmup(mcp: MCPServer, s: Settings) -> threading.Thread | None:
+    """Log in to each area in the background right after start, so the first real call finds warm connections. Never fatal:
+    a failure is logged (without detail that could carry account data) and the first call simply connects as usual."""
+    jobs = dict(getattr(mcp, "_icloud_warmups", {}) or {})
+    if not s.warmup_on_start or not jobs:
+        return None
+
+    def run() -> None:
+        for area, job in jobs.items():
+            t0 = time.monotonic()
+            try:
+                job()
+                log.info("Warm-up: %s ready in %.1f s", area, time.monotonic() - t0)
+            except Exception as e:  # noqa: BLE001 - warm-up is best effort
+                log.warning("Warm-up: %s failed (%s); the first call will connect instead", area, type(e).__name__)
+    t = threading.Thread(target=run, name="icloud-warmup", daemon=True)
+    t.start()
+    return t
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1432,6 +1468,7 @@ def main(argv: list[str] | None = None) -> None:
         start_bridge_listener(build_bridge_app(bridge, s), s.bridge_port, cert, key, host=s.bridge_host)
         log.info("Mac bridge listening on private port %s. Certificate fingerprint (pin it in the Mac helper): sha256:%s", s.bridge_port, fingerprint)
     log.info("iCloud MCP listening on %s:%s, public URL %s/mcp", s.host, s.port, s.public_url)
+    start_warmup(mcp, s)
     uvicorn.run(app, host=s.host, port=s.port, log_level="info")
 
 

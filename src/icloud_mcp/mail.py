@@ -32,6 +32,7 @@ import html2text
 from imapclient import IMAPClient
 
 from .config import Settings
+from .keepalive import TICKER
 from .matching import fuzzy_match_all, norm, similar_enough
 from .safety import warnings_for
 from .mailbulk import bulk_view
@@ -512,6 +513,11 @@ def _flag_view(flags: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
+_IMAP_PING_SECONDS = 300.0    # keep-alive: NOOP a pooled IMAP session idle this long
+_FOLDERS_SECONDS = 60.0       # the folder LIST
+_SMTP_IDLE_SECONDS = 60.0     # a logged-in SMTP connection unused for longer is closed rather than reused
+
+
 class MailService:
     def __init__(self, settings: Settings):
         self.s = settings
@@ -521,6 +527,12 @@ class MailService:
         self._people_cache: dict[bool, tuple[float, dict[str, dict[str, Any]], dict[str, int]]] = {}
         self._pool_lock = threading.Lock()
         self._pool: list[tuple[IMAPClient, float]] = []      # idle, logged-in connections and when each was last used
+        self._last_activity = 0.0
+        self._ticking = False
+        self._folders_lock = threading.Lock()
+        self._folders: tuple[float, list[tuple[Any, Any, str]]] | None = None   # (read at, LIST result)
+        self._smtp_lock = threading.Lock()
+        self._smtp: tuple[smtplib.SMTP, float] | None = None                     # (logged-in connection, last used)
 
     # -- connections ---------------------------------------------------------
     def _login(self) -> IMAPClient:
@@ -570,8 +582,37 @@ class MailService:
         with self._pool_lock:
             if len(self._pool) < self.s.imap_pool_size:
                 self._pool.append((c, time.monotonic()))
-                return
-        self._discard(c)
+                c = None
+        if c is not None:
+            self._discard(c)
+        if not self._ticking:
+            self._ticking = True
+            TICKER.add(self._keepalive)
+
+    def _keepalive(self, now: float) -> None:
+        """Run by the keep-alive ticker: while the server was used within IMAP_IDLE_SECONDS, a NOOP every five minutes keeps
+        pooled sessions from being dropped by the server; after that they are logged out."""
+        with self._pool_lock:
+            if now - self._last_activity > self.s.imap_idle_seconds:
+                stale, due, self._pool = self._pool, [], []
+            else:
+                stale = []
+                due = [(c, t) for c, t in self._pool if now - t >= _IMAP_PING_SECONDS]
+                self._pool = [(c, t) for c, t in self._pool if now - t < _IMAP_PING_SECONDS]
+        for c, _ in stale:
+            self._discard(c)
+        for c, _ in due:
+            try:
+                c.noop()
+            except Exception:  # noqa: BLE001 - a dead session is simply not put back
+                self._discard(c)
+                continue
+            with self._pool_lock:
+                keep = len(self._pool) < self.s.imap_pool_size
+                if keep:
+                    self._pool.append((c, time.monotonic()))
+            if not keep:
+                self._discard(c)
 
     @staticmethod
     def _discard(c: IMAPClient) -> None:
@@ -590,6 +631,7 @@ class MailService:
         handshake and login (about a second against iCloud) on every call. Each connection is used by one call at a time. A call
         that fails leaves its connection out of the pool, since its state is unknown. fresh=True always logs in anew."""
         reuse = self.s.imap_pool_size > 0 and not fresh
+        self._last_activity = time.monotonic()
         c = (self._checkout() if reuse else None) or self._login()
         ok = False
         try:
@@ -600,6 +642,18 @@ class MailService:
                 self._checkin(c)
             else:
                 self._discard(c)
+
+    def _list(self, c: IMAPClient) -> list[tuple[Any, Any, str]]:
+        """The folder LIST, kept for a minute: folders rarely change, and every all-folders search and folder lookup needs it.
+        Creating a folder here clears it; one made in the Mail app appears within the minute."""
+        now = time.monotonic()
+        with self._folders_lock:
+            if self._folders and now - self._folders[0] < _FOLDERS_SECONDS:
+                return self._folders[1]
+        folders = list(c.list_folders())
+        with self._folders_lock:
+            self._folders = (now, folders)
+        return folders
 
     def resolve_folder(self, c: IMAPClient, name: str) -> str:
         key = (name or "INBOX").strip().lower()
@@ -614,7 +668,7 @@ class MailService:
         with contextlib.suppress(Exception):
             found = c.find_special_folder(flag)
         if not found:
-            existing = {f[2] for f in c.list_folders()}
+            existing = {f[2] for f in self._list(c)}
             found = next((fb for fb in fallbacks if fb in existing), None)
         if not found:
             raise MailError(f"Could not locate the '{name}' folder on the server.")
@@ -636,7 +690,7 @@ class MailService:
     def list_folders(self) -> list[dict[str, Any]]:
         with self.imap() as c:
             out = []
-            for flags, _delim, name in c.list_folders():
+            for flags, _delim, name in self._list(c):
                 fl = [f.decode() if isinstance(f, bytes) else str(f) for f in flags]
                 if "\\Noselect" in fl:
                     continue
@@ -819,7 +873,7 @@ class MailService:
         per_folder: dict[str, int] = {}
         skipped: list[str] = []
         with self.imap() as c:
-            for flags, _delim, name in c.list_folders():
+            for flags, _delim, name in self._list(c):
                 fl = [f.decode() if isinstance(f, bytes) else str(f) for f in flags]
                 if "\\Noselect" in fl or "\\NonExistent" in fl:
                     continue
@@ -1093,26 +1147,63 @@ class MailService:
             raise MailError(f"Recipient(s) not permitted by SEND_ALLOWLIST: {', '.join(blocked)}")
         return addrs
 
-    def _smtp_send(self, msg: EmailMessage, recipients: list[str]) -> dict[str, Any]:
+    def _smtp_open(self) -> smtplib.SMTP:
         s = self.s
         ctx = ssl.create_default_context()
+        server = smtplib.SMTP_SSL(s.smtp_host, s.smtp_port, context=ctx, timeout=30) if s.smtp_security == "ssl" else smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=30)
         try:
-            server = smtplib.SMTP_SSL(s.smtp_host, s.smtp_port, context=ctx, timeout=30) if s.smtp_security == "ssl" else smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=30)
-            with server:
+            server.ehlo()
+            if s.smtp_security == "starttls":
+                server.starttls(context=ctx)
                 server.ehlo()
-                if s.smtp_security == "starttls":
-                    server.starttls(context=ctx)
-                    server.ehlo()
-                server.login(s.smtp_username, s.app_password)
-                return server.send_message(msg, from_addr=self.s.email_address, to_addrs=recipients)
-        except smtplib.SMTPAuthenticationError as e:
-            raise MailError(f"SMTP authentication failed ({e.smtp_code}). Check ICLOUD_USERNAME / app-specific password.") from e
-        except smtplib.SMTPRecipientsRefused as e:
-            raise MailError(f"All recipients were refused by the server: {e.recipients}") from e
-        except smtplib.SMTPSenderRefused as e:
-            raise MailError(f"Sender address refused ({e.smtp_code}): the From address must be your iCloud address or one of its aliases.") from e
-        except (smtplib.SMTPException, OSError) as e:
-            raise MailError(f"SMTP send failed: {e}") from e
+            server.login(s.smtp_username, s.app_password)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                server.close()
+            raise
+        return server
+
+    def _smtp_drop(self) -> None:
+        conn, self._smtp = self._smtp, None
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn[0].quit()
+            with contextlib.suppress(Exception):
+                conn[0].close()
+
+    def _smtp_send(self, msg: EmailMessage, recipients: list[str]) -> dict[str, Any]:
+        """Hand one message to the SMTP server. The logged-in connection is kept for a minute and checked with NOOP before
+        reuse, which saves a TLS handshake and login per send. Every gate (approval, allowlist, recipient cap) is checked by the
+        caller before this runs, per message, whatever connection carries it. A send that fails is never retried here: the
+        server may have accepted it."""
+        with self._smtp_lock:
+            try:
+                if self._smtp is not None:
+                    conn, last = self._smtp
+                    alive = False
+                    if time.monotonic() - last <= _SMTP_IDLE_SECONDS:
+                        with contextlib.suppress(Exception):
+                            alive = conn.noop()[0] == 250
+                    if not alive:
+                        self._smtp_drop()
+                if self._smtp is None:
+                    self._smtp = (self._smtp_open(), time.monotonic())
+                conn = self._smtp[0]
+                refused = conn.send_message(msg, from_addr=self.s.email_address, to_addrs=recipients)
+                self._smtp = (conn, time.monotonic())
+                return refused
+            except smtplib.SMTPAuthenticationError as e:
+                self._smtp_drop()
+                raise MailError(f"SMTP authentication failed ({e.smtp_code}). Check ICLOUD_USERNAME / app-specific password.") from e
+            except smtplib.SMTPRecipientsRefused as e:
+                self._smtp_drop()
+                raise MailError(f"All recipients were refused by the server: {e.recipients}") from e
+            except smtplib.SMTPSenderRefused as e:
+                self._smtp_drop()
+                raise MailError(f"Sender address refused ({e.smtp_code}): the From address must be your iCloud address or one of its aliases.") from e
+            except (smtplib.SMTPException, OSError) as e:
+                self._smtp_drop()
+                raise MailError(f"SMTP send failed: {e}") from e
 
     def _summary_of(self, msg: EmailMessage) -> dict[str, Any]:
         return {
@@ -1304,4 +1395,6 @@ class MailService:
                 c.create_folder(name)
             except Exception as e:  # noqa: BLE001
                 raise MailError(f"Could not create folder '{name}': {e}") from e
+        with self._folders_lock:
+            self._folders = None
         return {"created": True, "name": name}
