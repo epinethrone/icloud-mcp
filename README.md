@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (21 tools), Calendar (9), Contacts (6), Reminders (7), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (25 tools), Calendar (12), Contacts (11), Reminders (10), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
 </picture>
 
 <br><br>

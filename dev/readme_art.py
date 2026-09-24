@@ -78,10 +78,10 @@ def glyph(kind: str, cx: float, cy: float) -> str:
 
 
 APPS = [
-    ("mail", "Mail", 21, "#0a84ff", "#5ac8fa", ["Search every folder, read whole", "threads, reply and file away."]),
-    ("calendar", "Calendar", 9, "#ff3b30", "#ff6961", ["Find free time, plan, move", "and answer invitations."]),
-    ("contacts", "Contacts", 6, "#8e8e93", "#aeaeb2", ["Find anyone, even misspelled.", "Addresses, phones, emails."]),
-    ("reminders", "Reminders", 7, "#ff9500", "#ffb340", ["Create, move and complete,", "live through EventKit."]),
+    ("mail", "Mail", 25, "#0a84ff", "#5ac8fa", ["Search every folder, read whole", "threads, reply and file away."]),
+    ("calendar", "Calendar", 12, "#ff3b30", "#ff6961", ["Find free time, plan, move", "and answer invitations."]),
+    ("contacts", "Contacts", 11, "#8e8e93", "#aeaeb2", ["Find anyone, even misspelled.", "Addresses, phones, emails."]),
+    ("reminders", "Reminders", 10, "#ff9500", "#ffb340", ["Create, move and complete,", "live through EventKit."]),
     ("notes", "Notes", 9, "#ffcc00", "#ffd60a", ["Read, edit and organise", "into folders."]),
     ("drive", "iCloud Drive", 10, "#32ade6", "#64d2ff", ["Search inside documents,", "send, write and tidy files."]),
 ]
@@ -107,7 +107,7 @@ def apps(t: dict) -> str:
   <text x="{x + 32}" y="{y + 224}" font-size="20" fill="{t['soft']}">{lines[1]}</text>
   {f'<text x="{x + 32}" y="{y + 254}" font-size="14" font-weight="600" fill="{t["faint"]}" letter-spacing="1.2">WITH THE MAC HELPER</text>' if mac else ''}
 </g>""")
-    return svg(w, h, "Six apps, one connector: Mail 21 tools, Calendar 9, Contacts 6, Reminders 7, Notes 9, iCloud Drive 10.", f"""
+    return svg(w, h, "Six apps, one connector: Mail 25 tools, Calendar 12, Contacts 11, Reminders 10, Notes 9, iCloud Drive 10.", f"""
 <rect width="{w}" height="{h}" rx="36" fill="{t['bg']}"/>
 <text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="{t['ink']}" letter-spacing="-1.2">Six apps. One connector.</text>
 <text x="640" y="108" text-anchor="middle" font-size="21" fill="{t['soft']}">Plus a health check that tests every service in one call.</text>
