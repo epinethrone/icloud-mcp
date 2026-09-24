@@ -105,6 +105,7 @@ class Settings:
     bridge_host: str = "0.0.0.0"  # address the bridge port binds to inside this process (127.0.0.1 when server and helper share a Mac)
     local_mode: bool = False      # stdio for a desktop client on this computer: no OAuth, no public URL, no browser outbox
     tools: tuple[str, ...] = ()   # TOOLS: 'essential' and/or tool names to expose; empty = every tool of the enabled areas
+    shortcuts_allow: tuple[str, ...] = ()   # SHORTCUTS_ALLOW: exact Shortcut names the assistant may run (the Mac keeps its own list too)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -166,12 +167,13 @@ class Settings:
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),
             bridge_host=_str("BRIDGE_HOST", "0.0.0.0"),
             tools=tuple(_list("TOOLS")),
+            shortcuts_allow=tuple(_list("SHORTCUTS_ALLOW")),
         )
 
     # ------------------------------------------------------------------
     @property
     def bridge_enabled(self) -> bool:
-        return self.enable_reminders or self.enable_notes or self.enable_drive
+        return self.enable_reminders or self.enable_notes or self.enable_drive or bool(self.shortcuts_allow)
 
     @property
     def public_host(self) -> str:
@@ -190,7 +192,7 @@ class Settings:
     def _validate_bridge_and_areas(self) -> None:
         if self.bridge_enabled:
             if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
-                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE need BRIDGE_TOKEN: a random secret of at least 32 characters "
+                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
                                  "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
             if self.owner_password and self.bridge_token == self.owner_password:
                 raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")
