@@ -12,6 +12,9 @@
 !Dockerfile
 !docker-compose.yml
 !pyproject.toml
+!packaging/
+!packaging/mcpb/
+!packaging/mcpb/*.py
 !server.json
 !glama.json
 !configure.sh
