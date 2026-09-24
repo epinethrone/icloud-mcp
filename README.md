@@ -272,7 +272,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**79 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**82 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 30 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
@@ -334,11 +334,12 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 </details>
 
 <details>
-<summary><b>Reminders</b> &nbsp;·&nbsp; 7 tools, with the Mac helper</summary>
+<summary><b>Reminders</b> &nbsp;·&nbsp; 10 tools, with the Mac helper</summary>
 
-`reminders_list_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_move` (the same reminder to another list, nothing deleted), `reminders_delete` (Reminders has no Recently Deleted, so this is final)
+`reminders_list_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_move` (the same reminder to another list, nothing deleted), `reminders_delete` (Reminders has no Recently Deleted, so this is final), `reminders_create_list`, `reminders_update_list` (rename), `reminders_delete_list` (with everything in it, only after a preview and its token)
 
-- Runs through Apple's EventKit: every read is live and takes about 20 to 40 ms, however long your lists are. Only active reminders are returned.
+- Runs through Apple's EventKit: every read is live and takes about 20 to 40 ms, however long your lists are. Active reminders by default; `completed="only"` lists what was done in a window, with when.
+- Repeating reminders (`repeat`, daily or coarser: `FREQ=WEEKLY;BYDAY=MO`, `FREQ=MONTHLY;BYMONTHDAY=1;COUNT=12`) and extra alerts (`alerts_minutes_before`, `alerts_at`). Changing alerts keeps the alert at the due time itself.
 - List names can repeat across accounts, so tools accept a `list_id` and refuse an ambiguous name. Due dates are validated as real dates (a bare date means 09:00 local time).
 
 </details>

@@ -32,7 +32,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
@@ -45,14 +45,20 @@ OPS = {
     # Reminders
     "reminder_lists": {},
     "reminders_list": {"list": ("str", False, 200), "list_id": ("str", False, 200), "query": ("str", False, 200), "refresh": ("bool", False, 0),
-                       "limit": ("int", False, 200)},
+                       "limit": ("int", False, 200), "completed": ("str", False, 4), "completed_since": ("iso", False, 40),
+                       "completed_before": ("iso", False, 40)},
     "reminder_create": {"title": ("str", True, 500), "list": ("str", False, 200), "list_id": ("str", False, 200), "notes": ("str", False, 20000), "due": ("iso", False, 40),
-                        "priority": ("int", False, 9)},
+                        "priority": ("int", False, 9), "repeat": ("str", False, 300), "alerts_before": ("str", False, 200),
+                        "alerts_at": ("str", False, 600)},
     "reminder_update": {"id": ("str", True, 500), "title": ("str", False, 500), "notes": ("str", False, 20000), "due": ("iso", False, 40),
-                        "clear_due": ("bool", False, 0), "priority": ("int", False, 9)},
+                        "clear_due": ("bool", False, 0), "priority": ("int", False, 9), "repeat": ("str", False, 300),
+                        "clear_repeat": ("bool", False, 0), "alerts_before": ("str", False, 200), "alerts_at": ("str", False, 600)},
     "reminder_complete": {"id": ("str", True, 500), "completed": ("bool", False, 0)},
     "reminder_delete": {"id": ("str", True, 500)},
     "reminder_move": {"id": ("str", True, 500), "list": ("str", False, 200), "list_id": ("str", False, 200)},
+    "reminder_list_create": {"name": ("str", True, 200), "account": ("str", False, 200)},
+    "reminder_list_update": {"list_id": ("str", True, 200), "name": ("str", True, 200)},
+    "reminder_list_delete": {"list_id": ("str", True, 200), "name": ("str", True, 200), "delete_reminders": ("bool", False, 0)},
     # Notes
     "note_folders": {},
     "notes_list": {"folder": ("str", False, 200), "query": ("str", False, 200), "search_body": ("bool", False, 0), "limit": ("int", False, 100)},
@@ -90,7 +96,8 @@ DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
 # Shortcuts: one fixed script, run by the same Apple Python, which checks the Mac's own allowlist before `shortcuts run`.
 SHORTCUT_SCRIPT = os.path.join(OPS_DIR, "shortcut.py")
 SHORTCUT_OPS = frozenset({"shortcut_run"})
-EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete", "reminder_move"})
+EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete", "reminder_move",
+                          "reminder_list_create", "reminder_list_update", "reminder_list_delete"})
 REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
 OP_FILES = {
     "note_folders": "note_folders.js", "notes_list": "notes_list.js", "note_read": "note_read.js", "note_create": "note_create.js",
@@ -539,6 +546,35 @@ def selftest_write():
         if rid:
             ok, r2, e = run_op("reminder_delete", {"id": rid}, 120)
             step("reminder_delete (cleanup)", ok, None if ok else e)
+
+    # 0.5.0: a scratch list holding a repeating reminder with two alerts, completed and listed as done, then list renamed and deleted
+    lid = None
+    try:
+        ok, lst, e = run_op("reminder_list_create", {"name": stamp + " list"}, 120)
+        if step("reminder_list_create", ok, None if ok else e):
+            lid = lst["id"]
+            ok, r, e = run_op("reminder_create", {"title": stamp + " weekly", "list_id": lid, "due": "2099-01-05T09:00:00",
+                                                  "repeat": "FREQ=WEEKLY;BYDAY=MO;COUNT=4", "alerts_before": "1440,30"}, 120)
+            step("reminder_create with repeat and alerts",
+                 ok and r.get("repeat", "").startswith("FREQ=WEEKLY") and len(r.get("alerts", [])) >= 2, None if ok else e)
+            if ok:
+                ok, r2, e = run_op("reminder_update", {"id": r["id"], "clear_repeat": True, "alerts_before": "", "alerts_at": ""}, 120)
+                step("reminder_update clears repeat and alerts", ok and "repeat" not in r2, None if ok else e)
+                ok, r2, e = run_op("reminder_complete", {"id": r["id"]}, 120)
+                ok, r2, e = run_op("reminders_list", {"list_id": lid, "completed": "only"}, 120)
+                step("reminders_list completed=only finds it", ok and any(x["id"] == r["id"] and x.get("completed_at") for x in r2["reminders"]),
+                     None if ok else e)
+            ok, r2, e = run_op("reminder_list_update", {"list_id": lid, "name": stamp + " list renamed"}, 120)
+            step("reminder_list_update", ok, None if ok else e)
+            ok, r2, e = run_op("reminder_list_delete", {"list_id": lid, "name": stamp + " list renamed"}, 120)
+            step("reminder_list_delete refuses a list that holds reminders", not ok and "holds" in (e or ""), e if ok else None)
+    finally:
+        if lid:
+            name = stamp + " list renamed"
+            ok, r2, e = run_op("reminder_list_delete", {"list_id": lid, "name": name, "delete_reminders": True}, 120)
+            if not ok:
+                ok, r2, e = run_op("reminder_list_delete", {"list_id": lid, "name": stamp + " list", "delete_reminders": True}, 120)
+            step("reminder_list_delete (cleanup)", ok, None if ok else e)
 
     try:
         ok, r, e = run_op("note_create", {"title": stamp, "body": "temporary, safe to delete <b>& \"quotes\"</b>"}, timeout=60)

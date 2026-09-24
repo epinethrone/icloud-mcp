@@ -5,6 +5,7 @@ import asyncio
 import functools
 import logging
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,11 +28,12 @@ from . import callctx
 from .approvals import register_outbox_routes
 from .auth import SCOPE, OwnerOAuthProvider, register_routes
 from .bridge import BridgeError, MacBridge, build_bridge_app, ensure_tls, start_bridge_listener
-from .cal import CalendarError, CalendarService, get_tz
+from .cal import CalendarError, CalendarService, get_tz, too_frequent
 from .config import Settings
 from .contacts import ContactsError, ContactsService
 from .instructions import build_instructions, read_agent_notes
-from .safety import clean_deep, warnings_for
+from .safety import clean_deep, confirm_problem, warnings_for
+from .safety import confirm_token as make_confirm_token
 from . import mailbulk
 from .mail import UNTRUSTED_NOTICE, MailError, MailService
 
@@ -93,6 +95,26 @@ class Attachment(BaseModel):
     filename: str
     content_base64: str
     content_type: str | None = None
+
+
+ReminderRepeat = Annotated[str | None, _d("Repeat rule: 'FREQ=WEEKLY;BYDAY=MO', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=12', 'FREQ=YEARLY'. DAILY or coarser; needs a due date.")]
+ReminderAlertsBefore = Annotated[list[int] | None, _d("Alerts this many minutes before the due time, e.g. [1440, 30].")]
+ReminderAlertsAt = Annotated[list[str] | None, _d("Alerts at these times (ISO 8601).")]
+
+
+def _check_repeat(rule: str | None) -> None:
+    if rule is None:
+        return
+    freq = re.search(r"FREQ=([A-Z]+)", rule.upper())
+    if not freq or freq.group(1) not in ("DAILY", "WEEKLY", "MONTHLY", "YEARLY") or too_frequent(rule.upper().removeprefix("RRULE:")):
+        raise ToolError("A reminder repeats at most daily: FREQ=DAILY, WEEKLY, MONTHLY or YEARLY.")
+
+
+def _alert_args(before: list[int] | None, at: list[str] | None) -> dict[str, str]:
+    """Alerts cross the bridge as comma-separated text; given lists (even empty ones, which clear) are passed on together."""
+    if before is None and at is None:
+        return {}
+    return {"alerts_before": ",".join(str(int(m)) for m in (before or [])), "alerts_at": ",".join(at or [])}
 
 
 Attachments = Annotated[list[Attachment] | None, _d("Files to attach (from mail_get_attachment as is; from drive_get_file, name and "
@@ -1112,11 +1134,17 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 query: Annotated[str | None, _d("Only reminders whose title or notes contain this text (case-insensitive).")] = None,
                 refresh: Annotated[bool, _d("Accepted for compatibility. Every read is already live, so this changes nothing.")] = False,
                 limit: Annotated[int, _d("Max reminders to return (1-200).")] = 50,
+                completed: Annotated[Literal["no", "only", "all"], _d("'only' = what was done in the window (default the last 30 days), with completed_at; 'all' = active, then done.")] = "no",
+                completed_since: Annotated[str | None, _d("Start of the done window (ISO 8601).")] = None,
+                completed_before: Annotated[str | None, _d("End of the done window (ISO 8601); default now.")] = None,
             ) -> dict[str, Any]:
-                """List or search the user's ACTIVE (not completed) reminders, soonest due first (undated last). Each has id, title, notes, due
-                (ISO 8601), priority (0 none, 1 high, 5 medium, 9 low), list and list_id. Completed reminders are never returned. Every
-                read is live. Reminders live on the user's Mac, which must be online."""
-                data = bridge.call("reminders_list", _given(list=list_name, list_id=list_id, query=query, refresh=refresh or None, limit=max(1, limit)))
+                """List or search the user's reminders: active ones by default, soonest due first (undated last). Each has id, title,
+                notes, due (ISO 8601), priority (0 none, 1 high, 5 medium, 9 low), list, list_id, and repeat and alerts when set.
+                completed='only' lists what was done instead (newest first). Every read is live. Reminders live on the user's Mac,
+                which must be online."""
+                data = bridge.call("reminders_list", _given(list=list_name, list_id=list_id, query=query, refresh=refresh or None, limit=max(1, limit),
+                                                            completed=None if completed == "no" else completed,
+                                                            completed_since=completed_since, completed_before=completed_before))
                 if isinstance(data, list):                    # an older helper answers with a bare list
                     data = {"reminders": data}
                 return {"notice": _MAC_NOTICE, "count": len(data["reminders"]), **data, "complete": True}
@@ -1132,10 +1160,15 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     notes: Annotated[str | None, _d("Notes text for the reminder.")] = None,
                     due: Annotated[str | None, _d("Due date-time, ISO 8601: '2026-09-21T15:00:00' (local time), '2026-09-21T15:00:00+02:00', or a bare date '2026-09-21' which means 09:00 that day.")] = None,
                     priority: Annotated[int | None, _d("0 none, 1 high, 5 medium, 9 low.")] = None,
+                    repeat: ReminderRepeat = None,
+                    alerts_minutes_before: ReminderAlertsBefore = None,
+                    alerts_at: ReminderAlertsAt = None,
                 ) -> dict[str, Any]:
                     """Create a reminder on the user's Mac (it syncs to their other devices). Convert relative dates ('tomorrow at 3pm')
-                    to ISO 8601 yourself. Returns the new reminder's id."""
-                    return {"created": bridge.call("reminder_create", _given(title=title, list=list_name, list_id=list_id, notes=notes, due=due, priority=priority))}
+                    to ISO 8601 yourself. A repeating reminder needs a due date. Returns the new reminder's id."""
+                    _check_repeat(repeat)
+                    return {"created": bridge.call("reminder_create", _given(title=title, list=list_name, list_id=list_id, notes=notes, due=due, priority=priority,
+                                                                             repeat=repeat, **_alert_args(alerts_minutes_before, alerts_at)))}
 
                 @mcp.tool(annotations=_IDEMPOTENT_WRITE)
                 @_guard
@@ -1146,9 +1179,17 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     due: Annotated[str | None, _d("New due date-time, ISO 8601 (a bare date means 09:00 that day).")] = None,
                     clear_due: Annotated[bool, _d("true = remove the due date.")] = False,
                     priority: Annotated[int | None, _d("0 none, 1 high, 5 medium, 9 low.")] = None,
+                    repeat: ReminderRepeat = None,
+                    clear_repeat: Annotated[bool, _d("true = stop it repeating.")] = False,
+                    alerts_minutes_before: ReminderAlertsBefore = None,
+                    alerts_at: ReminderAlertsAt = None,
                 ) -> dict[str, Any]:
-                    """Change a reminder. Only pass the fields to change. To mark it done use reminders_complete."""
-                    return {"updated": bridge.call("reminder_update", _given(id=id, title=title, notes=notes, due=due, clear_due=clear_due or None, priority=priority))}
+                    """Change a reminder. Only pass the fields to change. Alerts given replace the current ones ([] and [] clear them);
+                    the alert at the due time itself is kept. To mark it done use reminders_complete."""
+                    _check_repeat(repeat)
+                    return {"updated": bridge.call("reminder_update", _given(id=id, title=title, notes=notes, due=due, clear_due=clear_due or None, priority=priority,
+                                                                             repeat=repeat, clear_repeat=clear_repeat or None,
+                                                                             **_alert_args(alerts_minutes_before, alerts_at)))}
 
                 @mcp.tool(annotations=_IDEMPOTENT_WRITE)
                 @_guard
@@ -1179,6 +1220,38 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     """Delete a reminder. Reminders has no Recently Deleted, so it cannot be recovered. Use only when the user asks to
                     remove that exact reminder; reminders_complete marks it done instead, and reminders_move puts it on another list."""
                     return {"deleted": bridge.call("reminder_delete", {"id": id})}
+
+                @mcp.tool(annotations=_WRITE)
+                @_guard
+                def reminders_create_list(name: Annotated[str, _d("Name of the new list.")],
+                                          account: Annotated[str | None, _d("Account to create it in (from reminders_list_lists); default the default list's.")] = None) -> dict[str, Any]:
+                    """Create a Reminders list."""
+                    return {"created": bridge.call("reminder_list_create", _given(name=name, account=account))}
+
+                @mcp.tool(annotations=_IDEMPOTENT_WRITE)
+                @_guard
+                def reminders_update_list(list_id: Annotated[str, _d("List id from reminders_list_lists.")],
+                                          name: Annotated[str, _d("Its new name.")]) -> dict[str, Any]:
+                    """Rename a Reminders list."""
+                    return {"renamed": bridge.call("reminder_list_update", {"list_id": list_id, "name": name})}
+
+                @mcp.tool(annotations=_DESTRUCTIVE)
+                @_guard
+                def reminders_delete_list(list_id: Annotated[str, _d("List id from reminders_list_lists.")],
+                                          name: Annotated[str, _d("The list's exact name, as a check.")],
+                                          confirm_token: Annotated[str | None, _d("From the preview; needed when the list holds reminders.")] = None) -> dict[str, Any]:
+                    """Delete a Reminders list WITH every reminder in it, for good: Reminders has no trash. An empty list goes at
+                    once; otherwise the first call previews (count, sample, confirm_token) and only a call with the token deletes.
+                    Show the owner the preview and act only on their yes. The default list is refused."""
+                    items = bridge.call("reminders_list", {"list_id": list_id, "completed": "all", "limit": 200})
+                    items = items.get("reminders", []) if isinstance(items, dict) else items
+                    if items and confirm_token is None:
+                        return {"deleted": False, "list": name, "reminders": len(items), "sample": [r.get("title", "") for r in items[:3]],
+                                "confirm_token": make_confirm_token("reminder-list", list_id, len(items)),
+                                "note": "These reminders are deleted for good with the list. To go ahead, call again with this confirm_token."}
+                    if items and (why := confirm_problem(confirm_token, "reminder-list", list_id, len(items))):
+                        raise ToolError(why)
+                    return {"deleted": bridge.call("reminder_list_delete", {"list_id": list_id, "name": name, "delete_reminders": bool(items)})}
 
         if s.enable_notes:
 
