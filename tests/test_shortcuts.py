@@ -86,6 +86,8 @@ def test_tools_exist_only_with_an_allowlist_and_never_read_only(s, monkeypatch):
     assert not {"shortcuts_list", "shortcuts_run"} & names(dataclasses.replace(on, read_only=True))[0]
     monkeypatch.setenv("SHORTCUTS_ALLOW", "Lights off, Say")
     assert Settings.from_env().shortcuts_allow == ("Lights off", "Say")
+    monkeypatch.setenv("SHORTCUTS_ALLOW", "Lights off; Say hi, then leave")                  # ';' when a name has a comma
+    assert Settings.from_env().shortcuts_allow == ("Lights off", "Say hi, then leave")
 
 
 def test_the_server_refuses_names_it_does_not_allow_before_asking_the_mac(s):

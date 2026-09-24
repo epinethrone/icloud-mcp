@@ -167,7 +167,7 @@ class Settings:
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),
             bridge_host=_str("BRIDGE_HOST", "0.0.0.0"),
             tools=tuple(_list("TOOLS")),
-            shortcuts_allow=tuple(_list("SHORTCUTS_ALLOW")),
+            shortcuts_allow=tuple(n.strip() for n in _str("SHORTCUTS_ALLOW").split(";" if ";" in _str("SHORTCUTS_ALLOW") else ",") if n.strip()),
         )
 
     # ------------------------------------------------------------------
