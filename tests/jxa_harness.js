@@ -89,7 +89,8 @@ function buildReminders() {
 
 // ---- Notes
 var NKEYS = ['id', 'name', 'plaintext', 'modificationDate', 'creationDate', 'passwordProtected'];
-function htmlToText(html) { return html.replace(/<br>/g, "\n").replace(/<\/(h1|div)>/g, "\n").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\n+$/, ""); }
+function stripTags(s) { var prev; do { prev = s; s = s.replace(/<[^>]*>/g, ""); } while (s !== prev); return s.replace(/</g, ""); }
+function htmlToText(html) { return stripTags(html.replace(/<br>/g, "\n").replace(/<\/(h1|div)>/g, "\n")).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\n+$/, ""); }
 function buildNotes() {
   var fx = fixture.notes || { accounts: [] };
   var folders = [];
