@@ -21,7 +21,7 @@ import smtplib
 import ssl
 import threading
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from email import policy
@@ -37,6 +37,7 @@ from .keepalive import TICKER
 from .matching import fuzzy_match_all, norm, similar_enough
 from .safety import compact, warnings_for
 from .mailbulk import bulk_view
+from . import mailparts
 from .outbox import Outbox, OutboxFull, QueuedMessage
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -225,8 +226,11 @@ def attachment_bytes(part: email.message.Message) -> bytes:
     return part.get_payload(decode=True) or b""
 
 
-def declared_size(part: email.message.Message) -> int:
-    """An attachment's size in bytes without decoding it: from base64 text length (exact to the byte), else the encoded length."""
+def declared_size(part: email.message.Message, skeleton: bool = False) -> int:
+    """An attachment's size in bytes without decoding it: from base64 text length (exact to the byte), else the encoded length.
+    In a skeleton (see mailparts) the part has no body, and the size written from BODYSTRUCTURE is used instead."""
+    if skeleton:
+        return mailparts.size_of(part) or 0
     if part.get_content_type() == "message/rfc822":
         return len(attachment_bytes(part))
     raw = part.get_payload(decode=False)
@@ -239,6 +243,7 @@ def declared_size(part: email.message.Message) -> int:
 
 
 def list_attachments(msg: EmailMessage) -> list[dict[str, Any]]:
+    skeleton = getattr(msg, "_icloud_skeleton", False)
     out = []
     for i, part in enumerate(iter_attachment_parts(msg)):
         ctype = part.get_content_type()
@@ -251,7 +256,7 @@ def list_attachments(msg: EmailMessage) -> list[dict[str, Any]]:
                 "index": i,
                 "filename": name,
                 "content_type": ctype,
-                "size": declared_size(part),
+                "size": declared_size(part, skeleton),
                 "inline": part.get_content_disposition() == "inline",
                 "content_id": _hdr(part, "Content-ID"),
             }
@@ -535,6 +540,8 @@ def _flag_view(flags: tuple[Any, ...]) -> dict[str, Any]:
 _IMAP_PING_SECONDS = 300.0    # keep-alive: NOOP a pooled IMAP session idle this long
 _FOLDERS_SECONDS = 60.0       # the folder LIST
 _SMTP_IDLE_SECONDS = 60.0     # a logged-in SMTP connection unused for longer is closed rather than reused
+_LEAN_ABOVE = 64 * 1024       # mail_get_messages leaves out attachment contents when a message carries more than this of them
+_STRUCTURES_KEPT = 5000       # message structures remembered from searches (they never change for a uid)
 
 
 class MailService:
@@ -550,6 +557,8 @@ class MailService:
         self._ticking = False
         self._folders_lock = threading.Lock()
         self._folders: tuple[float, list[tuple[Any, Any, str]]] | None = None   # (read at, LIST result)
+        self._structures: OrderedDict[tuple[str, int, int], Any] = OrderedDict()   # (folder, uidvalidity, uid) -> mailparts.Node
+        self._structures_lock = threading.Lock()
         self._smtp_lock = threading.Lock()
         self._smtp: tuple[smtplib.SMTP, float] | None = None                     # (logged-in connection, last used)
 
@@ -736,7 +745,29 @@ class MailService:
                             "Search again and use the new uids.")
         return current
 
-    def _summaries(self, c: IMAPClient, folder: str, uids: list[int], uidvalidity: int | None = None) -> list[dict[str, Any]]:
+    def _remember(self, folder: str, uv: int | None, uid: int, bodystructure: Any) -> Any:
+        """Keep a message's structure (it never changes for a uid within one uidvalidity), so reading it right after a search
+        needs no extra round trip. Returns the parsed tree, or None."""
+        if uv is None or not bodystructure:
+            return None
+        try:
+            root = mailparts.tree(bodystructure)
+        except Exception:  # noqa: BLE001 - an unusual structure is simply not remembered
+            return None
+        with self._structures_lock:
+            self._structures[(folder, int(uv), uid)] = root
+            while len(self._structures) > _STRUCTURES_KEPT:
+                self._structures.popitem(last=False)
+        return root
+
+    def _recall(self, folder: str, uv: int | None, uid: int) -> Any:
+        if uv is None:
+            return None
+        with self._structures_lock:
+            return self._structures.get((folder, int(uv), uid))
+
+    def _summaries(self, c: IMAPClient, folder: str, uids: list[int], uidvalidity: int | None = None, *,
+                   per_message_uidvalidity: bool = True) -> list[dict[str, Any]]:
         if not uids:
             return []
         items = ["FLAGS", "RFC822.SIZE", "INTERNALDATE", "BODYSTRUCTURE", f"BODY.PEEK[HEADER.FIELDS ({HEADER_FIELDS})]"]
@@ -749,11 +780,12 @@ class MailService:
             hkey = next((k for k in d if isinstance(k, bytes) and k.startswith(b"BODY[HEADER")), None)
             hdr = email.message_from_bytes(d.get(hkey, b""), policy=policy.default)
             has_att = "attachment" in repr(d.get(b"BODYSTRUCTURE", "")).lower()
+            self._remember(folder, uidvalidity, uid, d.get(b"BODYSTRUCTURE"))
             out.append(compact(
                 {
                     "uid": uid,
-                    "folder": folder,
-                    **({"uidvalidity": uidvalidity} if uidvalidity is not None else {}),
+                    **({"folder": folder} if per_message_uidvalidity else {}),        # a one-folder result names it once, above
+                    **({"uidvalidity": uidvalidity} if uidvalidity is not None and per_message_uidvalidity else {}),
                     "message_id": _hdr(hdr, "Message-ID"),
                     "subject": _hdr(hdr, "Subject") or "(no subject)",
                     "from": addrs_json(parse_addrs(hdr.get_all("From", []))),
@@ -801,7 +833,7 @@ class MailService:
                 "total_matches": len(uids),
                 "offset": offset,
                 "returned": len(page),
-                "messages": self._summaries(c, folder, page),       # uidvalidity is given once, above
+                "messages": self._summaries(c, folder, page, uv, per_message_uidvalidity=False),   # uidvalidity is given once, above
             }
 
     @staticmethod
@@ -876,9 +908,9 @@ class MailService:
             changed = sorted((u for u in c.search(["MODSEQ", str(old_modseq + 1)]) if u < old_next), reverse=True) \
                 if int(modseq) > old_modseq else []
             out = {**base, "new_count": len(new), "changed_count": len(changed),
-                   "new": self._summaries(c, folder, new[:limit]),
+                   "new": self._summaries(c, folder, new[:limit], int(uv), per_message_uidvalidity=False),
                    "changed": [{k: m.get(k) for k in ("uid", "subject", "from", "date", "unread", "flagged", "answered")}
-                               for m in self._summaries(c, folder, changed[:limit])]}
+                               for m in self._summaries(c, folder, changed[:limit], int(uv), per_message_uidvalidity=False)]}
             if len(new) > limit or len(changed) > limit:
                 out["note"] = f"Only the newest {limit} of each are listed; use mail_search for the rest."
             return out
@@ -951,15 +983,15 @@ class MailService:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
             uv = self._select(c, folder, expect=uidvalidity)
-            data = c.fetch(wanted, ["BODY.PEEK[]", "FLAGS", "INTERNALDATE"])
+            got = self._fetch_lean(c, folder, uv, wanted)
         messages, missing = [], []
         for uid in wanted:
-            d = data.get(uid)
-            if not d or b"BODY[]" not in d:
+            d = got.get(uid)
+            if d is None:
                 missing.append(uid)
                 continue
-            messages.append(self._message_view(folder, uid, d[b"BODY[]"] or b"", d.get(b"FLAGS", ()), d.get(b"INTERNALDATE"),
-                                               body_chars=limit))                  # uidvalidity is given once, at the top
+            raw, flags, internal, skeleton = d
+            messages.append(self._message_view(folder, uid, raw, flags, internal, body_chars=limit, skeleton=skeleton))
         out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "folder": folder, **({"uidvalidity": uv} if uv is not None else {}),
                                "returned": len(messages), "messages": messages}
         if missing:
@@ -968,9 +1000,52 @@ class MailService:
             out["hint"] = f"Bodies are cut at {limit} characters each; read one in full with mail_get_message."
         return out
 
+    def _fetch_lean(self, c: IMAPClient, folder: str, uv: int | None, uids: list[int]) -> dict[int, tuple[bytes, tuple[Any, ...], Any, bool]]:
+        """uid -> (message bytes, flags, internal date, is_skeleton) for messages to read. A message carrying more than
+        _LEAN_ABOVE bytes of non-text parts (PDFs, images) comes as a skeleton: every header and the text bodies, without the
+        attachments' contents (mailparts). Everything else, and any skeleton that does not check out, is fetched whole.
+        Structures remembered from a search cost nothing; unknown ones are fetched first in one command."""
+        roots = {uid: self._recall(folder, uv, uid) for uid in uids}
+        unknown = [uid for uid, r in roots.items() if r is None]
+        if unknown:
+            for uid, d in c.fetch(unknown, ["BODYSTRUCTURE"]).items():
+                bs = d.get(b"BODYSTRUCTURE")
+                roots[uid] = self._remember(folder, uv, uid, bs)
+                if roots[uid] is None and bs:
+                    with contextlib.suppress(Exception):              # unusual structure: fetched whole below
+                        roots[uid] = mailparts.tree(bs)
+        want_body = lambda n: n.ctype in mailparts.BODY_TEXT                  # noqa: E731
+        plans: dict[tuple[str, ...], list[int]] = {}
+        for uid in uids:
+            root, items = roots.get(uid), ("BODY.PEEK[]",)
+            if root is not None and root.multipart and sum(n.size for n in root.leaves() if not n.ctype.startswith("text/")) > _LEAN_ABOVE:
+                items = tuple(mailparts.skeleton_items(root, want_body))
+            plans.setdefault(items, []).append(uid)
+        out: dict[int, tuple[bytes, tuple[Any, ...], Any, bool]] = {}
+        whole = plans.pop(("BODY.PEEK[]",), [])
+        for items, group in plans.items():                                    # messages with the same shape share one FETCH
+            data = c.fetch(group, [*items, "FLAGS", "INTERNALDATE"])
+            for uid in group:
+                d = data.get(uid) or {}
+                raw = mailparts.assemble(roots[uid], d, want_body)
+                if raw is None or mailparts.parse(roots[uid], raw) is None:
+                    whole.append(uid)
+                    continue
+                out[uid] = (raw, d.get(b"FLAGS", ()), d.get(b"INTERNALDATE"), True)
+        if whole:
+            data = c.fetch(whole, ["BODY.PEEK[]", "FLAGS", "INTERNALDATE"])
+            for uid in whole:
+                d = data.get(uid)
+                if d and b"BODY[]" in d:
+                    out[uid] = (d[b"BODY[]"] or b"", d.get(b"FLAGS", ()), d.get(b"INTERNALDATE"), False)
+        return out
+
     def _message_view(self, folder: str, uid: int, raw: bytes, flags: tuple[Any, ...], internal: datetime | None, *,
-                      body_chars: int, include_html: bool = False, uidvalidity: int | None = None) -> dict[str, Any]:
+                      body_chars: int, include_html: bool = False, uidvalidity: int | None = None,
+                      skeleton: bool = False) -> dict[str, Any]:
         msg = email.message_from_bytes(raw, policy=policy.default)
+        if skeleton:
+            msg._icloud_skeleton = True
         text, htm = extract_bodies(msg, html_chars=body_chars * 8)
         truncated = False
         if text and len(text) > body_chars:
@@ -1011,15 +1086,49 @@ class MailService:
         return {"notice": UNTRUSTED_NOTICE, "folder": folder, "uid": uid, **({"uidvalidity": uv} if uv is not None else {}), **out,
                 **({"safety_warnings": found} if found else {})}
 
-    def get_attachment(self, folder: str, uid: int, index: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
-        with self.imap() as c:
-            folder = self.resolve_folder(c, folder)
-            raw, _, _, _ = self._fetch_raw(c, folder, uid, uidvalidity=uidvalidity)
-        msg = email.message_from_bytes(raw, policy=policy.default)
+    def _attachment_part(self, c: IMAPClient, folder: str, uv: int | None, uid: int, index: int) -> tuple[Any, int] | None:
+        """(the attachment as a part of its own, how many attachments the message has), fetching only that part's bytes:
+        structure first, then every part's headers (so attachments are numbered exactly as for a whole message), then the one
+        part. None when the structure does not allow it; the caller then reads the whole message."""
+        root = self._recall(folder, uv, uid)
+        if root is None:
+            d = c.fetch([uid], ["BODYSTRUCTURE"]).get(uid)
+            if not d:
+                return None
+            root = self._remember(folder, uv, uid, d.get(b"BODYSTRUCTURE")) or mailparts.tree(d.get(b"BODYSTRUCTURE"))
+        if not root.multipart:
+            return None
+        heads = c.fetch([uid], mailparts.skeleton_items(root, lambda n: False)).get(uid) or {}
+        raw = mailparts.assemble(root, heads, lambda n: False)
+        msg = mailparts.parse(root, raw) if raw else None
+        if msg is None:
+            return None
         parts = iter_attachment_parts(msg)
         if not 0 <= index < len(parts):
-            raise MailError(f"Attachment index {index} out of range (message has {len(parts)}).")
-        part = parts[index]
+            return None, len(parts)
+        section = mailparts.section_of(parts[index])
+        mime = heads.get(f"BODY[{section}.MIME]".encode()) if section else None
+        if not section or mime is None:
+            return None
+        body = (c.fetch([uid], [f"BODY.PEEK[{section}]"]).get(uid) or {}).get(f"BODY[{section}]".encode())
+        if body is None:
+            return None
+        return mailparts.leaf_message(mime, body), len(parts)
+
+    def get_attachment(self, folder: str, uid: int, index: int, *, uidvalidity: int | None = None) -> dict[str, Any]:
+        found = None
+        with self.imap() as c:
+            folder = self.resolve_folder(c, folder)
+            uv = self._select(c, folder, expect=uidvalidity)
+            with contextlib.suppress(Exception):
+                found = self._attachment_part(c, folder, uv, uid, index)
+            if found is None:                                            # unusual structure: read the whole message, as before
+                raw, _, _, _ = self._fetch_raw(c, folder, uid, uidvalidity=uidvalidity)
+                parts = iter_attachment_parts(email.message_from_bytes(raw, policy=policy.default))
+                found = (parts[index], len(parts)) if 0 <= index < len(parts) else (None, len(parts))
+        part, count = found
+        if part is None:
+            raise MailError(f"Attachment index {index} out of range (message has {count}).")
         data = attachment_bytes(part)
         ctype = part.get_content_type()
         meta = {"notice": UNTRUSTED_NOTICE, "filename": part.get_filename() or f"part-{index}", "content_type": ctype, "size": len(data)}
