@@ -272,7 +272,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**71 tools.** 42 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**74 tools.** 45 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
@@ -302,13 +302,14 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 </details>
 
 <details>
-<summary><b>Calendar</b> &nbsp;·&nbsp; 9 tools</summary>
+<summary><b>Calendar</b> &nbsp;·&nbsp; 12 tools</summary>
 
-`calendar_list_calendars`, `calendar_list_events`, `calendar_find_free_time`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_move_event`, `calendar_delete_event`, `calendar_rsvp`
+`calendar_list_calendars`, `calendar_list_events`, `calendar_find_free_time`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_move_event`, `calendar_delete_event`, `calendar_rsvp`, `calendar_create_calendar`, `calendar_update_calendar` (rename), `calendar_delete_calendar`
 
 - Multiple calendars, recurring events expanded when listing, all-day events, alerts, links, notes and attendees. Editing or deleting a recurring event changes the whole series, or just one date when you pass `occurrence_start` (the rest of the series is left alone).
 - **Finding free time is one call.** `calendar_find_free_time` returns openings of a given length within your hours and chosen weekdays. Travel time counts as busy; events marked free, cancelled events and invitations you declined do not; all-day events are listed separately instead of guessed about.
 - **Know whether an invitation went out.** After inviting people, the result reports what iCloud recorded for each guest (sent, delivered, or refused, for example a mistyped address), so an agent never claims someone was invited when they were not.
+- **Manage calendars.** Create, rename and delete calendars. The default calendar is never deleted, and one that holds events is only deleted after a preview with a confirm token; iCloud.com can restore a deleted calendar for about 30 days. (iCloud ignores a color set this way, so there is no color option.)
 - **Move between calendars.** `calendar_move_event` moves an event (a whole series, if it repeats) to another calendar with a WebDAV MOVE, so nothing is recreated and guests get no new invitation. Servers without MOVE get a copy first and the original deleted only after.
 - **Clashes and duplicates are reported.** `calendar_create_event` returns the events a new one overlaps (`conflicts`, travel time counted on both sides, free, cancelled and declined events ignored) and a `possible_duplicate` with the same title and time; `on_conflict` / `on_duplicate` = `refuse` creates nothing instead.
 - **Invitations waiting for you.** `calendar_list_events(needs_reply=true)` lists invitations you have not answered (to any of your addresses: add aliases to `OWNER_ADDRESSES`); `starting_within_minutes` looks from now.
