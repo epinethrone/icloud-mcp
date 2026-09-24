@@ -23,6 +23,22 @@ def _int(name: str, default: int) -> int:
     return default if v is None or v.strip() == "" else int(v)
 
 
+def keychain_password(account: str, service: str = "icloud-mcp") -> str:
+    """The app-specific password stored in the macOS login Keychain (see `icloud-mcp --store-password`), or ''.
+    Only consulted when ICLOUD_APP_PASSWORD is not set, so the password never has to sit in a file or a client config."""
+    import subprocess
+    import sys
+
+    if sys.platform != "darwin" or not account or os.environ.get("ICLOUD_KEYCHAIN", "true").lower() in ("0", "false", "no", "off"):
+        return ""
+    try:
+        r = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", service, "-a", account, "-w"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def _list(name: str, default: str = "") -> list[str]:
     return [p.strip() for p in _str(name, default).split(",") if p.strip()]
 
@@ -88,13 +104,14 @@ class Settings:
     refresh_token_ttl: int
     bridge_host: str = "0.0.0.0"  # address the bridge port binds to inside this process (127.0.0.1 when server and helper share a Mac)
     local_mode: bool = False      # stdio for a desktop client on this computer: no OAuth, no public URL, no browser outbox
+    tools: tuple[str, ...] = ()   # TOOLS: 'essential' and/or tool names to expose; empty = every tool of the enabled areas
 
     @classmethod
     def from_env(cls) -> "Settings":
         username = _str("ICLOUD_USERNAME")
         return cls(
             username=username,
-            app_password=_str("ICLOUD_APP_PASSWORD").replace(" ", ""),
+            app_password=(_str("ICLOUD_APP_PASSWORD") or keychain_password(username, _str("ICLOUD_KEYCHAIN_SERVICE", "icloud-mcp"))).replace(" ", ""),
             email_address=_str("ICLOUD_EMAIL_ADDRESS", username),
             display_name=_str("ICLOUD_DISPLAY_NAME"),
             signature=_str("EMAIL_SIGNATURE").replace("\\n", "\n"),
@@ -148,6 +165,7 @@ class Settings:
             access_token_ttl=_int("ACCESS_TOKEN_TTL", 3600),
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),
             bridge_host=_str("BRIDGE_HOST", "0.0.0.0"),
+            tools=tuple(_list("TOOLS")),
         )
 
     # ------------------------------------------------------------------
