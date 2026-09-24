@@ -52,7 +52,10 @@ def test_one_fetch_in_the_requested_order_and_read_only(mail):
     svc, fake = mail
     r = svc.get_messages("inbox", [3, 1, 2, 1])
     assert [m["uid"] for m in r["messages"]] == [3, 1, 2] and r["returned"] == 3      # duplicates dropped, order kept
-    assert len(fake.fetches) == 1 and "BODY.PEEK[]" in fake.fetches[0][1]            # PEEK: nothing becomes read
+    bodies = [items for _, items in fake.fetches if "BODY.PEEK[]" in items]
+    assert len(bodies) == 1                                                          # all bodies in one FETCH (PEEK: nothing read)
+    assert all(i in ("BODYSTRUCTURE", "FLAGS", "INTERNALDATE") or i.startswith("BODY.PEEK[") for _, items in fake.fetches for i in items)
+    assert len(fake.fetches) <= 2                          # plus at most one structure look-up, skipped after a search
     assert fake.selected == [("INBOX", True)]
     assert r["notice"] == UNTRUSTED_NOTICE and "notice" not in r["messages"][0]       # one notice for the batch
     assert r["messages"][2]["flagged"] is True and r["messages"][0]["subject"] == "Message 3"
