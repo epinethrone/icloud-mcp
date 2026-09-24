@@ -33,12 +33,14 @@ from imapclient import IMAPClient
 from .config import Settings
 from .matching import fuzzy_match_all, norm, similar_enough
 from .safety import warnings_for
+from .mailbulk import bulk_view
 from .outbox import Outbox, OutboxFull, QueuedMessage
 
 log = logging.getLogger(__name__)
 
 SEEN, FLAGGED, ANSWERED, DRAFT, DELETED = "\\Seen", "\\Flagged", "\\Answered", "\\Draft", "\\Deleted"
-HEADER_FIELDS = "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES"
+HEADER_FIELDS = ("FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES "
+                 "LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST LIST-ID PRECEDENCE AUTO-SUBMITTED")
 _SCAN_INBOX, _SCAN_SENT = 3000, 1500      # most recent messages scanned by default when looking for a correspondent
 _PEOPLE_CACHE_SECONDS = 600
 
@@ -623,6 +625,7 @@ class MailService:
                     "size": d.get(b"RFC822.SIZE"),
                     "has_attachments": has_att,
                     **_flag_view(d.get(b"FLAGS", ())),
+                    **bulk_view(hdr),
                 }
             )
         return out
@@ -644,6 +647,31 @@ class MailService:
         offset: int = 0,
         all_folders: bool = False,
     ) -> dict[str, Any]:
+        crit, charset = self.criteria(from_=from_, to=to, subject=subject, text=text, since=since, before=before, unread=unread,
+                                      flagged=flagged, message_id=message_id)
+        limit = max(1, min(int(limit), 100))
+        if all_folders:
+            return self._search_everywhere(crit, charset, limit, offset)
+        with self.imap() as c:
+            folder = self.resolve_folder(c, folder)
+            uv = self._select(c, folder)
+            uids = sorted(c.search(crit, charset=charset), reverse=True)
+            page = uids[offset : offset + limit]
+            return {
+                "notice": UNTRUSTED_NOTICE,
+                "folder": folder,
+                **({"uidvalidity": uv} if uv is not None else {}),
+                "total_matches": len(uids),
+                "offset": offset,
+                "returned": len(page),
+                "messages": self._summaries(c, folder, page, uv),
+            }
+
+    @staticmethod
+    def criteria(*, from_: str | None = None, to: str | None = None, subject: str | None = None, text: str | None = None,
+                 since: str | None = None, before: str | None = None, unread: bool | None = None, flagged: bool | None = None,
+                 message_id: str | None = None) -> tuple[list[Any], str | None]:
+        """IMAP SEARCH criteria and charset for the filters every mail search tool shares."""
         crit: list[Any] = []
         if unread is True:
             crit.append("UNSEEN")
@@ -668,23 +696,7 @@ class MailService:
         if not crit:
             crit = ["ALL"]
         charset = None if all(isinstance(x, (date,)) or str(x).isascii() for x in crit) else "UTF-8"
-        limit = max(1, min(int(limit), 100))
-        if all_folders:
-            return self._search_everywhere(crit, charset, limit, offset)
-        with self.imap() as c:
-            folder = self.resolve_folder(c, folder)
-            uv = self._select(c, folder)
-            uids = sorted(c.search(crit, charset=charset), reverse=True)
-            page = uids[offset : offset + limit]
-            return {
-                "notice": UNTRUSTED_NOTICE,
-                "folder": folder,
-                **({"uidvalidity": uv} if uv is not None else {}),
-                "total_matches": len(uids),
-                "offset": offset,
-                "returned": len(page),
-                "messages": self._summaries(c, folder, page, uv),
-            }
+        return crit, charset
 
     def _search_everywhere(self, crit: list[Any], charset: str | None, limit: int, offset: int) -> dict[str, Any]:
         """The same search in every selectable folder, merged newest first. Mail rules and replies file messages away from
