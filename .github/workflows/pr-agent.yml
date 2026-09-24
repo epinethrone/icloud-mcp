@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false   # a push must not cancel a review that is already running (pushes themselves are skipped)
 
 jobs:
   pr_agent:
