@@ -57,7 +57,7 @@ def test_the_real_operation_table_is_exactly_the_reminders_notes_and_drive_opera
     assert set(bridge_mod.OPS) == {"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete",
                                    "note_folders", "notes_list", "note_read", "note_create", "note_delete",
                                    "note_folder_create", "note_move",
-                                   "drive_list", "drive_search", "drive_info", "drive_read", "drive_write", "drive_mkdir", "drive_move", "drive_trash"}
+                                   "drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_write", "drive_mkdir", "drive_move", "drive_trash"}
     assert validate_args("reminder_lists", None) == {} and validate_args("reminders_list", {"query": "x", "limit": 5})["limit"] == 5
 
 
@@ -315,7 +315,7 @@ def test_instructions_mention_the_mac_only_when_enabled(s):
     assert "REMINDERS / NOTES" not in build_instructions(dataclasses.replace(s, enable_reminders=False))
 
 
-DRIVE_READ = {"drive_list", "drive_search", "drive_info", "drive_read"}
+DRIVE_READ = {"drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read"}
 DRIVE_WRITE = {"drive_write", "drive_create_folder", "drive_move", "drive_trash"}
 
 
