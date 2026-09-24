@@ -189,11 +189,12 @@ async def test_every_bridge_route_needs_the_token(s):
         assert (await c.get("/bridge/ping", headers=AUTH)).status_code == 200
 
 
-async def test_repeated_wrong_tokens_lock_the_bridge_out_even_for_the_right_one(s):
+async def test_repeated_wrong_tokens_lock_that_address_out_but_never_the_right_token(s):
     async with await client(s, MacBridge()) as c:
         for _ in range(20):
             assert (await c.get("/bridge/ping", headers={"Authorization": "Bearer nope"})).status_code == 401
-        assert (await c.get("/bridge/ping", headers=AUTH)).status_code == 429
+        assert (await c.get("/bridge/ping", headers={"Authorization": "Bearer nope"})).status_code == 429
+        assert (await c.get("/bridge/ping", headers=AUTH)).status_code == 200      # the real helper is never locked out
 
 
 async def test_poll_and_result_round_trip_over_http(s):

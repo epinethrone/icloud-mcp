@@ -58,11 +58,12 @@ def test_local_still_refuses_placeholders_and_weak_bridge_tokens(local_env):
         dataclasses.replace(local_env, enable_notes=True, bridge_token="short").validate_for_local()
 
 
-def test_bridge_host_defaults_to_all_interfaces_for_the_server(monkeypatch):
+def test_bind_addresses_default_to_loopback(monkeypatch):
     monkeypatch.delenv("BRIDGE_HOST", raising=False)
+    monkeypatch.delenv("MCP_HOST", raising=False)
+    assert Settings.from_env().bridge_host == "127.0.0.1" and Settings.from_env().host == "127.0.0.1"
+    monkeypatch.setenv("BRIDGE_HOST", "0.0.0.0")            # what the Docker image sets, so compose can publish the port
     assert Settings.from_env().bridge_host == "0.0.0.0"
-    monkeypatch.setenv("BRIDGE_HOST", "127.0.0.1")
-    assert Settings.from_env().bridge_host == "127.0.0.1"
 
 
 # ------------------------------------------------------------------ sending

@@ -255,8 +255,8 @@ A connector that can read your mail and act for you is a prompt-injection target
 | Agent sends mail on injected instructions | Sending only **queues** the message for your approval at `/outbox` (locally: saves it to Drafts) | `SEND_REQUIRES_APPROVAL=true` |
 | Agent emails invitations to strangers | Attendee changes are **blocked** | `ALLOW_CALENDAR_INVITES=false` |
 | Agent mails arbitrary addresses | Any address, at most 25 per message | `SEND_ALLOWLIST`, `MAX_RECIPIENTS` |
-| Agent destroys mail | Delete moves to Trash; permanent delete is off | `ALLOW_PERMANENT_DELETE=false` |
-| Agent destroys notes or files | Notes go to Recently Deleted, Drive files to the Trash. Nothing through the Mac helper is ever deleted permanently | always on |
+| Agent destroys mail or reminders | Delete moves mail to Trash; permanent deletion (mail from Trash, reminders) is off | `ALLOW_PERMANENT_DELETE=false` |
+| Agent destroys notes or files | Notes go to Recently Deleted, Drive files to the Trash. Nothing through the Mac helper is deleted permanently, except reminders (which have no trash) once `ALLOW_PERMANENT_DELETE` is on | always on |
 | Agent changes anything at all | Everything writable | `READ_ONLY=true` for a read-only connector |
 
 In Claude you can also set the send, reply, forward and delete tools to "ask before use". Anyone who obtains the app-specific password has **full access to mail, calendar and contacts** (Apple offers no narrower scope), so protect the server and its `.env` accordingly.
@@ -268,7 +268,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 - Clients may register dynamically, but nothing is authorised without the owner password. Redirect hosts are restricted. Tokens are stored as SHA-256 hashes (file mode 600). The approval and outbox pages lock after 10 wrong passwords in 15 minutes (server-wide; existing tokens keep working).
 - Every refused sign-in renewal is logged with its reason (already rotated, expired, wrong client, not recognised), never with token values, and unauthenticated callers cannot flood the log: `docker compose logs icloud-mcp | grep 'oauth:'`.
 - Text from mail, events, notes and files is stripped of invisible steering characters (Unicode tag characters, zero-width spaces, direction overrides; the marks Kurdish, Persian and Arabic text need are kept), and results carry `safety_warnings` when the text addresses an AI, asks for passwords or codes, or says bank details changed (English and Dutch).
-- Health-check errors are redacted: no passwords, account addresses or account ids.
+- Every tool error is scrubbed before it reaches the agent: passwords and tokens masked, URLs cut to their host (iCloud DAV paths carry the account id), invisible characters removed. Health-check and unexpected errors, which may quote a server response, also drop account addresses and long numbers.
 - The MCP endpoint validates `Host` and `Origin`. Tool results carry an untrusted-content notice. HTTP-client request logging is disabled so account identifiers do not reach the logs.
 - The Mac bridge runs on its own private TLS port with a self-signed certificate the helper pins by fingerprint, plus a bearer token. It is never served on the public address or through the tunnel. The server sends only an operation name and validated arguments from a fixed list, never script text.
 - Single-owner by design: one deployment serves one iCloud account. It is not multi-tenant, and storing other people's app-specific passwords is deliberately out of scope.
@@ -334,7 +334,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>Reminders</b> &nbsp;·&nbsp; 6 tools, with the Mac helper</summary>
 
-`reminders_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete`
+`reminders_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete` (only with `ALLOW_PERMANENT_DELETE=true`, because Reminders has no Recently Deleted)
 
 - Runs through Apple's EventKit: every read is live and takes about 20 to 40 ms, however long your lists are. Only active reminders are returned.
 - List names can repeat across accounts, so tools accept a `list_id` and refuse an ambiguous name. Due dates are validated as real dates (a bare date means 09:00 local time).
@@ -418,21 +418,21 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE` | false | Areas that go through the Mac helper (need `BRIDGE_TOKEN`) |
 | `TOOLS` | all | `essential` and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
-| `BRIDGE_HOST` | 0.0.0.0 (127.0.0.1 in local mode) | Address the bridge binds to inside the process. Use 127.0.0.1 when the server runs directly on the helper's Mac |
+| `BRIDGE_HOST` | 127.0.0.1 (0.0.0.0 in the Docker image) | Address the bridge binds to inside the process. Loopback unless the helper's Mac reaches this process over the network |
 | `SHORTCUTS_ALLOW` | empty | Exact names of Shortcuts the assistant may run through the Mac helper, separated by commas (or by `;` when a name contains a comma); the Mac must list them too (see below) |
 | `BRIDGE_JOB_TIMEOUT_SECONDS` | 60 | How long a tool call waits for the Mac |
-| `READ_ONLY` | false | No sending, moving, deleting, or calendar, contact, reminder, note or file changes |
+| `READ_ONLY` | false | No sending (not even drafts), moving, deleting, or calendar, contact, reminder, note or file changes |
 | `ALLOW_SEND` | true | false = agents can only save drafts |
 | `SEND_REQUIRES_APPROVAL` | true | Queue outgoing mail for browser approval (locally: save it to Drafts) |
 | `OUTBOX_TTL_SECONDS`, `OUTBOX_MAX` | 86400, 20 | Queue lifetime and size |
 | `ALLOW_CALENDAR_INVITES` | false | Allow attendees (iCloud then emails invitations, updates and cancellations) |
 | `SEND_ALLOWLIST` | empty | Only these addresses or domains may receive mail (`@example.org,friend@example.com`) |
 | `MAX_RECIPIENTS` | 25 | Per message |
-| `ALLOW_PERMANENT_DELETE` | false | Allow deleting mail from Trash |
+| `ALLOW_PERMANENT_DELETE` | false | Allow deleting mail from Trash, and deleting reminders (Reminders has no Recently Deleted) |
 | `SAVE_SENT_COPY` | true | Copy sent mail to Sent (iCloud doesn't do it itself) |
 | `MAX_BODY_CHARS`, `MAX_ATTACHMENT_BYTES` | 30000, 5 MiB | Result size caps |
 | `MCP_PUBLIC_URL`, `MCP_OWNER_PASSWORD` | required when hosted | Public https address; owner password (12+ characters) |
-| `MCP_HOST`, `MCP_PORT`, `MCP_EXTRA_ALLOWED_HOSTS` | 0.0.0.0, 8000, empty | Bind address and extra allowed `Host` headers |
+| `MCP_HOST`, `MCP_PORT`, `MCP_EXTRA_ALLOWED_HOSTS` | 127.0.0.1 (0.0.0.0 in the Docker image), 8000, empty | Bind address and extra allowed `Host` headers |
 | `MCP_STATELESS` | true | No server-side MCP sessions, so a restart never breaks a connected client ("Missing session ID") |
 | `TOOL_TIMEOUT_SECONDS` | 90 | A tool call running longer is abandoned with an error instead of hanging |
 | `IMAP_POOL_SIZE`, `IMAP_IDLE_SECONDS` | 2, 600 | Logged-in mail connections kept for reuse (0 = log in on every call), and how long an unused one is kept |

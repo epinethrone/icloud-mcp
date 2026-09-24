@@ -495,6 +495,21 @@ def _same_instant(a: Any, b: Any) -> bool:
     return a == b
 
 
+_SUB_HOURLY = re.compile(r"FREQ=(SECONDLY|MINUTELY)\b", re.I)
+
+
+def parse_rrule(text: str) -> icalendar.vRecur:
+    """An agent-supplied repeat rule as a vRecur: one line only (a line break would smuggle a second property into the event),
+    and never finer than hourly, which nothing legitimate needs and which would make every expansion of the series enormous."""
+    text = re.sub(r"[\r\n]", "", text).removeprefix("RRULE:").strip()
+    if _SUB_HOURLY.search(text):
+        raise CalendarError("Repeat rules finer than HOURLY (SECONDLY, MINUTELY) are not supported.")
+    try:
+        return icalendar.vRecur.from_ical(text)
+    except Exception as e:  # noqa: BLE001
+        raise CalendarError(f"Invalid rrule '{text}': {e}") from e
+
+
 def occurs_in_series(master: icalendar.Component, rid: Any) -> bool:
     """Whether the series defined by `master` has an occurrence starting at `rid` (and it was not already cancelled)."""
     for ex in _as_list(master.get("exdate")):
@@ -512,6 +527,8 @@ def occurs_in_series(master: icalendar.Component, rid: Any) -> bool:
         s, r = s.replace(tzinfo=None), r.replace(tzinfo=None)
     try:
         text = rule.to_ical().decode()
+        if _SUB_HOURLY.search(text):                      # a stranger's invitation could carry one; expanding it would take minutes
+            return False
         if s.tzinfo is None:                              # dateutil refuses an aware UNTIL with a floating start
             text = re.sub(r"UNTIL=(\d{8}T\d{6})Z", r"UNTIL=\1", text)
         series = rrulestr(text, dtstart=s)
@@ -610,10 +627,7 @@ def build_event(
     if url:
         ev.add("url", url)
     if rrule:
-        try:
-            ev.add("rrule", icalendar.vRecur.from_ical(rrule.removeprefix("RRULE:")))
-        except Exception as e:  # noqa: BLE001
-            raise CalendarError(f"Invalid rrule '{rrule}': {e}") from e
+        ev.add("rrule", parse_rrule(rrule))
     if attendees:
         _apply_attendees(ev, attendees, organizer_email, organizer_name)
     _apply_structured_location(ev, location, location_geo)
@@ -977,6 +991,16 @@ class CalendarService:
             d["overridden_instances"] = sum(1 for e in parsed.walk("VEVENT") if "recurrence-id" in e)
             return d
 
+    @staticmethod
+    def _guests(parsed: icalendar.Calendar, preferred: Any = None) -> Any:
+        """The component whose attendees decide the invitation gate. Every write PUTs the whole stored object, and iCloud
+        mails every guest in it, so a VEVENT with attendees anywhere in the object counts, not only the one being edited
+        (an occurrence the owner removed the guests from still sits under a master that has them)."""
+        for comp in parsed.walk("VEVENT"):
+            if comp.get("attendee"):
+                return comp
+        return preferred
+
     def _refuse_invites(self, *, attendees_given: bool = False, existing=None) -> None:
         """Attendee changes make iCloud email other people, which would bypass the mail approval gate."""
         if self.s.allow_calendar_invites:
@@ -1027,6 +1051,7 @@ class CalendarService:
                     return {"created": False, "already_existed": True, "uid": fixed_uid, "calendar": name,
                             "event": event_to_dict(master, name),
                             "note": "An event with this request_id was already created, so nothing new was added."}
+            self._tl.mutated = True                  # from here on a transport error must not be retried: the PUT may have landed
             cal.save_event(ical)
             name = self._cal_name(cal)
             master = self._master(icalendar.Calendar.from_ical(ical))
@@ -1058,7 +1083,7 @@ class CalendarService:
                 ev, new_override = self._occurrence(parsed, occurrence_start, tz)
             else:
                 ev = self._master(parsed)
-            self._refuse_invites(attendees_given=bool(attendees) or attendees == [], existing=ev)
+            self._refuse_invites(attendees_given=bool(attendees) or attendees == [], existing=self._guests(parsed, ev))
 
             if start is not None or end is not None:
                 old_start = ev.get("dtstart").dt
@@ -1095,10 +1120,7 @@ class CalendarService:
                 if "rrule" in ev:
                     del ev["rrule"]
                 if rrule != "":
-                    try:
-                        ev.add("rrule", icalendar.vRecur.from_ical(rrule.removeprefix("RRULE:")))
-                    except Exception as e:  # noqa: BLE001
-                        raise CalendarError(f"Invalid rrule '{rrule}': {e}") from e
+                    ev.add("rrule", parse_rrule(rrule))
             if attendees is not None:
                 _merge_attendees(ev, attendees, self.s.email_address, self.s.display_name)
             if alarms_minutes_before is not None:
@@ -1154,6 +1176,21 @@ class CalendarService:
             break
         return report
 
+    def _delete_conditional(self, obj: Any, uid: str) -> None:
+        """DELETE conditional on the version that was read (If-Match), like every other write: an event edited elsewhere
+        since it was read is left alone. caldav's own delete() sends no condition."""
+        etag = getattr(obj, "etag", None)
+        if not etag:
+            obj.delete()
+            return
+        resp = obj.client.request(str(obj.url), "DELETE", "", {"If-Match": etag})
+        status = int(getattr(resp, "status", 0) or 0)
+        if status == 412:
+            self._uid_cache.pop(uid, None)
+            raise CalendarError("This event changed on the server since it was read, so nothing was deleted. Read it again first.")
+        if not (200 <= status < 300 or status == 404):
+            raise CalendarError(f"The server refused to delete the event (HTTP {status}). Nothing was deleted.")
+
     def _save(self, obj: Any, parsed: icalendar.Calendar, uid: str) -> None:
         """Write the whole stored object back, conditional on the version that was read."""
         if any(isinstance(e.get("dtstart").dt, datetime) for e in parsed.walk("VEVENT") if e.get("dtstart") is not None):
@@ -1161,7 +1198,10 @@ class CalendarService:
         obj.data = parsed.to_ical().decode()
         self._tl.mutated = True
         try:
-            obj.save()  # caldav sends If-Match/If-Schedule-Tag-Match from the etag cached when the object was read
+            # caldav sends If-Match/If-Schedule-Tag-Match from the etag cached when the object was read. SEQUENCE is managed here,
+            # and the object is written whole, so caldav must neither bump it again nor go looking for a master by UID (a REPORT
+            # iCloud answers with 412 when the first component is a single-occurrence invitation).
+            obj.save(increase_seqno=False, only_this_recurrence=False)
         except Exception as e:  # noqa: BLE001 - only the conflict case is rewritten
             if type(e).__name__ in {"ETagMismatchError", "ScheduleTagMismatchError"}:
                 self._uid_cache.pop(uid, None)
@@ -1253,7 +1293,6 @@ class CalendarService:
                     "note": "iCloud emails your answer to the organizer itself.", "event": event_to_dict(ev, name)}
 
     @_reconnecting
-    @_reconnecting
     def move_event(self, uid: str, to_calendar: str, calendar: str | None = None) -> dict[str, Any]:
         """Move an event (a whole series, if it repeats) to another of the user's calendars, keeping everything about it.
 
@@ -1288,15 +1327,16 @@ class CalendarService:
             self._uid_cache[uid] = (str(dst.url), time.monotonic())
             return {"moved": True, "uid": uid, "summary": summary, "from": src_name, "to": dst_name}
 
+    @_reconnecting
     def delete_event(self, uid: str, calendar: str | None = None, *, occurrence_start: str | None = None,
                      timezone_name: str | None = None) -> dict[str, Any]:
         with self._principal() as p:
             cal, obj = self._find(p, uid, calendar)
+            parsed = icalendar.Calendar.from_ical(obj.data)
             if occurrence_start is not None:
-                parsed = icalendar.Calendar.from_ical(obj.data)
                 master = self._master(parsed)
                 rid, override = self._occurrence_id(parsed, occurrence_start, get_tz(timezone_name or self.s.default_timezone))
-                self._refuse_invites(existing=override if override is not None else master)
+                self._refuse_invites(existing=self._guests(parsed, override if override is not None else master))
                 if override is not None:
                     parsed.subcomponents.remove(override)
                 master.add("exdate", rid)
@@ -1306,10 +1346,10 @@ class CalendarService:
                 return {"deleted": True, "occurrence_only": True, "occurrence_start": occurrence_start, "uid": uid,
                         "summary": str(master.get("summary") or ""), "calendar": self._cal_name(cal),
                         "note": "Only this occurrence was cancelled; the rest of the series is unchanged."}
-            master = self._master(icalendar.Calendar.from_ical(obj.data))
-            self._refuse_invites(existing=master)
+            master = self._master(parsed)
+            self._refuse_invites(existing=self._guests(parsed, master))
             summary = str(master.get("summary") or "")
             self._tl.mutated = True
-            obj.delete()
+            self._delete_conditional(obj, uid)
             self._uid_cache.pop(uid, None)
             return {"deleted": True, "uid": uid, "summary": summary, "calendar": self._cal_name(cal)}

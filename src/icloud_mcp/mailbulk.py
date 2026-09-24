@@ -17,6 +17,8 @@ from __future__ import annotations
 import email
 import email.utils
 import hashlib
+import hmac
+import secrets
 import ipaddress
 import json
 import os
@@ -123,9 +125,10 @@ def _public_https(url: str) -> str | None:
 def _post_one_click(url: str) -> dict[str, Any]:
     import httpx
 
-    r = httpx.post(url, data={"List-Unsubscribe": "One-Click"}, timeout=10, follow_redirects=False,
-                   headers={"User-Agent": "icloud-mcp one-click unsubscribe (RFC 8058)"})
-    return {"status": r.status_code}
+    # Only the status line matters, so the body is never read: a hostile endpoint cannot make the server download anything.
+    with httpx.Client(timeout=10, follow_redirects=False, headers={"User-Agent": "icloud-mcp one-click unsubscribe (RFC 8058)"}) as client:
+        with client.stream("POST", url, data={"List-Unsubscribe": "One-Click"}) as r:
+            return {"status": r.status_code}
 
 
 def unsubscribe(mail: MailService, folder: str, uid: int, *, uidvalidity: int | None = None,
@@ -176,7 +179,10 @@ def unsubscribe(mail: MailService, folder: str, uid: int, *, uidvalidity: int | 
         if not mail.s.allow_send:
             return {"unsubscribed": False, "sender": sender, "reason": f"Unsubscribing means emailing {address}, and sending is "
                                                                        "disabled on this server. The user can send it themselves."}
-        sent = mail.send(to=[address], subject=q.get("subject") or "unsubscribe", body=q.get("body") or "unsubscribe")
+        # The mailto is the sender's: its subject is kept (list software often keys on it) but capped and stripped of control
+        # characters, and the body is always the one word, never the sender's text going out under the owner's name.
+        subject = re.sub(r"[\x00-\x1f\x7f]", " ", q.get("subject") or "unsubscribe").strip()[:120] or "unsubscribe"
+        sent = mail.send(to=[address], subject=subject, body="unsubscribe")
         return {"unsubscribed": sent.get("status") == "sent", "method": "email to the list's unsubscribe address", "sender": sender,
                 **({"waiting": "The unsubscribe email is waiting for the owner's approval or in Drafts; it takes effect once sent."}
                    if sent.get("status") != "sent" else {}), "result": sent}
@@ -186,9 +192,28 @@ def unsubscribe(mail: MailService, folder: str, uid: int, *, uidvalidity: int | 
 
 
 # ------------------------------------------------------------------ bulk actions with preview and undo
-def _token(folder: str, uv: Any, action: str, destination: str, uids: list[int]) -> str:
-    raw = f"{folder}|{uv}|{action}|{destination}|{','.join(map(str, sorted(uids)))}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+_TOKEN_KEY = secrets.token_bytes(32)      # per process: a token cannot be computed from a search result, only obtained from a dry run
+TOKEN_TTL = 900                          # seconds a dry run's confirm_token stays valid
+
+
+def _token(folder: str, uv: Any, action: str, destination: str, uids: list[int], issued: int | None = None) -> str:
+    issued = int(time.time()) if issued is None else issued
+    raw = f"{issued}|{folder}|{uv}|{action}|{destination}|{','.join(map(str, sorted(uids)))}"
+    return f"{issued}.{hmac.new(_TOKEN_KEY, raw.encode(), hashlib.sha256).hexdigest()[:16]}"
+
+
+def _token_ok(token: str | None, folder: str, uv: Any, action: str, destination: str, uids: list[int]) -> str | None:
+    """Why a confirm_token is not accepted, or None when it stands for exactly these messages and is not too old."""
+    issued_s, _, _ = (token or "").partition(".")
+    if not issued_s.isdigit():
+        return "confirm_token is not one this server issued. Run the dry run again and use its token."
+    issued = int(issued_s)
+    if not hmac.compare_digest(token or "", _token(folder, uv, action, destination, uids, issued)):
+        return ("confirm_token does not match the messages that match now (new mail arrived, or the filters changed). "
+                "Run the dry run again and use its new token.")
+    if time.time() - issued > TOKEN_TTL:
+        return f"confirm_token is older than {TOKEN_TTL // 60} minutes. Run the dry run again and use its new token."
+    return None
 
 
 def _log_path(mail: MailService) -> str:
@@ -252,9 +277,8 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
                     "next": "Show the user the count and sample. To go ahead, call again with dry_run=false and this confirm_token."}
         if not uids:
             return {**preview, "done": 0}
-        if confirm_token != token:
-            raise ValueError("confirm_token does not match the messages that match now (new mail arrived, or the filters "
-                             "changed). Run the dry run again and use its new token.")
+        if why := _token_ok(confirm_token, src, uv, action, dst or "", uids):
+            raise ValueError(why)
         entry = {"action_id": uuid.uuid4().hex[:12], "time": time.time(), "folder": src, "action": action, "destination": dst,
                  "message_ids": [ids[u] for u in uids]}
         _write_log(mail, entry)                     # logged before anything changes, so an interrupted run can still be undone

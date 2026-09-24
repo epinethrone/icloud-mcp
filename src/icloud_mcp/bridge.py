@@ -86,7 +86,7 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
 
-_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
+_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?\Z")
 
 
 def _iso_ok(value: str) -> bool:
@@ -293,23 +293,33 @@ def ensure_tls(data_dir: str, extra_names: tuple[str, ...] = ()) -> tuple[str, s
 # The private HTTPS app the Mac helper talks to
 # ---------------------------------------------------------------------------
 def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
-    failures: list[float] = []
+    failures: dict[str, list[float]] = {}     # client address -> times of wrong tokens; a lockout is per address
 
-    def locked_out() -> bool:
+    def locked_out(addr: str) -> bool:
         now = time.time()
-        failures[:] = [t for t in failures if now - t < _FAILURE_WINDOW]
-        return len(failures) >= _MAX_FAILURES
+        recent = [t for t in failures.get(addr, []) if now - t < _FAILURE_WINDOW]
+        if recent:
+            failures[addr] = recent
+        else:
+            failures.pop(addr, None)
+        if len(failures) > 1000:                    # never let strangers grow this table without bound
+            for stale in [a for a, ts in failures.items() if now - ts[-1] >= _FAILURE_WINDOW]:
+                failures.pop(stale, None)
+        return len(recent) >= _MAX_FAILURES
 
     def denied(request: Request) -> Response | None:
-        if locked_out():
-            return JSONResponse({"error": "too many failed attempts"}, status_code=429)
+        """The correct token is always accepted: a lockout only ever answers wrong tokens, and only for the address that sent
+        them, so nobody on the network can knock the real helper offline by guessing."""
         header = request.headers.get("authorization", "")
         supplied = header[7:] if header.lower().startswith("bearer ") else ""
-        if not hmac.compare_digest(supplied.encode(), s.bridge_token.encode()):
-            failures.append(time.time())
-            log.warning("bridge: request refused (bad or missing token)")
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return None
+        if hmac.compare_digest(supplied.encode(), s.bridge_token.encode()):
+            return None
+        addr = request.client.host if request.client else "?"
+        if locked_out(addr):
+            return JSONResponse({"error": "too many failed attempts"}, status_code=429)
+        failures.setdefault(addr, []).append(time.time())
+        log.warning("bridge: request refused (bad or missing token)")
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     async def read_json(request: Request, limit: int = MAX_BODY) -> Any:
         body = await request.body()

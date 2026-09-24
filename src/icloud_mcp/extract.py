@@ -27,6 +27,7 @@ _KINDS = {
     "BoatReservation": "boat", "TaxiReservation": "taxi", "Event": "event",
 }
 MAX_ITEMS = 20
+MAX_HTML = 2_000_000       # characters of HTML scanned for booking markup; real confirmations are far smaller
 
 
 def _type(node: dict[str, Any]) -> str:
@@ -150,16 +151,27 @@ def _from_reservation(node: dict[str, Any]) -> dict[str, Any] | None:
     return item
 
 
+def _key(item: dict[str, Any]) -> str:
+    return json.dumps(item, sort_keys=True, default=str)
+
+
 def from_json_ld(html: str) -> list[dict[str, Any]]:
-    items = []
-    for block in _LD.findall(html or ""):
+    """Reservations from the JSON-LD blocks in an HTML part. Bounded: at most MAX_HTML characters are scanned and the walk
+    stops at MAX_ITEMS, so a message built to be slow (thousands of unclosed script tags, tens of thousands of tiny
+    reservations) costs a bounded amount of work."""
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for block in _LD.findall((html or "")[:MAX_HTML]):
         try:
             doc = json.loads(block.strip())
         except ValueError:
             continue
         for node in _walk(doc):
+            if len(items) >= MAX_ITEMS:
+                return items
             got = _from_reservation(node)
-            if got and got not in items:
+            if got and (k := _key(got)) not in seen:
+                seen.add(k)
                 items.append(got)
     return items
 
@@ -212,8 +224,10 @@ def extract(raw: bytes) -> dict[str, Any]:
         except Exception:  # noqa: BLE001 - one unreadable part must not hide the others
             continue
     unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for it in items:
-        if it not in unique:
+        if (k := _key(it)) not in seen:
+            seen.add(k)
             unique.append(it)
     return {"subject": _text(str(msg.get("Subject") or "")), "from": _text(str(msg.get("From") or "")), "items": unique[:MAX_ITEMS],
             "found": len(unique),
