@@ -99,4 +99,4 @@ def test_the_example_notes_file_is_fictional_and_short():
     from pathlib import Path
     example = Path(__file__).resolve().parents[1] / "docs" / "agent-notes.example.md"
     text = example.read_text()
-    assert len(text) < instr_mod.NOTES_MAX_CHARS and "example.org" in text
+    assert len(text) < instr_mod.NOTES_MAX_CHARS and re.search(r"@example\.org\b", text)   # made-up addresses only
