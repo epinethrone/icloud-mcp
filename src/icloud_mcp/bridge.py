@@ -67,6 +67,8 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "note_delete": {"id": ("str", True, 500), "title": ("str", True, 500)},
     "note_folder_create": {"name": ("str", True, 200), "account": ("str", False, 200), "parent_id": ("str", False, 500)},
     "note_move": {"id": ("str", True, 500), "title": ("str", True, 500), "folder_id": ("str", False, 500), "folder": ("str", False, 200)},
+    "note_update": {"id": ("str", True, 500), "title": ("str", True, 500), "expected_hash": ("str", True, 8), "text": ("str", True, 100000),
+                    "mode": ("str", True, 7)},
     # iCloud Drive (paths are relative to the Drive; see ops/drive.py)
     "drive_list": {"path": ("str", False, 1000), "include_hidden": ("bool", False, 0), "limit": ("int", False, 1000)},
     "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
