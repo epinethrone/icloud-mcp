@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import uuid
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 from xml.etree import ElementTree as ET
@@ -212,6 +213,36 @@ def _score(c: dict[str, Any], tokens: list[str], full: str) -> int:
 def _name_words(c: dict[str, Any]) -> list[str]:
     """Every word of a contact's name, nickname and organisation, for approximate matching."""
     return [w for field in (c["name"], c["given_name"], c["family_name"], c["nickname"], c["organization"]) for w in _norm(field).split()]
+
+
+_BDAY = re.compile(r"^(?:(\d{4})|--)-?(\d{2})-?(\d{2})")
+
+
+def parse_birthday(value: str) -> tuple[int | None, int, int] | None:
+    """(year or None, month, day) from a vCard BDAY: 1990-05-12, 19900512, --05-12 or --0512. Apple writes year 1604 when the
+    year is unknown."""
+    m = _BDAY.match((value or "").strip())
+    if not m:
+        return None
+    year = int(m.group(1)) if m.group(1) and m.group(1) != "1604" else None
+    month, day = int(m.group(2)), int(m.group(3))
+    try:
+        date(2000, month, day)                                   # 2000 is a leap year, so 29 February is valid here
+    except ValueError:
+        return None
+    return year, month, day
+
+
+def next_birthday(month: int, day: int, today: date) -> date:
+    """The next date the birthday falls on, today included. 29 February is kept on 28 February in other years."""
+    for year in (today.year, today.year + 1):
+        try:
+            d = date(year, month, day)
+        except ValueError:
+            d = date(year, 2, 28)
+        if d >= today:
+            return d
+    return d  # pragma: no cover
 
 
 def _brief(c: dict[str, Any]) -> dict[str, Any]:
@@ -525,6 +556,24 @@ class ContactsService:
                 scored.append((sim, c))
         scored.sort(key=lambda x: (-x[0], _norm(x[1]["name"])))
         return [{**_brief(c), "similarity": round(sim, 2)} for sim, c in scored[:limit]]
+
+    def upcoming_birthdays(self, days: int = 30, today: date | None = None) -> dict[str, Any]:
+        days = max(1, min(int(days), 366))
+        today = today or date.today()
+        out = []
+        for c in self._all():
+            parsed = parse_birthday(c.get("birthday", ""))
+            if not parsed:
+                continue
+            year, month, day = parsed
+            when = next_birthday(month, day, today)
+            ahead = (when - today).days
+            if ahead <= days:
+                out.append({"name": c["name"], "uid": c["uid"], "date": when.isoformat(), "days_until": ahead,
+                            **({"turns": when.year - year} if year else {}), "has_email": c.get("has_email", False)})
+        out.sort(key=lambda b: (b["days_until"], _norm(b["name"])))
+        return {"notice": UNTRUSTED_NOTICE, "from": today.isoformat(), "days": days, "count": len(out), "birthdays": out,
+                **({} if out else {"note": "No birthdays in that window among contacts that have one saved."})}
 
     def get(self, uid: str) -> dict[str, Any]:
         for c in self._all():
