@@ -969,6 +969,23 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_READ)
             @_guard
+            def drive_search_content(
+                query: Annotated[str, _d("Words to find INSIDE files; every word must occur (case and accents ignored).")],
+                path: Annotated[str | None, _d("Only search inside this folder. " + _DRIVE_PATH)] = None,
+                limit: Annotated[int, _d("Max results (1-100).")] = 20,
+                download: Annotated[bool, _d("Also fetch files that are only in iCloud (text, PDF and documents only) to the Mac in the "
+                                             "background, so the next search includes them. Their text is remembered afterwards.")] = False,
+            ) -> dict[str, Any]:
+                """Search the text inside files in iCloud Drive (plain text, PDF, Word, RTF, ODT, HTML), not just their names, and
+                return each match with a short excerpt. Files are read once and remembered, so the first search can take a while:
+                if it answers complete=false, ask again to search the rest. Files that are only in iCloud are skipped unless
+                download=true (the answer says how many). Use drive_search to find files by name."""
+                got = bridge.call("drive_search_content", _given(query=query, path=path, limit=max(1, min(limit, 100)), download=download or None))
+                found = warnings_for(*(str(i.get("excerpt") or "") for i in got.get("items", []))) if isinstance(got, dict) else []
+                return {"notice": _DRIVE_NOTICE, **got, **({"safety_warnings": found} if found else {})}
+
+            @mcp.tool(annotations=_READ)
+            @_guard
             def drive_info(path: Annotated[str, _d(_DRIVE_PATH)]) -> dict[str, Any]:
                 """Details of one file or folder in iCloud Drive: type, size, modified time, whether it is offloaded, item count."""
                 return bridge.call("drive_info", {"path": path})
