@@ -3,7 +3,7 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
-## 0.9.0 (in progress)
+## 0.9.0
 
 - Saved drafts: `mail_send_draft` sends a draft exactly as saved (same checks and approval as `mail_send`; the draft then goes to
   Trash), `mail_update_draft` changes one without losing it.
