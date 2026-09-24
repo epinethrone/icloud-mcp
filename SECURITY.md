@@ -66,6 +66,13 @@ By default the server:
 - Validates `Host` and `Origin` on the MCP endpoint, labels every piece of iCloud content as untrusted, and keeps account identifiers out of HTTP client logs.
 - Serves the Mac bridge only on its own private port, pinned by certificate fingerprint and protected by a bearer token, never on the public address. The server sends the Mac only an operation name and validated arguments from a fixed list, never script text.
 - Confines iCloud Drive access to the Drive folder, and never deletes notes or files permanently through the Mac helper: notes go to Recently Deleted and files to the Trash. Reminders have no trash: `reminders_delete` is final, which is accepted because a reminder is one line and easily recreated; `reminders_move` changes a reminder's list without deleting it.
+- Keeps what it caches for speed in memory only, never on disk, and loses it on restart: logged-in IMAP and calendar
+  connections while the server was used within the last 10 minutes (`IMAP_IDLE_SECONDS`, `CALDAV_KEEPALIVE_SECONDS`); the
+  mail folder list for 60 seconds; message structures (part layout, no content) by uid; the correspondent index for
+  `mail_find_correspondent` for 10 minutes; calendar names for 10 minutes; the address book, re-checked against the server at
+  most every 2 minutes. The Mac helper keeps a Notes listing for 30 seconds and drops it on any Notes change.
+- Reads `AGENT_NOTES_FILE` fresh on every use, caps it at 8,000 characters, strips invisible characters, and never logs its
+  path or contents. The owner's rules come after the security rules in the instructions and can only refine them.
 
 To tighten a deployment further:
 
