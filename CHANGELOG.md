@@ -9,6 +9,8 @@ Update the Mac helper before the server whenever its version changes.
   Trash), `mail_update_draft` changes one without losing it.
 - Mail folders: `mail_update_folder` renames, `mail_delete_folder` deletes; a folder's mail always goes to Trash first, after a
   confirm step. The mailbox's own folders are refused.
+- Calendars: `calendar_create_calendar`, `calendar_update_calendar` (rename), `calendar_delete_calendar` (never the default
+  calendar; one with events only after a preview and its token).
 - A server call that needs a newer Mac helper says so and asks for the update, instead of failing with "unknown operation".
 
 ## 0.8.0
