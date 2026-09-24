@@ -1253,6 +1253,41 @@ class CalendarService:
                     "note": "iCloud emails your answer to the organizer itself.", "event": event_to_dict(ev, name)}
 
     @_reconnecting
+    @_reconnecting
+    def move_event(self, uid: str, to_calendar: str, calendar: str | None = None) -> dict[str, Any]:
+        """Move an event (a whole series, if it repeats) to another of the user's calendars, keeping everything about it.
+
+        Uses WebDAV MOVE, which iCloud supports (measured): the server relocates the same object, so nothing is recreated and no
+        new invitation goes out. A server without MOVE gets a copy that is written first and the original deleted only after,
+        with the copy removed again if that delete fails. Events with guests follow the invitation rule, like editing them."""
+        with self._principal() as p:
+            src, obj = self._find(p, uid, calendar)
+            dst = self._pick(p, to_calendar)[0]
+            master = self._master(icalendar.Calendar.from_ical(obj.data))
+            summary, src_name, dst_name = str(master.get("summary") or ""), self._cal_name(src), self._cal_name(dst)
+            if str(dst.url).rstrip("/") == str(src.url).rstrip("/"):
+                return {"moved": False, "uid": uid, "summary": summary, "calendar": src_name, "note": "It is already in that calendar."}
+            self._refuse_invites(existing=master)
+            src_url = str(obj.url)
+            dst_url = f"{str(dst.url).rstrip('/')}/{src_url.rstrip('/').rsplit('/', 1)[-1]}"
+            self._tl.mutated = True
+            resp = obj.client.request(src_url, "MOVE", "", {"Destination": dst_url, "Overwrite": "F"})
+            status = int(getattr(resp, "status", 0) or 0)
+            if status == 412:
+                raise CalendarError(f"'{dst_name}' already holds an event stored under the same name. Nothing was moved.")
+            if status in (405, 501):                                       # no MOVE on this server: copy, then delete
+                copy = dst.save_event(obj.data)
+                try:
+                    obj.delete()
+                except Exception as e:  # noqa: BLE001 - never leave the event in two calendars
+                    with contextlib.suppress(Exception):
+                        copy.delete()
+                    raise CalendarError(f"Could not remove the event from '{src_name}', so nothing was moved: {e}") from e
+            elif not 200 <= status < 300:
+                raise CalendarError(f"The server refused to move the event (HTTP {status}). Nothing was moved.")
+            self._uid_cache[uid] = (str(dst.url), time.monotonic())
+            return {"moved": True, "uid": uid, "summary": summary, "from": src_name, "to": dst_name}
+
     def delete_event(self, uid: str, calendar: str | None = None, *, occurrence_start: str | None = None,
                      timezone_name: str | None = None) -> dict[str, Any]:
         with self._principal() as p:
