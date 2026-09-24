@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 740" width="1280" height="740" role="img" aria-labelledby="t"><title id="t">Six apps, one connector: Mail 14 tools, Calendar 8, Contacts 5, Reminders 6, Notes 7, iCloud Drive 8.</title>
+<style>text{font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif}</style>
+
+<rect width="1280" height="740" rx="36" fill="#000000"/>
+<text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="#f5f5f7" letter-spacing="-1.2">Six apps. One connector.</text>
+<text x="640" y="108" text-anchor="middle" font-size="21" fill="#a1a1a6">Plus a health check that tests every service in one call.</text>
+
+<g>
+  <rect x="28" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ac8fa"/><stop offset="1" stop-color="#0a84ff"/></linearGradient></defs>
+  <rect x="60" y="164" width="72" height="72" rx="18" fill="url(#g0)"/>
+  <g transform="translate(74,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="8" width="40" height="28" rx="5"/><path d="M4 11 L22 25 L40 11"/></g>
+  <text x="388" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">14</text>
+  <text x="388" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="60" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Mail</text>
+  <text x="60" y="328" font-size="20" fill="#a1a1a6">Search every folder, read whole</text>
+  <text x="60" y="356" font-size="20" fill="#a1a1a6">threads, reply and file away.</text>
+  
+</g>
+<g>
+  <rect x="444" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6961"/><stop offset="1" stop-color="#ff3b30"/></linearGradient></defs>
+  <rect x="476" y="164" width="72" height="72" rx="18" fill="url(#g1)"/>
+  <g transform="translate(490,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="36" height="32" rx="6"/><path d="M4 16 H40 M14 3 V10 M30 3 V10"/><circle cx="15" cy="25" r="1.6" fill="#fff"/><circle cx="22" cy="25" r="1.6" fill="#fff"/><circle cx="29" cy="25" r="1.6" fill="#fff"/><circle cx="15" cy="32" r="1.6" fill="#fff"/></g>
+  <text x="804" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">8</text>
+  <text x="804" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="476" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Calendar</text>
+  <text x="476" y="328" font-size="20" fill="#a1a1a6">Find free time, plan, move</text>
+  <text x="476" y="356" font-size="20" fill="#a1a1a6">and answer invitations.</text>
+  
+</g>
+<g>
+  <rect x="860" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#aeaeb2"/><stop offset="1" stop-color="#8e8e93"/></linearGradient></defs>
+  <rect x="892" y="164" width="72" height="72" rx="18" fill="url(#g2)"/>
+  <g transform="translate(906,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="22" cy="15" r="8"/><path d="M7 39 C8 29 15 25 22 25 C29 25 36 29 37 39"/></g>
+  <text x="1220" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">5</text>
+  <text x="1220" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="892" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Contacts</text>
+  <text x="892" y="328" font-size="20" fill="#a1a1a6">Find anyone, even misspelled.</text>
+  <text x="892" y="356" font-size="20" fill="#a1a1a6">Addresses, phones, emails.</text>
+  
+</g>
+<g>
+  <rect x="28" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb340"/><stop offset="1" stop-color="#ff9500"/></linearGradient></defs>
+  <rect x="60" y="460" width="72" height="72" rx="18" fill="url(#g3)"/>
+  <g transform="translate(74,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="11" r="3.5"/><circle cx="9" cy="22" r="3.5"/><circle cx="9" cy="33" r="3.5"/><path d="M18 11 H40 M18 22 H40 M18 33 H34"/></g>
+  <text x="388" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">6</text>
+  <text x="388" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="60" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Reminders</text>
+  <text x="60" y="624" font-size="20" fill="#a1a1a6">Create, update and complete,</text>
+  <text x="60" y="652" font-size="20" fill="#a1a1a6">live through EventKit.</text>
+  <text x="60" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+</g>
+<g>
+  <rect x="444" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd60a"/><stop offset="1" stop-color="#ffcc00"/></linearGradient></defs>
+  <rect x="476" y="460" width="72" height="72" rx="18" fill="url(#g4)"/>
+  <g transform="translate(490,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="32" height="38" rx="6"/><path d="M13 14 H31 M13 22 H31 M13 30 H24"/></g>
+  <text x="804" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">7</text>
+  <text x="804" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="476" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Notes</text>
+  <text x="476" y="624" font-size="20" fill="#a1a1a6">Read, write and organise</text>
+  <text x="476" y="652" font-size="20" fill="#a1a1a6">into folders.</text>
+  <text x="476" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+</g>
+<g>
+  <rect x="860" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#64d2ff"/><stop offset="1" stop-color="#32ade6"/></linearGradient></defs>
+  <rect x="892" y="460" width="72" height="72" rx="18" fill="url(#g5)"/>
+  <g transform="translate(906,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13 C3 10 5 8 8 8 H17 L21 12 H36 C39 12 41 14 41 17 V33 C41 36 39 38 36 38 H8 C5 38 3 36 3 33 Z"/></g>
+  <text x="1220" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">8</text>
+  <text x="1220" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="892" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">iCloud Drive</text>
+  <text x="892" y="624" font-size="20" fill="#a1a1a6">Read PDFs and documents,</text>
+  <text x="892" y="652" font-size="20" fill="#a1a1a6">write and tidy files.</text>
+  <text x="892" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+</g>
+
+</svg>
