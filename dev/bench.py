@@ -25,7 +25,6 @@ import sys
 import threading
 import time
 from collections import Counter
-from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -177,26 +176,39 @@ def seed_local(env: dict[str, str]) -> None:
 
 
 # --------------------------------------------------------------------------- scenarios
+def parts_of(res) -> list[str]:
+    parts = getattr(res, "content", None)
+    if parts is None and isinstance(res, tuple):
+        parts = res[0]
+    return [getattr(p, "text", "") for p in (parts or [])]
+
+
+def parsed(res):
+    """The result as JSON: a list result arrives as one text part per item."""
+    items = []
+    for t in parts_of(res):
+        try:
+            items.append(json.loads(t))
+        except ValueError:
+            items.append(t)
+    return items[0] if len(items) == 1 else items
+
+
 def payload_of(res) -> tuple[int, int]:
     """(bytes of the result as the client receives it, characters inside notice/hint/note fields)."""
-    parts = getattr(res, "content", None) or (res[0] if isinstance(res, tuple) else res)
-    text = "".join(getattr(p, "text", "") for p in parts) if isinstance(parts, list) else str(parts)
-    notice = 0
-    try:
-        stack = [json.loads(text)]
-        while stack:
-            v = stack.pop()
-            if isinstance(v, dict):
-                for k, x in v.items():
-                    if k in NOTICE_KEYS and isinstance(x, str):
-                        notice += len(x)
-                    else:
-                        stack.append(x)
-            elif isinstance(v, list):
-                stack.extend(v)
-    except ValueError:
-        pass
-    return len(text.encode()), notice
+    size = sum(len(t.encode()) for t in parts_of(res))
+    notice, stack = 0, [parsed(res)]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, dict):
+            for k, x in v.items():
+                if k in NOTICE_KEYS and isinstance(x, str):
+                    notice += len(x)
+                else:
+                    stack.append(x)
+        elif isinstance(v, list):
+            stack.extend(v)
+    return size, notice
 
 
 class Bench:
@@ -210,7 +222,8 @@ class Bench:
 
     async def call(self, mcp, tool, args):
         res = await mcp.call_tool(tool, args)
-        return res, json.loads("".join(getattr(p, "text", "") for p in (res.content if hasattr(res, "content") else res[0])) or "{}")
+        out = parsed(res)
+        return res, out if isinstance(out, dict) else {"items": out}
 
     async def measure(self, name, steps, fresh=False, mcp=None):
         """Run a chain of (tool, args-or-callable) steps `runs` times; one row with medians over the runs."""
