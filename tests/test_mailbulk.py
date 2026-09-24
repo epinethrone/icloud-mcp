@@ -179,7 +179,7 @@ def test_private_addresses_are_never_posted_to_and_mailto_is_the_fallback(box, m
 def test_the_real_url_check_refuses_http_localhost_and_private_networks():
     assert mailbulk._public_https("http://shop.example/u") == "only https addresses are used"
     assert "private" in mailbulk._public_https("https://127.0.0.1/u")
-    assert "private" in mailbulk._public_https("https://10.0.0.8/u")
+    assert "private" in mailbulk._public_https("https://10.0.0.8/u")  # privacy-ok: generic private-range test value
     assert "credentials" in mailbulk._public_https("https://user:pw@shop.example/u")
 
 
