@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 740" width="1280" height="740" role="img" aria-labelledby="t"><title id="t">Six apps, one connector: Mail 20 tools, Calendar 9, Contacts 6, Reminders 7, Notes 9, iCloud Drive 10.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 740" width="1280" height="740" role="img" aria-labelledby="t"><title id="t">Six apps, one connector: Mail 21 tools, Calendar 9, Contacts 6, Reminders 7, Notes 9, iCloud Drive 10.</title>
 <style>text{font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif}</style>
 
 <rect width="1280" height="740" rx="36" fill="#000000"/>
@@ -10,7 +10,7 @@
   <defs><linearGradient id="g0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ac8fa"/><stop offset="1" stop-color="#0a84ff"/></linearGradient></defs>
   <rect x="60" y="164" width="72" height="72" rx="18" fill="url(#g0)"/>
   <g transform="translate(74,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="8" width="40" height="28" rx="5"/><path d="M4 11 L22 25 L40 11"/></g>
-  <text x="388" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">20</text>
+  <text x="388" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">21</text>
   <text x="388" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
   <text x="60" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Mail</text>
   <text x="60" y="328" font-size="20" fill="#a1a1a6">Search every folder, read whole</text>

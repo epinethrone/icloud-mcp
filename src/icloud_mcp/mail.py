@@ -24,7 +24,7 @@ import threading
 import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email import policy
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, getaddresses, make_msgid, parsedate_to_datetime
@@ -544,6 +544,60 @@ _FOLDERS_SECONDS = 60.0       # the folder LIST
 _SMTP_IDLE_SECONDS = 60.0     # a logged-in SMTP connection unused for longer is closed rather than reused
 _LEAN_ABOVE = 64 * 1024       # mail_get_messages leaves out attachment contents when a message carries more than this of them
 _STRUCTURES_KEPT = 5000       # message structures remembered from searches (they never change for a uid)
+_FILTER_SCAN = 500            # people_only / since_hours check at most this many of the newest candidates
+
+
+def _instant(iso: str | None) -> datetime | None:
+    """An ISO date-time as an aware instant (a missing offset read as UTC), so dates from different zones compare correctly."""
+    try:
+        when = datetime.fromisoformat(iso or "")
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _keeper(people_only: bool, cutoff: datetime | None) -> Any:
+    """A filter on summaries for people_only / since_hours, or None when neither is asked for."""
+    if not people_only and cutoff is None:
+        return None
+
+    def keep(m: dict[str, Any]) -> bool:
+        if people_only and m.get("bulk"):
+            return False
+        if cutoff is not None:
+            try:
+                when = datetime.fromisoformat(m.get("date") or "")
+            except ValueError:
+                return False
+            if (when if when.tzinfo else when.replace(tzinfo=timezone.utc)) < cutoff:
+                return False
+        return True
+    return keep
+
+
+_LAYOUT_TAGS = re.compile(r"<(?:p|br|div|span|b|i|a|html|body|table)\b[^>]*>", re.I)
+
+
+def _with_layout(result: dict[str, Any], body: str | None) -> dict[str, Any]:
+    warnings = layout_warnings(body)
+    if warnings:
+        result["layout_warnings"] = warnings
+    return result
+
+
+def layout_warnings(body: str | None) -> list[str]:
+    """Why a plain-text body may look wrong to the reader. The body is never changed; the agent decides."""
+    if not body:
+        return []
+    out = []
+    if "\r\n" in body:
+        out.append("The body contains Windows line endings (\\r\\n); plain \\n is enough.")
+    if _LAYOUT_TAGS.search(body):
+        out.append("The body contains HTML tags, which show as text in a plain-text message; use body_html for formatting.")
+    paragraphs = [p for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
+    if len(paragraphs) == 1 and len(body) > 600:
+        out.append("The body is one paragraph of over 600 characters; separate paragraphs with a blank line.")
+    return out
 
 
 def _mail_transport(exc: BaseException | None) -> bool:
@@ -846,34 +900,47 @@ class MailService:
         limit: int = 20,
         offset: int = 0,
         all_folders: bool = False,
+        people_only: bool = False,
+        unanswered_only: bool = False,
+        since_hours: int | None = None,
     ) -> dict[str, Any]:
+        cutoff = None
+        if since_hours is not None:
+            if not 1 <= int(since_hours) <= 24 * 90:
+                raise MailError("since_hours must be between 1 and 2160 (90 days).")
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=int(since_hours))
+            day = (cutoff - timedelta(days=1)).date()                     # IMAP SINCE is a whole day; the exact hour is checked below
+            since = max(since, day.isoformat()) if since else day.isoformat()
         crit, charset = self.criteria(from_=from_, to=to, subject=subject, text=text, since=since, before=before, unread=unread,
-                                      flagged=flagged, message_id=message_id)
+                                      flagged=flagged, message_id=message_id, unanswered=unanswered_only)
         limit = max(1, min(int(limit), 100))
+        keep = _keeper(people_only, cutoff)
         if all_folders:
-            return self._search_everywhere(crit, charset, limit, offset)
+            return self._search_everywhere(crit, charset, limit, offset, keep)
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
             uv = self._select(c, folder)
             uids = sorted(c.search(crit, charset=charset), reverse=True)
-            page = uids[offset : offset + limit]
-            return {
-                "notice": UNTRUSTED_NOTICE,
-                "folder": folder,
-                **({"uidvalidity": uv} if uv is not None else {}),
-                "total_matches": len(uids),
-                "offset": offset,
-                "returned": len(page),
-                "messages": self._summaries(c, folder, page, uv, per_message_uidvalidity=False),   # uidvalidity is given once, above
-                "complete": True,
-            }
+            out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "folder": folder, **({"uidvalidity": uv} if uv is not None else {})}
+            if keep is None:
+                page = uids[offset : offset + limit]
+                return {**out, "total_matches": len(uids), "offset": offset, "returned": len(page),
+                        "messages": self._summaries(c, folder, page, uv, per_message_uidvalidity=False),   # uidvalidity once, above
+                        "complete": True}
+            # people_only / since_hours look at each message's summary: the newest _FILTER_SCAN candidates are checked
+            found = [m for m in self._summaries(c, folder, uids[:_FILTER_SCAN], uv, per_message_uidvalidity=False) if keep(m)]
+            page = found[offset : offset + limit]
+            return {**out, "total_matches": len(found), "offset": offset, "returned": len(page), "messages": page,
+                    "complete": len(uids) <= _FILTER_SCAN,
+                    **({"note": f"Only the newest {_FILTER_SCAN} candidates were checked; narrow the search to see older ones."}
+                       if len(uids) > _FILTER_SCAN else {})}
 
     @staticmethod
     def criteria(*, from_: str | None = None, to: str | None = None, subject: str | None = None, text: str | None = None,
                  since: str | None = None, before: str | None = None, unread: bool | None = None, flagged: bool | None = None,
-                 message_id: str | None = None) -> tuple[list[Any], str | None]:
+                 message_id: str | None = None, unanswered: bool = False) -> tuple[list[Any], str | None]:
         """IMAP SEARCH criteria and charset for the filters every mail search tool shares."""
-        crit: list[Any] = []
+        crit: list[Any] = ["UNANSWERED"] if unanswered else []
         if unread is True:
             crit.append("UNSEEN")
         elif unread is False:
@@ -948,10 +1015,10 @@ class MailService:
                 out["note"] = f"Only the newest {limit} of each are listed; use mail_search for the rest."
             return out
 
-    def _search_everywhere(self, crit: list[Any], charset: str | None, limit: int, offset: int) -> dict[str, Any]:
+    def _search_everywhere(self, crit: list[Any], charset: str | None, limit: int, offset: int, keep: Any = None) -> dict[str, Any]:
         """The same search in every selectable folder, merged newest first. Mail rules and replies file messages away from
         the inbox; this finds them wherever they went. Each result names its folder and that folder's uidvalidity."""
-        want = offset + limit
+        want = offset + limit if keep is None else _FILTER_SCAN
         found: list[dict[str, Any]] = []
         per_folder: dict[str, int] = {}
         skipped: list[str] = []
@@ -979,8 +1046,10 @@ class MailService:
                 if got is None:
                     skipped.append(name)
                 elif got[1]:
-                    per_folder[name] = got[1]
-                    found += got[2]
+                    hits = got[2] if keep is None else [m for m in got[2] if keep(m)]
+                    if hits or keep is None:
+                        per_folder[name] = got[1] if keep is None else len(hits)
+                    found += hits
         found.sort(key=lambda m: m.get("date") or "", reverse=True)
         page = found[offset : offset + limit]
         out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "folder": "(all folders)", "total_matches": sum(per_folder.values()),
@@ -1489,7 +1558,7 @@ class MailService:
             signature=self.s.signature, attachments=attachments, max_attachment_bytes=self.s.max_attachment_bytes,
         )
         with self.imap() as c:
-            return self._deliver(c, msg, draft=draft)
+            return _with_layout(self._deliver(c, msg, draft=draft), body)
 
     def reply(self, folder: str, uid: int, body: str, *, body_html=None, reply_all=False, quote=True, to=None, cc=None, bcc=None, attachments=None, draft=False,
               uidvalidity: int | None = None) -> dict[str, Any]:
@@ -1505,7 +1574,7 @@ class MailService:
             result = self._deliver(c, msg, draft=draft, followup={"folder": folder, "uid": uid, "flag": ANSWERED,
                                                           "uidvalidity": uv})
             result["in_reply_to"] = str(msg["In-Reply-To"])
-            return result
+            return _with_layout(result, body)
 
     def forward(self, folder: str, uid: int, to, *, note: str = "", note_html=None, cc=None, bcc=None, include_attachments=True, attachments=None, draft=False,
                 uidvalidity: int | None = None) -> dict[str, Any]:
@@ -1521,8 +1590,94 @@ class MailService:
                 signature=self.s.signature, include_attachments=include_attachments, attachments=attachments,
                 max_attachment_bytes=self.s.max_attachment_bytes,
             )
-            return self._deliver(c, msg, draft=draft, followup={"folder": folder, "uid": uid, "flag": "$Forwarded",
-                                                        "uidvalidity": uv})
+            return _with_layout(self._deliver(c, msg, draft=draft, followup={"folder": folder, "uid": uid, "flag": "$Forwarded",
+                                                                           "uidvalidity": uv}), note)
+
+    @_retrying
+    def awaiting_reply(self, days: int = 21, limit: int = 20) -> dict[str, Any]:
+        """Messages the owner sent to a person in the last `days` that have had no answer: nothing referencing them (In-Reply-To
+        or References) and no later message from that person, in any folder. Only the latest message per person counts, so
+        a follow-up replaces the earlier one. Automated addresses and messages to the owner are left out. Reads headers only:
+        one search and fetch in Sent, and one per other folder, however many messages there are."""
+        from .mailbulk import _NOREPLY
+
+        days = max(1, min(int(days), 90))
+        limit = max(1, min(int(limit), 50))
+        since = date.today() - timedelta(days=days)
+        own = self.s.own_addresses
+        not_read: list[str] = []
+        with self.imap() as c:
+            sent_folder = self.resolve_folder(c, "sent")
+            skip = {sent_folder}
+            for special in ("drafts", "trash", "junk"):
+                with contextlib.suppress(MailError):
+                    skip.add(self.resolve_folder(c, special))
+            uv = self._select(c, sent_folder)
+            callctx.stage(f"IMAP SEARCH in {sent_folder}")
+            sent_uids = sorted(c.search(["SINCE", since]))
+            sent = []
+            for i in range(0, len(sent_uids), 250):
+                chunk = sent_uids[i:i + 250]
+                data = c.fetch(chunk, ["INTERNALDATE", "BODY.PEEK[HEADER.FIELDS (TO CC SUBJECT DATE MESSAGE-ID)]"])
+                for uid in chunk:
+                    d = data.get(uid) or {}
+                    hkey = next((k for k in d if isinstance(k, bytes) and k.startswith(b"BODY[HEADER")), None)
+                    hdr = email.message_from_bytes(d.get(hkey, b""), policy=policy.default)
+                    people = [(n, a) for n, a in parse_addrs(hdr.get_all("To", []) + hdr.get_all("Cc", []))
+                              if a.lower() not in own and not _NOREPLY.match(a)]
+                    when = _instant(_iso_date(hdr, d.get(b"INTERNALDATE")))
+                    if people and when:
+                        sent.append({"uid": uid, "people": people, "subject": _hdr(hdr, "Subject") or "(no subject)", "at": when,
+                                     "message_id": (_hdr(hdr, "Message-ID") or "").strip()})
+            others = [name for flags, _d, name in self._list(c) if name not in skip
+                      and not {"\\Noselect", "\\NonExistent"} & {f.decode() if isinstance(f, bytes) else str(f) for f in flags}]
+            referenced: set[str] = set()
+            heard: dict[str, list[datetime]] = {}                           # address -> when each of their messages came
+            for name in others:
+                try:
+                    self._select(c, name)
+                    callctx.stage(f"IMAP SEARCH in {name}")
+                    uids = sorted(c.search(["SINCE", since]))
+                    for i in range(0, len(uids), 250):
+                        data = c.fetch(uids[i:i + 250], ["INTERNALDATE", "BODY.PEEK[HEADER.FIELDS (FROM DATE IN-REPLY-TO REFERENCES)]"])
+                        for d in data.values():
+                            hkey = next((k for k in d if isinstance(k, bytes) and k.startswith(b"BODY[HEADER")), None)
+                            hdr = email.message_from_bytes(d.get(hkey, b""), policy=policy.default)
+                            referenced.update(re.findall(r"<[^<>\s]+>", f"{hdr.get('In-Reply-To', '')} {hdr.get('References', '')}"))
+                            when = _instant(_iso_date(hdr, d.get(b"INTERNALDATE")))
+                            for _, a in parse_addrs(hdr.get_all("From", [])):
+                                if when:
+                                    heard.setdefault(a.lower(), []).append(when)
+                except Exception as e:  # noqa: BLE001 - one unreadable folder must not sink the rest
+                    if _mail_transport(e):
+                        raise
+                    not_read.append(name)
+        latest: dict[str, dict[str, Any]] = {}
+        for m in sorted(sent, key=lambda m: m["at"]):
+            for _, a in m["people"]:
+                latest[a.lower()] = m                                       # a later message to the same person replaces an earlier one
+        waiting, seen = [], set()
+        now = datetime.now(timezone.utc)
+        for addr, m in latest.items():
+            if m["uid"] in seen or (m["message_id"] and m["message_id"] in referenced):
+                continue
+            addresses = [a.lower() for _, a in m["people"]]
+            if any(when > m["at"] for a in addresses for when in heard.get(a, [])):
+                continue                                                    # they wrote after it
+            seen.add(m["uid"])
+            before = [when for a in addresses for when in heard.get(a, []) if when <= m["at"]]
+            waiting.append(compact({"uid": m["uid"], "to": addrs_json(m["people"]), "subject": m["subject"],
+                                    "sent": m["at"].isoformat(), "days_waiting": (now - m["at"]).days,
+                                    "last_seen_from_them": max(before).isoformat() if before else None},
+                                   keep=("uid", "to", "subject", "sent", "days_waiting")))
+        waiting.sort(key=lambda w: _instant(w["sent"]))                     # longest waiting first
+        out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "folder": sent_folder, **({"uidvalidity": uv} if uv is not None else {}),
+                               "days": days, "total": len(waiting), "returned": min(len(waiting), limit), "awaiting": waiting[:limit],
+                               "complete": not not_read}
+        if not_read:
+            out["not_read"] = not_read
+            out["note"] = "Some folders could not be read, so a reply there may have been missed."
+        return out
 
     # -- organising ----------------------------------------------------------------
     def mark(self, folder: str, uids: list[int], *, read: bool | None = None, flagged: bool | None = None,

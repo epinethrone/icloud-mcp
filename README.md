@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (20 tools), Calendar (9), Contacts (6), Reminders (7), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (21 tools), Calendar (9), Contacts (6), Reminders (7), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -277,15 +277,15 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**65 tools.** 36 for Mail, Calendar, Contacts and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**67 tools.** 38 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 <details>
-<summary><b>Mail</b> &nbsp;·&nbsp; 20 tools</summary>
+<summary><b>Mail</b> &nbsp;·&nbsp; 21 tools</summary>
 
 | Kind | Tools |
 |---|---|
 | Read | `mail_list_folders`, `mail_search`, `mail_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
-| Read | `mail_senders` (who fills a folder, busiest first, with bulk and unsubscribe info) |
+| Read | `mail_senders` (who fills a folder, busiest first, with bulk and unsubscribe info), `mail_awaiting_reply` (mail you sent that has had no answer) |
 | Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder`, `mail_bulk_action`, `mail_bulk_undo`, `mail_unsubscribe` |
 
 - Replies keep the `Re:` subject, `In-Reply-To` and `References`, the right recipients and the quoted original in plain text and HTML. Sent mail is copied to Sent and the original is flagged Answered (forwards get `$Forwarded`). `draft=true` saves to Drafts instead of sending.
@@ -296,6 +296,8 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 - **Unsubscribe without following links.** `mail_unsubscribe` uses only the List-Unsubscribe header: the standard one-click request (RFC 8058, HTTPS to public addresses only) or an unsubscribe email through the normal send path, so approval rules apply. Links in the body are never followed, unsubscribe web pages are only handed to you, and mail in Junk is refused.
 - **Bookings come out exact.** `mail_extract_bookings` reads the schema.org booking data airlines, hotels, rail and ticket shops embed (flights, stays, trains, buses, rental cars, restaurants, events) and `.ics` invitations, and returns each with a ready `calendar_create_event` block. Nothing is guessed from the wording; a message without that data says so.
 - **Only what changed.** `mail_changes` returns a token; passed back next time, it lists just the new messages and those whose read, flagged or answered state changed, using IMAP CONDSTORE instead of re-reading the folder. If iCloud renumbered the folder, it says to start over rather than guess.
+- **Who is waiting on whom.** `mail_awaiting_reply` lists mail you sent to a person that has had no reply and no later message from them, in any folder, longest waiting first; `mail_search` takes `people_only` (no newsletters), `unanswered_only` and `since_hours`.
+- **Layout checked, never rewritten.** Send and draft results carry `layout_warnings` when a plain-text body has HTML tags, Windows line endings or one long paragraph.
 - **Stale ids are refused.** Every message comes with its folder's `uidvalidity`; tools that act on a uid accept it back and refuse if iCloud has renumbered the folder since, instead of touching a different message.
 - Reading a message does not mark it read. Bcc recipients receive the mail, but the header is stripped on the wire.
 - Recipients accept `a@b.com`, `Name <a@b.com>` or `mailto:a@b.com`. Anything else is rejected with a clear error and never silently dropped.
@@ -311,10 +313,12 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 - **Finding free time is one call.** `calendar_find_free_time` returns openings of a given length within your hours and chosen weekdays. Travel time counts as busy; events marked free, cancelled events and invitations you declined do not; all-day events are listed separately instead of guessed about.
 - **Know whether an invitation went out.** After inviting people, the result reports what iCloud recorded for each guest (sent, delivered, or refused, for example a mistyped address), so an agent never claims someone was invited when they were not.
 - **Move between calendars.** `calendar_move_event` moves an event (a whole series, if it repeats) to another calendar with a WebDAV MOVE, so nothing is recreated and guests get no new invitation. Servers without MOVE get a copy first and the original deleted only after.
+- **Clashes and duplicates are reported.** `calendar_create_event` returns the events a new one overlaps (`conflicts`, travel time counted on both sides, free, cancelled and declined events ignored) and a `possible_duplicate` with the same title and time; `on_conflict` / `on_duplicate` = `refuse` creates nothing instead.
+- **Invitations waiting for you.** `calendar_list_events(needs_reply=true)` lists invitations you have not answered (to any of your addresses: add aliases to `OWNER_ADDRESSES`); `starting_within_minutes` looks from now.
 - **Answer invitations.** `calendar_rsvp` accepts, declines or marks tentative, for the whole series or one date; iCloud emails the organizer itself.
 - **Safe to retry.** `calendar_create_event` and `contacts_create` take an optional `request_id`: if a call times out and is retried with the same one, the first attempt is found instead of creating a duplicate.
 - **Apple travel time and map locations.** Events can carry Apple's travel time (by bike, on foot, by car or public transport) and a structured destination, which is what makes Apple draw the map card.
-- **Adding a guest leaves everyone else alone.** Updating the guest list merges instead of replacing, so existing guests keep their RSVP and aren't sent the invitation again. Invitations are emailed by iCloud itself and are off unless you allow them.
+- **Adding a guest leaves everyone else alone.** `add_attendees` and `remove_attendees` change one person; a full guest list merges instead of replacing, so existing guests keep their RSVP and aren't sent the invitation again. Invitations are emailed by iCloud itself and are off unless you allow them.
 
 </details>
 
@@ -327,7 +331,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 - **Misspelled names are handled.** `contacts_search` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.
 - **Postal addresses** are read and written as street, city, region, postcode and country, with home, work or your own labels ("Holiday house"), stored the way Apple's Contacts app expects.
 - **Birthdays coming up.** `contacts_upcoming_birthdays` lists them soonest first, with the age turned when the year is known (Apple's "year unknown" 1604 is understood, and 29 February falls on the 28th in other years).
-- Updates keep every field outside the changed ones and use ETags to refuse stale overwrites. Contact photos and notes are never returned.
+- Updates keep every field outside the changed ones and use ETags to refuse stale overwrites. `add_emails` and `add_phones` add to a card without touching its existing addresses or their labels. Contact photos and notes are never returned.
 
 </details>
 
@@ -369,15 +373,15 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>Status</b> &nbsp;·&nbsp; 2 tools</summary>
+<summary><b>Status and time</b> &nbsp;·&nbsp; 3 tools</summary>
 
-`icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `mac_helper_status` says whether the Mac helper is online, when it was last seen and which version it runs.
+`icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `mac_helper_status` says whether the Mac helper is online, when it was last seen, which version it runs, how many jobs are queued and how long they take. `icloud_now` gives the current date, weekday and time in your timezone, so an agent never books from a guessed date.
 
 </details>
 
 ### Ready-made workflows
 
-The server also offers MCP prompts your client can show as one-click workflows: **Triage my inbox**, **Plan my week**, **Prepare for an appointment** and **Birthdays coming up**. Each only appears when the areas it needs are on, and each tells the agent to show you what it would do before sending, booking, moving or deleting anything.
+The server also offers MCP prompts your client can show as one-click workflows: **Triage my inbox**, **Replies I owe**, **Follow-ups I am waiting on**, **Plan my week**, **Prepare for an appointment**, **Calendar from my mail**, **Find a time with someone**, **Tidy my reminders** and **Birthdays coming up**. Each only appears when the areas it needs are on, and each tells the agent to show you what it would do before sending, booking, moving or deleting anything.
 
 ## Reminders, Notes and iCloud Drive through your Mac
 
@@ -439,6 +443,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `CALDAV_POOL_SIZE`, `CALDAV_KEEPALIVE_SECONDS` | 4, 600 | Calendar connections kept for reuse, and how long they are kept warm after the last call (0 = no keep-alive) |
 | `WARMUP_ON_START` | true | Sign in to mail, calendar and contacts in the background right after start, so the first call is fast |
 | `TOOL_WORKERS` | 8 | Tool calls that can run at the same time |
+| `OWNER_ADDRESSES` | (none) | More addresses that are yours (aliases), so invitations to them count as yours |
 | `AGENT_NOTES_FILE` | (none) | Your own rules for agents, added to the instructions and served as `icloud://agent-notes` (see `docs/agent-notes.example.md`) |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |

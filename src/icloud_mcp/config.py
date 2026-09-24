@@ -112,6 +112,7 @@ class Settings:
     warmup_on_start: bool = True  # WARMUP_ON_START: log in to mail, calendar and contacts in the background right after start
     tool_workers: int = 8         # TOOL_WORKERS: threads that run tool calls, so parallel calls do not queue behind each other
     agent_notes_file: str = ""    # AGENT_NOTES_FILE: the owner's own rules for agents, appended to the instructions (never shipped)
+    owner_addresses: tuple[str, ...] = ()   # OWNER_ADDRESSES: more addresses that are the owner's (aliases), e.g. on invitations
     shortcuts_allow: tuple[str, ...] = ()   # SHORTCUTS_ALLOW: exact Shortcut names the assistant may run (the Mac keeps its own list too)
 
     @classmethod
@@ -182,10 +183,17 @@ class Settings:
             warmup_on_start=_bool("WARMUP_ON_START", True),
             tool_workers=max(2, min(_int("TOOL_WORKERS", 8), 32)),
             agent_notes_file=_str("AGENT_NOTES_FILE"),
+            owner_addresses=tuple(a.strip().lower() for a in _list("OWNER_ADDRESSES") if a.strip()),
             shortcuts_allow=tuple(n.strip() for n in _str("SHORTCUTS_ALLOW").split(";" if ";" in _str("SHORTCUTS_ALLOW") else ",") if n.strip()),
         )
 
     # ------------------------------------------------------------------
+    @property
+    def own_addresses(self) -> set[str]:
+        """Every address that is the owner: the account address, the Apple ID, the mail logins and OWNER_ADDRESSES."""
+        return {a.strip().lower() for a in (self.email_address, self.username, self.imap_username, self.smtp_username,
+                                            *self.owner_addresses) if a and "@" in a}
+
     @property
     def bridge_enabled(self) -> bool:
         return self.enable_reminders or self.enable_notes or self.enable_drive or bool(self.shortcuts_allow)

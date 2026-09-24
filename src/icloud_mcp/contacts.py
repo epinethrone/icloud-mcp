@@ -349,6 +349,32 @@ def build_vcard(*, uid: str, given_name: str = "", family_name: str = "", name: 
     return "\r\n".join(lines + ["END:VCARD", ""])
 
 
+def _append_vcard_items(raw: str, emails: list[str] | None = None, phones: list[str] | None = None) -> tuple[str, list[str]]:
+    """Add emails and phone numbers to a card, keeping every existing line (with its labels) exactly as it is. An address or
+    number already on the card is skipped. Returns (new card, what was added)."""
+    _check_emails(emails)
+    old = parse_vcard(raw)
+    if not old:
+        raise ContactsError("The stored contact is not a valid vCard.")
+    have_emails = {e["address"].lower() for e in old["emails"]}
+    have_phones = {_digits(p["number"]) for p in old["phones"]}
+    lines, added = [], []
+    for e in dict.fromkeys(x.strip() for x in (emails or []) if x.strip()):
+        if e.lower() not in have_emails:
+            lines.append(_v_line("EMAIL;TYPE=INTERNET", e))
+            added.append(e)
+    for ph in dict.fromkeys(x.strip() for x in (phones or []) if x.strip()):
+        if _digits(ph) and _digits(ph) not in have_phones:
+            lines.append(_v_line("TEL", ph))
+            added.append(ph)
+    unfolded = re.sub(r"\r?\n[ \t]", "", raw).splitlines()
+    try:
+        at = next(i for i, line in enumerate(unfolded) if line.upper() == "END:VCARD")
+    except StopIteration as e:
+        raise ContactsError("The stored contact is missing END:VCARD.") from e
+    return "\r\n".join(unfolded[:at] + lines + unfolded[at:] + [""]), added
+
+
 def _replace_vcard_fields(raw: str, **updates: Any) -> str:
     """Replace selected fields while retaining untouched iCloud vCard properties (photos, notes, labels, etc.)."""
     replace = {"name": ("FN",), "given_name": ("N",), "family_name": ("N",), "nickname": ("NICKNAME",),
@@ -744,7 +770,10 @@ class ContactsService:
                 self._patch(add=card)
         return {"created": True, "uid": uid, "name": parse_vcard(raw)["name"]}
 
-    def update(self, uid: str, **updates: Any) -> dict[str, Any]:
+    def update(self, uid: str, *, add_emails: list[str] | None = None, add_phones: list[str] | None = None,
+               **updates: Any) -> dict[str, Any]:
+        if (add_emails and updates.get("emails") is not None) or (add_phones and updates.get("phones") is not None):
+            raise ContactsError("Use emails/phones (the complete list) or add_emails/add_phones, not both for the same field.")
         with self._lock:
             record = self._record(uid)
             with self._client() as client:
@@ -754,7 +783,15 @@ class ContactsService:
                 # otherwise an edit made elsewhere in between would be silently overwritten. iCloud reports the same ETag in
                 # the address-book listing and in a GET (verified), so the cached value is valid here.
                 etag = record.get("_etag") or r.headers.get("etag")
-                new_raw = _replace_vcard_fields(raw, **updates)
+                added: list[str] = []
+                new_raw = raw
+                if add_emails or add_phones:
+                    new_raw, added = _append_vcard_items(new_raw, add_emails, add_phones)
+                if any(v is not None for v in updates.values()):
+                    new_raw = _replace_vcard_fields(new_raw, **updates)
+                elif not added:
+                    return {"updated": False, "uid": uid, "name": record["name"],
+                            "note": "Everything given is already on this contact, so nothing was changed."}
                 response = self._mutate(client, "PUT", record["_href"], data=new_raw, etag=etag)
                 card = parse_vcard(new_raw)
                 if card:
@@ -762,7 +799,7 @@ class ContactsService:
                     self._patch(remove=uid, add=card)
                 else:
                     self._clear_cache()
-        return {"updated": True, "uid": uid, "name": parse_vcard(new_raw)["name"]}
+        return {"updated": True, "uid": uid, "name": parse_vcard(new_raw)["name"], **({"added": added} if added else {})}
 
     def delete(self, uid: str) -> dict[str, Any]:
         with self._lock:
