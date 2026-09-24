@@ -37,7 +37,8 @@ from . import callctx
 from .config import Settings
 from .keepalive import TICKER
 from .matching import fuzzy_match_all, norm, similar_enough
-from .safety import compact, warnings_for
+from .safety import compact, confirm_problem, warnings_for
+from .safety import confirm_token as make_confirm_token
 from .mailbulk import bulk_view
 from . import mailparts
 from .outbox import Outbox, OutboxFull, QueuedMessage
@@ -1508,6 +1509,14 @@ class MailService:
                 result["saved_to"] = sent
             except Exception as e:  # noqa: BLE001
                 result["warning"] = f"Message was sent but could not be copied to the Sent folder: {e}"
+        if followup and followup.get("action") == "trash":        # a saved draft that was just sent: it goes to Trash
+            try:
+                self._select(c, followup["folder"], readonly=False, expect=followup.get("uidvalidity"))
+                self._move_messages(c, [followup["uid"]], self.resolve_folder(c, "trash"))
+                result["draft_moved_to_trash"] = True
+            except Exception as e:  # noqa: BLE001 - the mail is out; a leftover draft is only untidy
+                result["draft_left_in_place"] = f"Sent, but the draft could not be moved to Trash: {e}"
+            return result
         if followup:
             try:
                 self._select(c, followup["folder"], readonly=False, expect=followup.get("uidvalidity"))
@@ -1739,3 +1748,147 @@ class MailService:
         with self._folders_lock:
             self._folders = None
         return {"created": True, "name": name}
+
+    # -- saved drafts ----------------------------------------------------------------
+    def _load_draft(self, c: IMAPClient, folder: str, uid: int, uidvalidity: int | None) -> tuple[str, EmailMessage, int | None]:
+        folder = self.resolve_folder(c, folder)
+        raw, flags, _, uv = self._fetch_raw(c, folder, uid, uidvalidity=uidvalidity)
+        is_draft = any((f.decode() if isinstance(f, bytes) else str(f)).lower() == "\\draft" for f in flags)
+        if folder != self.resolve_folder(c, "drafts") and not is_draft:
+            raise MailError(f"Message {uid} in '{folder}' is not a saved draft. Only drafts (folder Drafts) can be sent or changed "
+                            "this way; to send something new use mail_send.")
+        return folder, email.message_from_bytes(raw, policy=policy.default), uv
+
+    def send_draft(self, uid: int, *, folder: str = "Drafts", uidvalidity: int | None = None) -> dict[str, Any]:
+        """Send a saved draft as it is: its own recipients, subject, body and attachments, through the same gates as mail_send
+        (recipient cap, allowlist, owner approval). Bcc never reaches the other recipients (the SMTP layer drops the header).
+        Once it is sent the draft goes to Trash."""
+        with self.imap() as c:
+            folder, msg, uv = self._load_draft(c, folder, uid, uidvalidity)
+            if self.s.require_approval and self.s.local_mode:
+                return {"status": "already_a_draft", "sent": False, "folder": folder, "uid": uid,
+                        "notice": "This server leaves sending to the owner: the draft is already in Drafts for them to send."}
+            if msg["From"] is None:
+                msg["From"] = formataddr(self.sender)
+            if msg["Date"] is None:
+                msg["Date"] = formatdate(localtime=True)
+            if msg["Message-ID"] is None:
+                msg["Message-ID"] = make_msgid(domain=(self.s.email_address.rsplit("@", 1)[-1] or None))
+            return self._deliver(c, msg, draft=False, followup={"folder": folder, "uid": uid, "uidvalidity": uv, "action": "trash"})
+
+    def update_draft(self, uid: int, *, folder: str = "Drafts", uidvalidity: int | None = None, to=None, cc=None, bcc=None,
+                     subject: str | None = None, body: str | None = None, body_html: str | None = None,
+                     attachments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Change a saved draft. Fields left out keep their current value. The new draft is saved first and only then does the
+        old one go to Trash, so a failure never loses it."""
+        with self.imap() as c:
+            folder, old, uv = self._load_draft(c, folder, uid, uidvalidity)
+            keep = lambda h: parse_addrs(old.get_all(h, []))        # noqa: E731
+            to_p = parse_recipients(to, "to") if to is not None else keep("To")
+            cc_p = parse_recipients(cc, "cc") if cc is not None else keep("Cc")
+            bcc_p = parse_recipients(bcc, "bcc") if bcc is not None else keep("Bcc")
+            old_text, old_html = extract_bodies(old)
+            if body is None and body_html is None:
+                text, htm, signature = old_text or (html_to_text(old_html) if old_html else ""), old_html, ""
+            else:
+                text, htm, signature = (body if body is not None else ""), body_html, self.s.signature
+            if attachments is None:
+                attachments = [{"filename": p.get_filename() or "attachment", "content_type": p.get_content_type(),
+                                "content_base64": base64.b64encode(p.get_payload(decode=True) or b"").decode()}
+                               for p in iter_attachment_parts(old)]
+            new = build_message(
+                sender=self.sender, to=to_p, cc=cc_p, bcc=bcc_p, subject=subject if subject is not None else str(old["Subject"] or ""),
+                text=text, html=htm, signature=signature, attachments=attachments, max_attachment_bytes=self.s.max_attachment_bytes,
+                in_reply_to=str(old["In-Reply-To"]) if old["In-Reply-To"] else None,
+                references=str(old["References"]) if old["References"] else None,
+            )
+            drafts = self.resolve_folder(c, "drafts")
+            resp = c.append(drafts, new.as_bytes(policy=policy.SMTP), flags=[DRAFT, SEEN], msg_time=datetime.now(timezone.utc))
+            m = re.search(rb"APPENDUID (\d+) (\d+)", resp if isinstance(resp, bytes) else str(resp).encode())
+            self._select(c, folder, readonly=False, expect=uv)
+            self._move_messages(c, [uid], self.resolve_folder(c, "trash"))
+        out = {"status": "draft_updated", "folder": drafts, "old_uid": uid, "old_draft": "moved to Trash", **self._summary_of(new)}
+        if m:
+            out.update(uid=int(m.group(2)), uidvalidity=int(m.group(1)))
+        else:
+            out["hint"] = "Find the new draft with mail_search(folder='Drafts')."
+        return out
+
+    # -- renaming and deleting folders ------------------------------------------------
+    _PROTECTED_NAMES = {"inbox", "notes"}
+    _SPECIAL_USE = {b"\\sent", b"\\drafts", b"\\trash", b"\\junk", b"\\archive", b"\\all", b"\\flagged"}
+
+    def _changeable_folder(self, c: IMAPClient, name: str) -> tuple[str, bytes | str]:
+        """The folder's exact name and delimiter, refusing INBOX, the special folders and folders with subfolders."""
+        folders = self._list(c)
+        match = next((f for f in folders if f[2] == name), None) or next((f for f in folders if f[2].lower() == name.lower()), None)
+        if match is None:
+            raise MailError(f"There is no folder '{name}'. Call mail_list_folders for the exact names.")
+        flags, delim, exact = match
+        fallbacks = {fb.lower() for _, fbs in _SPECIAL.values() for fb in fbs}
+        if (exact.lower() in self._PROTECTED_NAMES or exact.lower() in fallbacks
+                or {bytes(f).lower() if isinstance(f, (bytes, bytearray)) else str(f).lower().encode() for f in flags} & self._SPECIAL_USE):
+            raise MailError(f"'{exact}' is one of the mailbox's own folders (Inbox, Sent, Drafts, Trash, Junk, Archive, Notes): it "
+                            "cannot be renamed or deleted.")
+        sep = (delim.decode() if isinstance(delim, bytes) else delim) or "/"
+        if any(f[2].startswith(exact + sep) for f in folders):
+            raise MailError(f"'{exact}' has subfolders. Move or delete them first.")
+        return exact, sep
+
+    def update_folder(self, name: str, new_name: str) -> dict[str, Any]:
+        new_name = (new_name or "").strip()
+        if not new_name:
+            raise MailError("new_name is empty.")
+        with self.imap() as c:
+            exact, _ = self._changeable_folder(c, name)
+            if any(f[2].lower() == new_name.lower() for f in self._list(c)) and new_name.lower() != exact.lower():
+                raise MailError(f"A folder called '{new_name}' already exists.")
+            try:
+                c.rename_folder(exact, new_name)
+            except Exception as e:  # noqa: BLE001
+                raise MailError(f"Could not rename '{exact}': {e}.") from e
+        with self._folders_lock:
+            self._folders = None
+        return {"renamed": True, "from": exact, "to": new_name}
+
+    def delete_folder(self, name: str, *, confirm_token: str | None = None) -> dict[str, Any]:
+        """Delete a folder. Mail is never deleted with it: an empty folder goes at once; a folder with messages is previewed,
+        and with the preview's confirm_token its messages move to Trash first, then the folder goes."""
+        with self.imap() as c:
+            exact, _ = self._changeable_folder(c, name)
+            info = c.select_folder(exact, readonly=True) or {}
+            uv, count = int(info.get(b"UIDVALIDITY") or 0), int(info.get(b"EXISTS") or 0)
+            if count:
+                if confirm_token is None:
+                    uids = sorted(c.search(["ALL"]))[-3:]
+                    fetched = c.fetch(uids, ["BODY.PEEK[HEADER.FIELDS (SUBJECT)]"]) if uids else {}
+                    sample = [_hdr(email.message_from_bytes(next((v for k, v in d.items() if isinstance(k, bytes) and k.startswith(b"BODY")), b""),
+                                                            policy=policy.default), "Subject") or "(no subject)" for d in fetched.values()]
+                    return {"deleted": False, "folder": exact, "messages": count, "sample": sample,
+                            "confirm_token": make_confirm_token("mail-folder", exact, uv, count),
+                            "next": "Show the owner the count. To go ahead, call again with this confirm_token: the messages move to "
+                                    "Trash first (recoverable there), then the folder is removed."}
+                if why := confirm_problem(confirm_token, "mail-folder", exact, uv, count):
+                    raise MailError(why)
+                trash = self.resolve_folder(c, "trash")
+                self._select(c, exact, readonly=False, expect=uv)
+                all_uids = sorted(c.search(["ALL"]))
+                moved = 0
+                try:
+                    for i in range(0, len(all_uids), 250):
+                        self._move_messages(c, all_uids[i:i + 250], trash)
+                        moved += len(all_uids[i:i + 250])
+                except Exception as e:  # noqa: BLE001 - never retried: report what already happened
+                    raise MailError(f"Stopped after moving {moved} of {len(all_uids)} messages to Trash ({e}); the folder was not "
+                                    "deleted. Call mail_delete_folder again for a new preview of what is left.") from e
+                c.unselect_folder()
+                left = int((c.folder_status(exact, [b"MESSAGES"]) or {}).get(b"MESSAGES") or 0)
+                if left:
+                    raise MailError(f"{moved} messages went to Trash, but {left} arrived meanwhile; the folder was kept. Call again for a new preview.")
+            try:
+                c.delete_folder(exact)
+            except Exception as e:  # noqa: BLE001
+                raise MailError(f"Could not delete '{exact}': {e}.") from e
+        with self._folders_lock:
+            self._folders = None
+        return {"deleted": True, "folder": exact, **({"messages_moved_to_trash": count} if count else {})}

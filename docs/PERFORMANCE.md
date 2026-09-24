@@ -309,3 +309,10 @@ but a few still reconnected (slowest 5.5 s).
 Eleven tools renamed to a strict `area_verb_noun` pattern (tested against a fixed verb list), attachment sources described on
 `mail_send` / `mail_reply`, and a line in the instructions saying what the Mac helper adds when its areas are off. Schema
 37,900 characters (budget 38,000), instructions 6,153.
+
+## 0.9.0 and 0.10.0: budget for new tools
+
+About 21 tools arrive across these two releases (drafts and folders, calendars, contact groups, reminders, Maps, iMessage).
+The parameter-schema budget in `tests/test_tool_surface.py` goes from 38,000 to 52,000 characters and the instructions cap in
+`tests/test_instructions.py` from 6,500 to 8,000. Clients that load too much can still use `TOOLS=essential` or an area preset.
+After the mail drafts and folders PR: 71 tools, 40,283 schema characters, instructions 6,393.

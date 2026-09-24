@@ -4,6 +4,7 @@ Start the stack with dev/start_local_stack.sh first; otherwise these tests are s
 They exercise the real IMAP/SMTP/CalDAV code paths but NOT iCloud itself (see README, "What is and isn't verified").
 """
 import base64
+import contextlib
 import email
 import pathlib
 import socket
@@ -264,6 +265,43 @@ def test_send_guards(settings, inbox):
 
 
 # ------------------------------------------------------------------------ calendar
+def test_a_saved_draft_is_updated_then_sent_as_saved(mail, inbox):
+    before = set(SINK.glob("*.eml"))                    # the sink runs as root in CI: read only what this test adds
+    mail.send(to=["Anna <anna@example.org>"], bcc=["boss@example.org"], subject="Plan", body="Draft one", draft=True)
+    drafts = mail.search("Drafts")
+    uid = next(m["uid"] for m in drafts["messages"] if m["subject"] == "Plan")
+    upd = mail.update_draft(uid, uidvalidity=drafts["uidvalidity"], body="Draft two")
+    assert upd["status"] == "draft_updated" and upd["uid"] != uid
+    r = mail.send_draft(upd["uid"], uidvalidity=upd["uidvalidity"])
+    assert r["status"] == "sent" and r["draft_moved_to_trash"] is True
+    eml = sorted(set(SINK.glob("*.eml")) - before)
+    assert len(eml) == 1
+    wire, rcpt = eml[0].read_bytes(), eml[0].with_suffix(".rcpt").read_text().split()
+    assert b"Draft two" in wire and b"Draft one" not in wire
+    assert "boss@example.org" in rcpt and b"boss@example.org" not in wire         # Bcc: delivered, never shown
+    assert not [m for m in mail.search("Drafts")["messages"] if m["subject"] == "Plan"]
+
+
+def test_folders_are_renamed_and_deleted_without_losing_mail(mail, inbox):
+    with contextlib.suppress(Exception):
+        mail.delete_folder("Scratch renamed")
+    mail.create_folder("Scratch")
+    assert mail.update_folder("Scratch", "Scratch renamed")["renamed"] is True
+    with pytest.raises(MailError, match="own folders"):
+        mail.update_folder("INBOX", "Other")
+    with IMAPClient("127.0.0.1", port=1143, ssl=False) as c:
+        c.login("test", "testpass")
+        for i in range(3):
+            c.append("Scratch renamed", raw(From="x@example.org", To="test@icloud.test", Subject=f"old {i}").as_bytes(policy=policy.SMTP))
+    trash_before = mail.search("trash")["total_matches"]
+    preview = mail.delete_folder("Scratch renamed")
+    assert preview["deleted"] is False and preview["messages"] == 3
+    done = mail.delete_folder("Scratch renamed", confirm_token=preview["confirm_token"])
+    assert done["deleted"] is True and done["messages_moved_to_trash"] == 3
+    assert mail.search("trash")["total_matches"] == trash_before + 3
+    assert "Scratch renamed" not in [f["name"] for f in mail.list_folders()]
+
+
 @pytest.fixture(scope="module")
 def cal(settings):
     import caldav

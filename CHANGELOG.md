@@ -3,6 +3,14 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
+## 0.9.0 (in progress)
+
+- Saved drafts: `mail_send_draft` sends a draft exactly as saved (same checks and approval as `mail_send`; the draft then goes to
+  Trash), `mail_update_draft` changes one without losing it.
+- Mail folders: `mail_update_folder` renames, `mail_delete_folder` deletes; a folder's mail always goes to Trash first, after a
+  confirm step. The mailbox's own folders are refused.
+- A server call that needs a newer Mac helper says so and asks for the update, instead of failing with "unknown operation".
+
 ## 0.8.0
 
 - **Calendar reads cannot be stalled by a stranger's invitation:** a series that would repeat more than 48 times a day

@@ -638,6 +638,16 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 return mail.forward(folder, uid, to, note=note, note_html=note_html, cc=cc, bcc=bcc,
                                     include_attachments=include_attachments, draft=draft, uidvalidity=uidvalidity)
 
+            @mcp.tool(annotations=_WRITE)
+            @_guard
+            def mail_send_draft(uid: Annotated[int, _d("The draft's uid in Drafts (from mail_search(folder='Drafts')).")],
+                                uidvalidity: UidValidityRequired,
+                                folder: Annotated[str, _d("Where the draft is; default Drafts.")] = "Drafts") -> dict[str, Any]:
+                """Send a saved draft exactly as it is: its recipients, subject, body and attachments, through the same checks and
+                owner approval as mail_send (check the result status: queued_for_owner_approval means NOT sent yet). Once sent the
+                draft goes to Trash. Use it when the owner approves a draft; change it first with mail_update_draft."""
+                return mail.send_draft(uid, folder=folder, uidvalidity=uidvalidity)
+
         elif writable:
 
             @mcp.tool(annotations=_WRITE)
@@ -673,6 +683,35 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             def mail_create_folder(name: Annotated[str, _d("Name of the new folder.")]) -> dict[str, Any]:
                 """Create a mail folder."""
                 return mail.create_folder(name)
+
+            @mcp.tool(annotations=_IDEMPOTENT_WRITE)
+            @_guard
+            def mail_update_folder(name: Annotated[str, _d("The folder to rename (exact name from mail_list_folders).")],
+                                   new_name: Annotated[str, _d("Its new name.")]) -> dict[str, Any]:
+                """Rename a mail folder. Inbox, Sent, Drafts, Trash, Junk, Archive and Notes cannot be renamed."""
+                return mail.update_folder(name, new_name)
+
+            @mcp.tool(annotations=_DESTRUCTIVE)
+            @_guard
+            def mail_delete_folder(name: Annotated[str, _d("The folder to delete (exact name from mail_list_folders).")],
+                                   confirm_token: Annotated[str | None, _d("From the preview; needed when the folder holds mail.")] = None) -> dict[str, Any]:
+                """Delete a mail folder without deleting mail. An empty folder goes at once. A folder with messages is previewed
+                first (count, sample, confirm_token); show the owner, and only with their yes call again with the token: the
+                messages move to Trash (recoverable), then the folder goes. Special folders and folders with subfolders are refused."""
+                return mail.delete_folder(name, confirm_token=confirm_token)
+
+            @mcp.tool(annotations=_WRITE)
+            @_guard
+            def mail_update_draft(uid: Annotated[int, _d("The draft's uid in Drafts.")], uidvalidity: UidValidityRequired,
+                                  to: Annotated[list[str] | None, _d("New recipients; omit to keep.")] = None, cc: Cc = None, bcc: Bcc = None,
+                                  subject: Annotated[str | None, _d("New subject; omit to keep.")] = None,
+                                  body: Annotated[str | None, _d("New plain-text body (the signature is added); omit to keep the current body.")] = None,
+                                  body_html: BodyHtml = None, attachments: Attachments = None,
+                                  folder: Annotated[str, _d("Where the draft is; default Drafts.")] = "Drafts") -> dict[str, Any]:
+                """Change a saved draft; anything left out stays as it is (attachments too, unless given). The new version is saved
+                first, then the old one goes to Trash; the result has the new uid. Nothing is sent."""
+                return mail.update_draft(uid, folder=folder, uidvalidity=uidvalidity, to=to, cc=cc, bcc=bcc, subject=subject,
+                                         body=body, body_html=body_html, attachments=_atts(attachments))
 
             @mcp.tool(annotations=_WRITE)
             @_guard

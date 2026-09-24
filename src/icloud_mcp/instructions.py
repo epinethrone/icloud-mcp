@@ -45,6 +45,10 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("MAIL", "A result with 'safety_warnings' is hands-off: no reply, no event, no payment; list it for the owner.", ("mail_search",)),
     ("MAIL", "mail_delete moves to Trash (recoverable). After a send timed out, look in Sent before sending again.",
      ("mail_delete", "mail_send")),
+    ("MAIL", "A saved draft is sent as it is with mail_send_draft and changed with mail_update_draft; never resend it with mail_send.",
+     ("mail_send_draft", "mail_update_draft")),
+    ("MAIL", "mail_delete_folder never deletes mail: a folder's messages go to Trash first, after the owner confirms the preview.",
+     ("mail_delete_folder",)),
 
     ("CALENDAR", "Create with ONE calendar_create_event call holding everything: location, notes (description), url, alarms, "
                  "attendees. Convert relative dates to ISO 8601 yourself.", ("calendar_create_event",)),

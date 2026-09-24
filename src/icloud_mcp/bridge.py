@@ -41,6 +41,17 @@ MAX_RESULT_BODY = 12 * 1_048_576   # a job result (only after the token check): 
 _MAX_FAILURES, _FAILURE_WINDOW = 20, 900
 
 
+# Operations that need a newer Mac helper than the first one that had them, with that version. A call is refused with an
+# update message when the helper has reported an older version; an unknown version (not polled yet) is let through, so the
+# helper itself can still refuse an operation it does not know.
+OP_MIN_HELPER: dict[str, str] = {}
+
+
+def _version(text: str) -> tuple[int, ...] | None:
+    parts = re.findall(r"\d+", text or "")
+    return tuple(int(p) for p in parts[:3]) if parts else None
+
+
 class BridgeError(Exception):
     pass
 
@@ -207,6 +218,10 @@ class MacBridge:
         with self._cond:
             if not self._online_locked():
                 raise BridgeError(self._offline_message())
+            need, have = OP_MIN_HELPER.get(op), self.agent.get("version", "")
+            if need and _version(have) is not None and _version(have) < _version(need):
+                raise BridgeError(f"The Mac helper is {have} but {op} needs {need} or newer: update the helper on the Mac "
+                                  "(mac-helper/install.sh), then try again.")
             job = Job(id=secrets.token_urlsafe(9), op=op, args=clean, deadline=time.time() + self.timeout)
             self._jobs[job.id] = job
             self._queue.append(job)

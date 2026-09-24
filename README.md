@@ -272,18 +272,18 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**67 tools.** 38 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**71 tools.** 42 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
 <details>
-<summary><b>Mail</b> &nbsp;·&nbsp; 21 tools</summary>
+<summary><b>Mail</b> &nbsp;·&nbsp; 25 tools</summary>
 
 | Kind | Tools |
 |---|---|
 | Read | `mail_list_folders`, `mail_search`, `mail_list_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
 | Read | `mail_list_senders` (who fills a folder, busiest first, with bulk and unsubscribe info), `mail_list_awaiting_reply` (mail you sent that has had no answer) |
-| Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder`, `mail_run_bulk_action`, `mail_undo_bulk_action`, `mail_unsubscribe` |
+| Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_send_draft` (a saved draft, as it is), `mail_update_draft`, `mail_create_folder`, `mail_update_folder` (rename), `mail_delete_folder` (its mail goes to Trash first), `mail_run_bulk_action`, `mail_undo_bulk_action`, `mail_unsubscribe` |
 
 - Replies keep the `Re:` subject, `In-Reply-To` and `References`, the right recipients and the quoted original in plain text and HTML. Sent mail is copied to Sent and the original is flagged Answered (forwards get `$Forwarded`). `draft=true` saves to Drafts instead of sending.
 - `mail_get_messages` reads a batch (a day's unread mail, a whole thread) in one IMAP round trip, about 7 times faster than one at a time.
