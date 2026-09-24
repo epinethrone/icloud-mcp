@@ -56,7 +56,7 @@ def hero(t: dict) -> str:
 <text x="640" y="392" text-anchor="middle" font-size="84" font-weight="700" fill="{t['ink']}" letter-spacing="-2.5">Your iCloud. <tspan fill="url(#word)">In Claude.</tspan></text>
 <text x="640" y="456" text-anchor="middle" font-size="27" fill="{t['soft']}">Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive.</text>
 <text x="640" y="494" text-anchor="middle" font-size="27" fill="{t['soft']}">Private by design. It asks before anything leaves.</text>
-<text x="640" y="556" text-anchor="middle" font-size="19" fill="{t['faint']}" letter-spacing="1.5">50 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
+<text x="640" y="556" text-anchor="middle" font-size="19" fill="{t['faint']}" letter-spacing="1.5">51 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
 """)
 
 
@@ -83,7 +83,7 @@ APPS = [
     ("contacts", "Contacts", 5, "#8e8e93", "#aeaeb2", ["Find anyone, even misspelled.", "Addresses, phones, emails."]),
     ("reminders", "Reminders", 6, "#ff9500", "#ffb340", ["Create, update and complete,", "live through EventKit."]),
     ("notes", "Notes", 7, "#ffcc00", "#ffd60a", ["Read, write and organise", "into folders."]),
-    ("drive", "iCloud Drive", 8, "#32ade6", "#64d2ff", ["Read PDFs and documents,", "write and tidy files."]),
+    ("drive", "iCloud Drive", 9, "#32ade6", "#64d2ff", ["Read PDFs and documents,", "send, write and tidy files."]),
 ]
 
 
@@ -107,7 +107,7 @@ def apps(t: dict) -> str:
   <text x="{x + 32}" y="{y + 224}" font-size="20" fill="{t['soft']}">{lines[1]}</text>
   {f'<text x="{x + 32}" y="{y + 254}" font-size="14" font-weight="600" fill="{t["faint"]}" letter-spacing="1.2">WITH THE MAC HELPER</text>' if mac else ''}
 </g>""")
-    return svg(w, h, "Six apps, one connector: Mail 14 tools, Calendar 8, Contacts 5, Reminders 6, Notes 7, iCloud Drive 8.", f"""
+    return svg(w, h, "Six apps, one connector: Mail 14 tools, Calendar 8, Contacts 5, Reminders 6, Notes 7, iCloud Drive 9.", f"""
 <rect width="{w}" height="{h}" rx="36" fill="{t['bg']}"/>
 <text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="{t['ink']}" letter-spacing="-1.2">Six apps. One connector.</text>
 <text x="640" y="108" text-anchor="middle" font-size="21" fill="{t['soft']}">Plus a health check that tests every service in one call.</text>
