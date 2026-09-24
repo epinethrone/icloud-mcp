@@ -37,6 +37,7 @@ log = logging.getLogger("icloud_mcp.bridge")
 
 ONLINE_WINDOW = 45          # seconds after the last poll during which the helper counts as online (polls last <= 30 s)
 MAX_BODY = 1_048_576        # largest request body accepted on the bridge port
+MAX_RESULT_BODY = 12 * 1_048_576   # a job result (only after the token check): drive_get_file carries a file of up to 7 MB, base64
 _MAX_FAILURES, _FAILURE_WINDOW = 20, 900
 
 
@@ -72,6 +73,7 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
     "drive_info": {"path": ("str", True, 1000)},
     "drive_read": {"path": ("str", True, 1000), "max_chars": ("int", False, 200000), "offset": ("int", False, 50000000)},
+    "drive_get_file": {"path": ("str", True, 1000), "max_bytes": ("int", False, 7340032)},
     "drive_write": {"path": ("str", True, 1000), "content": ("str", False, 500000), "overwrite": ("bool", False, 0)},
     "drive_mkdir": {"path": ("str", True, 1000)},
     "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
@@ -303,9 +305,9 @@ def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return None
 
-    async def read_json(request: Request) -> Any:
+    async def read_json(request: Request, limit: int = MAX_BODY) -> Any:
         body = await request.body()
-        if len(body) > MAX_BODY:
+        if len(body) > limit:
             raise BridgeError("request body too large")
         return json.loads(body or b"{}")
 
@@ -330,7 +332,7 @@ def build_bridge_app(bridge: MacBridge, s: Settings) -> Starlette:
         if (bad := denied(request)) is not None:
             return bad
         try:
-            body = await read_json(request)
+            body = await read_json(request, MAX_RESULT_BODY)
             job_id, ok = str(body["job"]), bool(body["ok"])
         except (BridgeError, ValueError, TypeError, KeyError, AttributeError):
             return JSONResponse({"error": "bad request"}, status_code=400)

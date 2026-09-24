@@ -986,6 +986,16 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 found = warnings_for(str(got.get("text") or "")) if isinstance(got, dict) else []
                 return {"notice": _DRIVE_NOTICE, **got, **({"safety_warnings": found} if found else {})}
 
+            @mcp.tool(annotations=_READ)
+            @_guard
+            def drive_get_file(path: Annotated[str, _d("File path inside iCloud Drive. " + _DRIVE_PATH)]) -> dict[str, Any]:
+                """Get the file itself from iCloud Drive (not its text), base64-encoded in 'data_base64', with its name, size and type,
+                so it can be attached or sent (up to MAX_ATTACHMENT_BYTES, 5 MB by default). Use drive_read to READ a file; use this to
+                SEND it. Folders and app documents such as .pages are refused: export them to PDF first. An offloaded file is
+                downloaded first; if that takes too long the answer says it is still downloading, so ask again shortly."""
+                got = bridge.call("drive_get_file", {"path": path, "max_bytes": min(s.max_attachment_bytes, 7340032)})
+                return {"notice": _DRIVE_NOTICE, **got}
+
             if writable:
 
                 @mcp.tool(annotations=_WRITE)

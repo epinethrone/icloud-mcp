@@ -36,7 +36,7 @@ VERSION = "0.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
-MAX_OUTPUT = 2 * 1024 * 1024        # largest script result accepted
+MAX_OUTPUT = 12 * 1024 * 1024       # largest script result accepted (drive_get_file hands over files of up to 7 MB, base64-encoded)
 MAX_RESPONSE = 1024 * 1024          # largest server response accepted
 
 # The fixed operations, identical to the server's table (tests keep them in sync): name -> {argument: (type, required, max)}.
@@ -64,6 +64,7 @@ OPS = {
     "drive_search": {"query": ("str", True, 200), "path": ("str", False, 1000), "limit": ("int", False, 200)},
     "drive_info": {"path": ("str", True, 1000)},
     "drive_read": {"path": ("str", True, 1000), "max_chars": ("int", False, 200000), "offset": ("int", False, 50000000)},
+    "drive_get_file": {"path": ("str", True, 1000), "max_bytes": ("int", False, 7340032)},
     "drive_write": {"path": ("str", True, 1000), "content": ("str", False, 500000), "overwrite": ("bool", False, 0)},
     "drive_mkdir": {"path": ("str", True, 1000)},
     "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
