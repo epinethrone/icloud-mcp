@@ -74,7 +74,7 @@ def svc(tmp_path, monkeypatch):
 def test_first_call_gives_a_token_and_the_state(svc):
     m, srv = svc
     r = m.changes("INBOX")
-    assert r["first_call"] and r["token"] == "v1:4:15:6" and r["messages"] == 5 and r["unread"] == 5 and "CONDSTORE" in srv.enabled
+    assert r["first_call"] and r["token"] == "v2:INBOX:4:15:6" and r["messages"] == 5 and r["unread"] == 5 and "CONDSTORE" in srv.enabled
 
 
 def test_only_new_and_changed_messages_come_back(svc):
@@ -99,7 +99,7 @@ def test_a_renumbered_folder_says_start_over_and_bad_tokens_are_refused(svc):
     token = m.changes("INBOX")["token"]
     srv.uidvalidity = 5
     r = m.changes("INBOX", token)
-    assert r["start_over"] and r["token"].startswith("v1:5:") and "new" not in r
+    assert r["start_over"] and r["token"].startswith("v2:INBOX:5:") and "new" not in r
     with pytest.raises(MailError, match="not one this tool returned"):
         m.changes("INBOX", "banana")
 
@@ -118,3 +118,12 @@ def test_a_server_without_condstore_says_so(svc, monkeypatch):
     monkeypatch.setattr(Server, "select_folder", lambda self, name, readonly=False: {b"UIDVALIDITY": 4, b"UIDNEXT": 6})
     with pytest.raises(MailError, match="does not report changes"):
         m.changes("INBOX")
+
+
+def test_a_token_only_works_for_its_own_folder(svc):
+    m, _ = svc
+    token = m.changes("INBOX")["token"]
+    with pytest.raises(MailError, match="belongs to the folder 'INBOX'"):
+        m.changes("Archive", token)
+    with pytest.raises(MailError, match="not one this tool returned"):
+        m.changes("INBOX", token.replace("v2:", "v1:"))
