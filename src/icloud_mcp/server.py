@@ -958,7 +958,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 id: Annotated[str, _d("Note id from notes_list.")],
                 max_chars: Annotated[int | None, _d("Longest text to return (default 30000).")] = None,
             ) -> dict[str, Any]:
-                """Read one note as plain text. Password-protected notes are reported as locked and never read."""
+                """Read one note as plain text, with its content_hash (needed to append to or update it). Password-protected notes are
+                reported as locked and never read."""
                 note = bridge.call("note_read", _given(id=id, max_chars=max_chars))
                 found = warnings_for(*(str(note.get(k) or "") for k in ("title", "name", "body", "text"))) if isinstance(note, dict) else []
                 return {"notice": _MAC_NOTICE, "note": note, **({"safety_warnings": found} if found else {})}
@@ -1008,6 +1009,36 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     """Move one note into another folder. Give the destination as folder_id (preferred) or folder. Moving into Recently
                     Deleted is refused: use notes_delete for that. One note per call."""
                     return {"moved": bridge.call("note_move", _given(id=id, title=title, folder_id=folder_id, folder=folder))}
+
+                def _note_change(mode: str, id: str, title: str, content_hash: str, text: str) -> dict[str, Any]:
+                    return {"updated": bridge.call("note_update", {"id": id, "title": title, "expected_hash": content_hash, "text": text, "mode": mode})}
+
+                @mcp.tool(annotations=_WRITE)
+                @_guard
+                def notes_append(
+                    id: Annotated[str, _d("Note id from notes_list.")],
+                    title: Annotated[str, _d("The note's current title, exactly as notes_read returned it.")],
+                    content_hash: Annotated[str, _d("The 'content_hash' from notes_read of this note. A note that changed since is not touched.")],
+                    text: Annotated[str, _d("Plain text to add at the end; line breaks are kept.")],
+                ) -> dict[str, Any]:
+                    """Add text to the end of an existing note, keeping everything already in it and its formatting. Read the note with
+                    notes_read first and pass its title and content_hash: if the note changed since, nothing is written. Refuses locked
+                    notes, notes with attachments, and notes in Recently Deleted. The old version is saved as a backup on the Mac first."""
+                    return _note_change("append", id, title, content_hash, text)
+
+                @mcp.tool(annotations=_DESTRUCTIVE)
+                @_guard
+                def notes_update(
+                    id: Annotated[str, _d("Note id from notes_list.")],
+                    title: Annotated[str, _d("The note's current title, exactly as notes_read returned it. The title stays the same.")],
+                    content_hash: Annotated[str, _d("The 'content_hash' from notes_read of this note. A note that changed since is not touched.")],
+                    text: Annotated[str, _d("The new text below the title, in full. Plain text; line breaks are kept.")],
+                ) -> dict[str, Any]:
+                    """Replace the text of an existing note (the title stays). Formatting in the old text is not kept, so prefer notes_append
+                    to add something, and use this only when the user asked to rewrite or correct the note. Read it with notes_read first
+                    and pass its title and content_hash: if the note changed since, nothing is written. Refuses locked notes, notes with
+                    attachments, and notes in Recently Deleted. The old version is saved as a backup on the Mac first."""
+                    return _note_change("replace", id, title, content_hash, text)
 
         if s.enable_drive:
             @mcp.tool(annotations=_READ)
