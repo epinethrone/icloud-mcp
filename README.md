@@ -282,12 +282,13 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 | Kind | Tools |
 |---|---|
-| Read | `mail_list_folders`, `mail_search`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment` |
+| Read | `mail_list_folders`, `mail_search`, `mail_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment` |
 | Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder` |
 
 - Replies keep the `Re:` subject, `In-Reply-To` and `References`, the right recipients and the quoted original in plain text and HTML. Sent mail is copied to Sent and the original is flagged Answered (forwards get `$Forwarded`). `draft=true` saves to Drafts instead of sending.
 - `mail_get_messages` reads a batch (a day's unread mail, a whole thread) in one IMAP round trip, about 7 times faster than one at a time.
 - **Search every folder at once.** `mail_search` with `all_folders=true` looks in Archive, Sent, Junk and your own folders too, newest first, because mail rules and replies file messages away from the inbox.
+- **Only what changed.** `mail_changes` returns a token; passed back next time, it lists just the new messages and those whose read, flagged or answered state changed, using IMAP CONDSTORE instead of re-reading the folder. If iCloud renumbered the folder, it says to start over rather than guess.
 - **Stale ids are refused.** Every message comes with its folder's `uidvalidity`; tools that act on a uid accept it back and refuse if iCloud has renumbered the folder since, instead of touching a different message.
 - Reading a message does not mark it read. Bcc recipients receive the mail, but the header is stripped on the wire.
 - Recipients accept `a@b.com`, `Name <a@b.com>` or `mailto:a@b.com`. Anything else is rejected with a clear error and never silently dropped.
