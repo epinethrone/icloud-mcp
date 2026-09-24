@@ -35,21 +35,24 @@ _HEADERS = {
 }
 
 _CSS = """
-body{font:16px/1.5 -apple-system,system-ui,sans-serif;background:#f5f5f7;color:#1d1d1f;margin:0;padding:1rem}
+:root{color-scheme:light dark;--bg:#f5f5f7;--card:#fff;--text:#1d1d1f;--muted:#666;--th:#555;--line:#bbb;--quiet:#e8e8ed;--code:#f5f5f7;--accent:#0071e3;--err:#c00;--warn:#8a5300;--shadow:#0002}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--muted:#98989d;--th:#aeaeb2;--line:#48484a;--quiet:#3a3a3c;--code:#2c2c2e;--accent:#0a84ff;--err:#ff6961;--warn:#ffb340;--shadow:#0000}}
+body{font:16px/1.5 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:1rem}
 main{max-width:46rem;margin:0 auto}
-.card{background:#fff;padding:1.25rem;border-radius:14px;margin:1rem 0;box-shadow:0 2px 20px #0002}
+.card{background:var(--card);padding:1.25rem;border-radius:14px;margin:1rem 0;box-shadow:0 2px 20px var(--shadow)}
 h1{font-size:1.25rem;margin:.2rem 0 .6rem} h2{font-size:1.05rem;margin:0 0 .6rem}
-table{border-collapse:collapse;width:100%} th{text-align:left;vertical-align:top;padding:.15rem .8rem .15rem 0;white-space:nowrap;color:#555}
+table{border-collapse:collapse;width:100%} th{text-align:left;vertical-align:top;padding:.15rem .8rem .15rem 0;white-space:nowrap;color:var(--th)}
 td{padding:.15rem 0;word-break:break-word;font-family:ui-monospace,Menlo,monospace;font-size:.9rem}
-pre{background:#f5f5f7;padding:.8rem;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:26rem;overflow:auto;font-size:.9rem}
-input[type=password]{width:100%;box-sizing:border-box;padding:.7rem;font-size:1rem;border:1px solid #bbb;border-radius:8px;margin:.5rem 0 1rem}
+pre{background:var(--code);padding:.8rem;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:26rem;overflow:auto;font-size:.9rem}
+input[type=password]{width:100%;box-sizing:border-box;padding:.7rem;font-size:1rem;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;margin:.5rem 0 1rem}
 button{padding:.7rem 1.2rem;font-size:1rem;border-radius:8px;border:0;cursor:pointer;margin-right:.5rem}
-.ok{background:#0071e3;color:#fff}.no{background:#e8e8ed}.err{color:#c00}.warn{color:#8a5300}.muted{color:#666;font-size:.9rem}
+.ok{background:var(--accent);color:#fff}.no{background:var(--quiet);color:var(--text)}.err{color:var(--err)}.warn{color:var(--warn)}.muted{color:var(--muted);font-size:.9rem}
 """
 
 
 def _page(title: str, inner: str, status: int = 200) -> Response:
     body = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<meta name="color-scheme" content="light dark">'
             f"<title>{html.escape(title)}</title><style>{_CSS}</style></head><body><main>{inner}</main></body></html>")
     return HTMLResponse(body, status_code=status, headers=_HEADERS)
 

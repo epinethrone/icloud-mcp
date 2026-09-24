@@ -320,14 +320,16 @@ class OwnerOAuthProvider:
 # Consent page
 # ---------------------------------------------------------------------------
 _PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize iCloud connector</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Authorize iCloud connector</title>
 <style>
-body{{font:16px/1.5 -apple-system,system-ui,sans-serif;background:#f5f5f7;color:#1d1d1f;margin:0;display:grid;place-items:center;min-height:100vh}}
-main{{background:#fff;padding:2rem;border-radius:14px;max-width:26rem;width:calc(100% - 2rem);box-shadow:0 2px 20px #0002}}
-h1{{font-size:1.25rem;margin:0 0 .5rem}} p{{margin:.5rem 0}} .err{{color:#c00}} .muted{{color:#666;font-size:.9rem}}
-input[type=password]{{width:100%;box-sizing:border-box;padding:.7rem;font-size:1rem;border:1px solid #bbb;border-radius:8px;margin:.5rem 0 1rem}}
+:root{{color-scheme:light dark;--bg:#f5f5f7;--card:#fff;--text:#1d1d1f;--muted:#666;--th:#555;--line:#bbb;--quiet:#e8e8ed;--code:#f5f5f7;--accent:#0071e3;--err:#c00;--warn:#8a5300;--shadow:#0002}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--muted:#98989d;--th:#aeaeb2;--line:#48484a;--quiet:#3a3a3c;--code:#2c2c2e;--accent:#0a84ff;--err:#ff6961;--warn:#ffb340;--shadow:#0000}}}}
+body{{font:16px/1.5 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;display:grid;place-items:center;min-height:100vh}}
+main{{background:var(--card);padding:2rem;border-radius:14px;max-width:26rem;width:calc(100% - 2rem);box-shadow:0 2px 20px var(--shadow)}}
+h1{{font-size:1.25rem;margin:0 0 .5rem}} p{{margin:.5rem 0}} .err{{color:var(--err)}} .muted{{color:var(--muted);font-size:.9rem}}
+input[type=password]{{width:100%;box-sizing:border-box;padding:.7rem;font-size:1rem;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;margin:.5rem 0 1rem}}
 button{{padding:.7rem 1.2rem;font-size:1rem;border-radius:8px;border:0;cursor:pointer;margin-right:.5rem}}
-.ok{{background:#0071e3;color:#fff}} .no{{background:#e8e8ed}}
+.ok{{background:var(--accent);color:#fff}} .no{{background:var(--quiet);color:var(--text)}}
 </style></head><body><main>
 <h1>Authorize access to your iCloud</h1>
 <p><b>{client}</b> is requesting read and write access to your iCloud Mail and Calendar through this server.</p>
