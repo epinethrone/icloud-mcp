@@ -1008,7 +1008,8 @@ class CalendarService:
             cals = self._event_calendars(p)
             cal = self._pick(p, calendar)[0]
             name = self._cal_name(cal)
-            if str(cal.url) == str(self._default_calendar(cals).url):
+            prefs = ([self.s.default_calendar.strip().lower()] if self.s.default_calendar.strip() else []) + ["calendar", "home"]
+            if name.lower() == next((p for p in prefs if any(self._cal_name(c).lower() == p for c in cals)), None):
                 raise CalendarError(f"'{name}' is where new events go by default, so it is not deleted. Pick another calendar.")
             callctx.stage(f"CalDAV counting events in {name}")
             count = len(cal.search(event=True))

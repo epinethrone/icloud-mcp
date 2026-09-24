@@ -272,7 +272,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**74 tools.** 45 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**79 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
@@ -321,9 +321,9 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 </details>
 
 <details>
-<summary><b>Contacts</b> &nbsp;·&nbsp; 6 tools</summary>
+<summary><b>Contacts</b> &nbsp;·&nbsp; 11 tools</summary>
 
-`contacts_search`, `contacts_get`, `contacts_list_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`
+`contacts_search`, `contacts_get`, `contacts_list_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`, `contacts_list_groups`, `contacts_get_group`, `contacts_create_group`, `contacts_update_group` (rename, add or remove members), `contacts_delete_group` (the group only, never its members)
 
 - Contacts are fetched whole, cached and searched locally by name, nickname, company, email or phone, ignoring accents. A contact with no email comes back with `has_email: false`, so an agent asks instead of guessing.
 - **Misspelled names are handled.** `contacts_search` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.

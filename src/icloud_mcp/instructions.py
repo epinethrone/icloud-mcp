@@ -80,6 +80,8 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("CONTACTS", "Compare phone numbers in international form (+31 ...). One hit on a first name is not a confirmation.",
      ("contacts_search",)),
     ("CONTACTS", "A missing card is not a missing person: try mail_find_correspondent.", ("contacts_search", "mail_find_correspondent")),
+    ("CONTACTS", "A group (as in the Contacts app) is read with contacts_get_group; deleting a group never deletes its members.",
+     ("contacts_get_group",)),
 
     ("REMINDERS / NOTES", "They work through the owner's Mac: if it is offline, say so; do not retry in a loop.",
      ("icloud_get_helper_status",)),
