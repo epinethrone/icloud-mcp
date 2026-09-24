@@ -248,6 +248,7 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
     if s.local_mode:
         mcp = MCPServer("iCloud", instructions=build_instructions(s))
         _register_tools(mcp, s)
+        apply_tool_filter(mcp, s.tools)
         return mcp, None
     provider = OwnerOAuthProvider(s)
     auth = AuthSettings(
@@ -291,15 +292,75 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
         return PlainTextResponse("ok")
 
     _register_tools(mcp, s, provider)
+    apply_tool_filter(mcp, s.tools)
     return mcp, provider
+
+
+# A small set that covers what agents do most, for clients where 49 tool definitions cost too much context (TOOLS=essential).
+ESSENTIAL_TOOLS = (
+    "mail_search", "mail_get_message", "mail_get_messages", "mail_reply", "mail_send",
+    "calendar_list_events", "calendar_find_free_time", "calendar_create_event", "calendar_update_event",
+    "contacts_search", "contacts_get",
+    "reminders_list", "reminders_create", "reminders_complete",
+    "notes_list", "notes_read", "drive_search", "drive_read",
+    "icloud_check_health",
+)
+
+
+def apply_tool_filter(mcp: MCPServer, wanted: tuple[str, ...]) -> None:
+    """Keep only the tools named in TOOLS ('essential' expands to ESSENTIAL_TOOLS). Filtered tools do not exist at all rather
+    than failing when called. A name that matches no tool stops the server, listing the real names, instead of silently
+    leaving a tool out."""
+    if not wanted:
+        return
+    present = [t.name for t in mcp._tool_manager.list_tools()]
+    keep: set[str] = set()
+    unknown = []
+    for name in (w.strip() for w in wanted if w.strip()):
+        if name.lower() == "essential":
+            keep.update(n for n in ESSENTIAL_TOOLS if n in present)   # essential tools of disabled areas are simply absent
+        elif name in present:
+            keep.add(name)
+        else:
+            unknown.append(name)
+    if unknown:
+        raise SystemExit(f"TOOLS names no such tool: {', '.join(unknown)}. Available: {', '.join(sorted(present))} (or 'essential').")
+    for name in present:
+        if name not in keep:
+            mcp.remove_tool(name)
+
+
+def redact_error(message: str, secrets: tuple[str, ...]) -> str:
+    """An error message fit for a tool result: known secrets and account addresses masked, URLs cut to their host (iCloud
+    DAV paths carry the numeric account id), and any remaining long digit runs removed."""
+    import re as _re
+
+    for secret in sorted({x for x in secrets if x and len(x) >= 4}, key=len, reverse=True):
+        message = message.replace(secret, "***")
+    message = _re.sub(r"\b(https?://[^/\s'\"]+)[^\s'\"]*", r"\1/…", message)
+    message = _re.sub(r"\d{6,}", "…", message)
+    return message[:300]
+
+
+def _timed(check, secrets: tuple[str, ...] = ()) -> dict[str, Any]:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        detail = check()
+        return {"ok": True, "ms": int((_time.monotonic() - t0) * 1000), **(detail or {})}
+    except Exception as e:  # noqa: BLE001 - a health check reports failures, it does not raise them
+        return {"ok": False, "ms": int((_time.monotonic() - t0) * 1000), "error": redact_error(f"{type(e).__name__}: {e}", secrets)}
 
 
 def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | None = None) -> None:
     writable = not s.read_only
+    health: dict[str, Any] = {}                 # area -> zero-argument check, filled in as each area registers
 
     # ------------------------------------------------------------------ mail
     if s.enable_mail:
         mail = MailService(s)
+        health["mail"] = mail.health
         if s.allow_send and s.require_approval and provider is not None:
             register_outbox_routes(mcp, provider, s, mail)
 
@@ -495,6 +556,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     # -------------------------------------------------------------- calendar
     if s.enable_calendar:
         cal = CalendarService(s)
+        health["calendar"] = lambda: {"calendars": len(cal.list_calendars())}
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -638,6 +700,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     # ---------------------------------------------------------------- contacts
     if s.enable_contacts:
         contacts = ContactsService(s)
+        health["contacts"] = lambda: {"contacts": contacts.search("", limit=1).get("total_matches")}
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -719,6 +782,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     # ------------------------------------------------ Reminders / Notes, through the helper on the owner's Mac
     if s.bridge_enabled:
         bridge = MacBridge(timeout=s.bridge_job_timeout)
+        health["mac_helper"] = lambda: (lambda st: {**st, "ok": bool(st.get("online"))})(bridge.status())
         mcp._icloud_bridge = bridge          # main() serves it on its own private port
 
         @mcp.tool(annotations=_READ)
@@ -958,6 +1022,17 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     return {"trashed": bridge.call("drive_trash", {"path": path})}
 
 
+    @mcp.tool(annotations=_READ)
+    @_guard
+    def icloud_check_health() -> dict[str, Any]:
+        """Check every enabled area in one call: signs in to mail (IMAP), lists calendars (CalDAV), reads the address book
+        (CardDAV) and asks whether the Mac helper is online, with how long each took. Read-only. Use it when something
+        fails, before telling the user a service is down."""
+        secrets = (s.app_password, s.owner_password, s.bridge_token, s.username, s.email_address,
+                   s.imap_username, s.smtp_username, s.caldav_username, s.carddav_username)
+        results = {area: _timed(check, secrets) for area, check in health.items()}
+        return {"ok": all(r["ok"] for r in results.values()), "areas": results}
+
 def build_app(s: Settings, mcp: MCPServer):
     """The ASGI app exactly as served in production (used by main() and by the tests)."""
     extra_hosts = [h.strip() for h in os.environ.get("MCP_EXTRA_ALLOWED_HOSTS", "").split(",") if h.strip()]
@@ -1028,7 +1103,26 @@ def _parse_args(argv: list[str] | None):
     p.add_argument("--local", "--stdio", dest="local", action="store_true",
                    help="run for a desktop client on this computer (Claude Desktop, Claude Code): stdio, no OAuth, no public URL")
     p.add_argument("--env-file", metavar="PATH", help="read settings from this .env file (variables already set take precedence)")
+    p.add_argument("--store-password", action="store_true",
+                   help="macOS: save the app-specific password in the login Keychain (prompted, never on the command line), then exit")
     return p.parse_args(argv)
+
+
+def store_password() -> None:
+    """Save the app-specific password in the macOS login Keychain. `security` prompts for it itself, so it never appears in
+    argv, shell history or a file. Local mode (and any server run as this user) then finds it when ICLOUD_APP_PASSWORD is unset."""
+    import subprocess
+    import sys
+
+    if sys.platform != "darwin":
+        raise SystemExit("--store-password uses the macOS Keychain; on other systems set ICLOUD_APP_PASSWORD instead.")
+    account = os.environ.get("ICLOUD_USERNAME", "").strip() or input("Apple Account email (ICLOUD_USERNAME): ").strip()
+    service = os.environ.get("ICLOUD_KEYCHAIN_SERVICE", "icloud-mcp")
+    print(f"Paste the app-specific password for {account} when asked (twice). Nothing is shown while you paste.")
+    r = subprocess.run(["/usr/bin/security", "add-generic-password", "-U", "-s", service, "-a", account, "-l", f"{service} ({account})", "-w"])
+    if r.returncode != 0:
+        raise SystemExit("The Keychain did not store the password.")
+    print(f"Stored in the login Keychain as '{service}' for {account}. Remove ICLOUD_APP_PASSWORD from your env file.")
 
 
 def main_local(s: Settings) -> None:
@@ -1061,6 +1155,9 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if args.env_file:
         load_env_file(args.env_file)
+    if args.store_password:
+        store_password()
+        return
     s = Settings.from_env()
     if args.local:
         main_local(s)
