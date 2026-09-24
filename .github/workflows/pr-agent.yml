@@ -36,7 +36,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_AI_STUDIO__GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          CONFIG__MODEL: gemini/gemini-2.5-flash
+          CONFIG__MODEL: gemini/gemini-2.5-pro
           CONFIG__FALLBACK_MODELS: '["gemini/gemini-2.5-flash"]'
           CONFIG__CUSTOM_MODEL_MAX_TOKENS: "1000000"
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
