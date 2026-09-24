@@ -9,7 +9,8 @@
   mail in Junk is refused (unsubscribing from spam confirms the address is alive), and the POST only goes to public addresses.
 - bulk_action: move / archive / trash / mark read for everything matching a search, in two steps. A dry run returns the count, a
   sample and a confirm_token that stands for exactly those messages; running needs that token, so the agent must preview first
-  and nothing that arrived in between is touched. Every run is logged by Message-ID and can be undone with bulk_undo.
+  and nothing that arrived in between is touched. Every run is logged by Message-ID and can be undone with bulk_undo; messages
+  without a Message-ID are left alone (and counted), so nothing is changed that an undo could not find again.
 """
 from __future__ import annotations
 
@@ -231,10 +232,16 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
             raise ValueError(f"the messages are already in {src}")
         uv = mail._select(c, src, readonly=dry_run)
         matched = sorted(c.search(crit, charset=charset), reverse=True)
-        uids = matched[:limit]
+        picked = matched[:limit]
+        # Only messages with a Message-ID are handled: that is how an undo finds them again, so everything done can be undone.
+        ids: dict[int, str] = {}
+        for i in range(0, len(picked), 200):
+            ids.update({m["uid"]: m["message_id"] for m in mail._summaries(c, src, picked[i:i + 200]) if m.get("message_id")})
+        uids = [u for u in picked if u in ids]
         token = _token(src, uv, action, dst or "", uids)
         preview = {"folder": src, "action": action, **({"destination": dst} if dst else {}), "total_matches": len(matched),
-                   "would_handle": len(uids)}
+                   "would_handle": len(uids),
+                   **({"left_alone_without_message_id": len(picked) - len(uids)} if len(picked) > len(uids) else {})}
         if dry_run:
             sample = mail._summaries(c, src, uids[:10])
             return {**preview, "dry_run": True, "confirm_token": token if uids else None,
@@ -248,9 +255,8 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
         if confirm_token != token:
             raise ValueError("confirm_token does not match the messages that match now (new mail arrived, or the filters "
                              "changed). Run the dry run again and use its new token.")
-        ids = [m.get("message_id") for m in mail._summaries(c, src, uids)]
         entry = {"action_id": uuid.uuid4().hex[:12], "time": time.time(), "folder": src, "action": action, "destination": dst,
-                 "message_ids": [i for i in ids if i], "without_message_id": sum(1 for i in ids if not i)}
+                 "message_ids": [ids[u] for u in uids]}
         _write_log(mail, entry)                     # logged before anything changes, so an interrupted run can still be undone
         for i in range(0, len(uids), 100):
             chunk = uids[i:i + 100]
@@ -259,8 +265,7 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
             else:
                 mail._move_messages(c, chunk, dst)
     return {**preview, "done": len(uids), "action_id": entry["action_id"],
-            "undo": f"mail_bulk_undo with action_id {entry['action_id']} reverses this for {UNDO_DAYS} days"
-                    + (f" ({entry['without_message_id']} messages without a Message-ID cannot be undone)" if entry["without_message_id"] else "")}
+            "undo": f"mail_bulk_undo with action_id {entry['action_id']} reverses this for {UNDO_DAYS} days"}
 
 
 def bulk_undo(mail: MailService, action_id: str) -> dict[str, Any]:

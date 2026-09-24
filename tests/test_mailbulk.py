@@ -260,3 +260,13 @@ def test_the_tools_exist_only_when_writable(box):
     assert {"mail_senders", "mail_bulk_action", "mail_bulk_undo", "mail_unsubscribe"} <= names(s)
     ro = names(dataclasses.replace(s, read_only=True))
     assert "mail_senders" in ro and not {"mail_bulk_action", "mail_bulk_undo", "mail_unsubscribe"} & ro
+
+
+def test_messages_without_a_message_id_are_left_alone_so_every_change_can_be_undone(box):
+    svc, mb = box
+    raw = msg(9, "Shop <news@shop.example>", "No id").replace(b"Message-ID: <m9@example.org>\n", b"")
+    mb.add("INBOX", raw)
+    dry = mailbulk.bulk_action(svc, "INBOX", "archive", from_="news@shop.example")
+    assert dry["total_matches"] == 3 and dry["would_handle"] == 2 and dry["left_alone_without_message_id"] == 1
+    mailbulk.bulk_action(svc, "INBOX", "archive", from_="news@shop.example", dry_run=False, confirm_token=dry["confirm_token"])
+    assert "No id" in mb.subjects("INBOX") and mb.subjects("Archive") == ["Sale 1", "Sale 2"]
