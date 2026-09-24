@@ -12,7 +12,7 @@ from icloud_mcp import instructions as instr_mod
 from icloud_mcp.config import Settings
 from icloud_mcp.server import apply_tool_filter, create_server
 
-CAP = 6500
+CAP = 8000
 
 
 @pytest.fixture

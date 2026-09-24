@@ -11,7 +11,11 @@ Two things, both cheap and deliberately conservative:
 """
 from __future__ import annotations
 
+import hashlib as _hashlib
+import hmac as _hmac
 import re
+import secrets as _secrets
+import time as _time
 from typing import Any
 
 _INVISIBLE = re.compile(
@@ -81,3 +85,29 @@ def warnings_for(*texts: str | None) -> list[str]:
     visible = clean(joined)
     out += [msg for pattern, msg in _WARNINGS if pattern.search(visible)]
     return out
+
+
+# ---------------------------------------------------------------------------------------------------- confirm tokens
+# A destructive step that cannot be undone from here (deleting a non-empty folder, calendar or list) runs in two calls: the
+# first previews what would go and returns a token that stands for exactly that state; the second needs the token. The key
+# is per process, so a token can only come from a preview, and it expires.
+_TOKEN_KEY = _secrets.token_bytes(32)
+CONFIRM_TTL = 600
+
+
+def confirm_token(kind: str, *state: Any, issued: int | None = None) -> str:
+    issued = int(_time.time()) if issued is None else issued
+    raw = "\x1f".join([kind, str(issued), *(str(p) for p in state)])
+    return f"{issued}.{_hmac.new(_TOKEN_KEY, raw.encode(), _hashlib.sha256).hexdigest()[:20]}"
+
+
+def confirm_problem(token: str | None, kind: str, *state: Any, ttl: int = CONFIRM_TTL) -> str | None:
+    """Why a token is not accepted for this state, or None when it is valid."""
+    issued_s, _, _ = (token or "").partition(".")
+    if not issued_s.isdigit():
+        return "confirm_token is not one this server issued: call again without it to see the preview and get a token."
+    if not _hmac.compare_digest(token or "", confirm_token(kind, *state, issued=int(issued_s))):
+        return "confirm_token does not match what is there now (it changed since the preview): call again without it for a new preview."
+    if _time.time() - int(issued_s) > ttl:
+        return f"confirm_token is older than {ttl // 60} minutes: call again without it for a new preview."
+    return None

@@ -9,7 +9,7 @@ import pytest
 from icloud_mcp.config import Settings
 from icloud_mcp.server import create_server, slim_schema
 
-SCHEMA_BUDGET = 38000
+SCHEMA_BUDGET = 52000       # raised for 0.9.0 and 0.10.0 (about 21 new tools), see docs/PERFORMANCE.md
 
 
 @pytest.fixture

@@ -415,3 +415,18 @@ def live(tmp_path, s):
         time.sleep(0.05)
     yield b, {"server": f"https://127.0.0.1:{port}", "token": TOKEN, "fingerprint": fp}
     server.should_exit = True
+
+
+def test_an_operation_newer_than_the_helper_says_to_update_it(monkeypatch):
+    monkeypatch.setitem(bridge_mod.OP_MIN_HELPER, "reminder_lists", "0.10.0")
+    b = MacBridge(timeout=1)
+    b.next_job({"version": "0.9.3"}, 0)
+    with pytest.raises(BridgeError, match=r"helper is 0\.9\.3 but reminder_lists needs 0\.10\.0 or newer: update the helper"):
+        b.call("reminder_lists")                                   # compared as numbers: "0.10.0" > "0.9.3"
+    b.next_job({"version": "0.10.0"}, 0)
+    with pytest.raises(BridgeError, match="did not pick up"):      # new enough: it is queued (nobody polls in this test)
+        b.call("reminder_lists")
+    b.agent = {}                                                   # version unknown: queued too, the helper decides
+    b.last_seen = time.time()
+    with pytest.raises(BridgeError, match="did not pick up"):
+        b.call("reminder_lists")
