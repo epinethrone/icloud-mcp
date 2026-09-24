@@ -300,7 +300,8 @@ async def run(args, settings, meter: Meter) -> list[dict]:
     today = date.today()
     d7, d14, d30 = (today + timedelta(days=n) for n in (7, 14, 30))
     warm = b.server()
-    await b.call(warm, "calendar_list_calendars", {})                       # warm this one server up once
+    for job in getattr(warm, "_icloud_warmups", {}).values():               # what WARMUP_ON_START does at server start
+        job()
 
     def first_uids(prev):
         uids = [m["uid"] for m in (prev or {}).get("messages", [])][:10]

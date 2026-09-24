@@ -113,12 +113,34 @@ def cal(s, monkeypatch):
     return CalendarService(s)
 
 
-def test_calendars_are_read_in_parallel_on_their_own_connections_and_keep_their_order(cal):
+def test_calendars_are_read_in_parallel_on_spare_connections_and_keep_their_order(cal):
+    cal.prewarm(2)                                                         # what the server does at start
+    opened = len(DAV.made)
+    DAV.log.clear()
     out = cal.list_events("2026-10-05", "2026-10-08")
     assert [e["uid"] for e in out["events"]] == ["w1", "p1", "h1", "w2", "p2", "w3"]      # merged by start time
-    threads = {t for kind, _, t in DAV.log if kind == "search"}
-    assert len(DAV.log) == 3 and all(t.startswith("icloud-caldav") for t in threads)
-    assert len(DAV.made) >= 2                                                              # not all on the call's connection
+    threads = [t for kind, _, t in DAV.log if kind == "search"]
+    assert len(threads) == 3 and any(t.startswith("icloud-caldav") for t in threads)
+    assert len(DAV.made) == opened                                         # parallel, but not one new connection
+
+
+def test_without_spare_connections_calendars_are_read_on_the_calls_own(cal):
+    cal.list_events("2026-10-05", "2026-10-08")
+    assert len(DAV.made) == 1 and all(t == "MainThread" for kind, _, t in DAV.log if kind == "search")
+
+
+def test_a_failing_helper_hands_its_calendar_back(cal, monkeypatch):
+    cal.prewarm(2)
+    helpers = set(DAV.made[1:])
+    real = Cal.search
+
+    def flaky(self, **kw):
+        if self.client in helpers:
+            raise ConnectionResetError("reset")
+        return real(self, **kw)
+    monkeypatch.setattr(Cal, "search", flaky)
+    out = cal.list_events("2026-10-05", "2026-10-08")
+    assert len(out["events"]) == 6                                          # every calendar still read, on the call's connection
 
 
 def test_limit_is_applied_before_events_are_converted(cal, monkeypatch):
@@ -144,6 +166,8 @@ def test_summary_fields_and_capped_descriptions(cal, monkeypatch):
 
 
 def test_find_asks_every_calendar_at_once_then_reads_on_its_own_connection(cal):
+    cal.prewarm(2)
+    DAV.log.clear()
     got = cal.get_event("h1")
     assert got["uid"] == "h1" and got["calendar"] == "Health"
     gets = [x for x in DAV.log if x[0] == "get"]

@@ -702,7 +702,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     if s.enable_calendar:
         cal = CalendarService(s)
         health["calendar"] = lambda: {"calendars": len(cal.list_calendars())}
-        warm["calendar"] = cal.list_calendars                    # one pooled connection plus the calendar list
+        warm["calendar"] = cal.prewarm                           # the calendar list, plus spare connections for parallel reads
 
         @mcp.tool(annotations=_READ)
         @_guard

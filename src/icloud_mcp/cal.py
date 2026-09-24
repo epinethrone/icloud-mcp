@@ -945,26 +945,67 @@ class CalendarService:
             d["description"], d["description_truncated"] = text[:_DESCRIPTION_CHARS], True
         return d
 
-    def _read_calendar(self, url: str, read: Any) -> Any:
-        """Run read(calendar) on a pooled connection of this worker thread's own. Reads only, so one retry on a fresh
-        connection after a dead reused one is safe."""
-        for attempt in (0, 1):
-            try:
-                with self._principal() as p:
-                    return read(p.client.calendar(url=url))
-            except Exception as e:  # noqa: BLE001 - re-raised unless a dead reused connection deserves one retry
-                if attempt == 0 and getattr(self._tl, "reused", False) and _is_transport_error(e):
-                    self._tl.fresh = True
-                    continue
-                raise
+    def _take_idle(self, n: int) -> list[_Conn]:
+        """Up to n pooled connections that are ready now. Never opens one: a new CalDAV connection costs more than reading a
+        few calendars one after another, so parallel reads only use connections that already exist."""
+        out: list[_Conn] = []
+        while len(out) < n:
+            now = time.monotonic()
+            with self._pool_lock:
+                if not self._pool:
+                    break
+                conn = self._pool.pop()
+            if now - conn.last_used > _IDLE_TTL_SECONDS or now - conn.created > _MAX_AGE_SECONDS:
+                self._close(conn)
+                continue
+            out.append(conn)
+        return out
 
     def _each_calendar(self, principal: Any, cals: list[Any], read: Any) -> list[Any]:
-        """read(calendar) for every calendar, in their order. Several calendars are read in parallel on separate pooled
-        connections; one calendar (or a principal that is not a live client, as in tests) is read on this call's connection."""
-        if len(cals) < 2 or getattr(principal, "client", None) is None or self.s.caldav_pool_size < 2:
+        """read(calendar) for every calendar, results in calendar order. This call's connection works through the list, and
+        idle pooled connections (if any) take calendars off the same list in parallel, each on its own connection. A helper
+        connection that fails is closed and its calendar goes back on the list for this call's connection."""
+        if len(cals) < 2 or getattr(principal, "client", None) is None:
             return [read(c) for c in cals]
-        futures = [_READERS.submit(self._read_calendar, str(c.url), read) for c in cals]
-        return [f.result() for f in futures]
+        spare = self._take_idle(min(len(cals) - 1, _READERS._max_workers))
+        if not spare:
+            return [read(c) for c in cals]
+        results: list[Any] = [None] * len(cals)
+        todo = list(range(len(cals)))
+        lock = threading.Lock()
+
+        def next_index() -> int | None:
+            with lock:
+                return todo.pop(0) if todo else None
+
+        def helper(conn: _Conn) -> None:
+            while (i := next_index()) is not None:
+                try:
+                    results[i] = read(conn.client.calendar(url=str(cals[i].url)))
+                except Exception:  # noqa: BLE001 - handed back to the call's own connection, which raises if it fails too
+                    with lock:
+                        todo.insert(0, i)
+                    self._close(conn)
+                    return
+            self._checkin(conn)
+
+        futures = [_READERS.submit(helper, conn) for conn in spare]
+        while (i := next_index()) is not None:
+            results[i] = read(cals[i])
+        for f in futures:
+            f.result()
+        while (i := next_index()) is not None:                              # anything a failed helper handed back
+            results[i] = read(cals[i])
+        return results
+
+    def prewarm(self, connections: int = 3) -> None:
+        """Warm-up: read the calendar list, then open a few more pooled connections in the background, so calls can read
+        calendars in parallel from the start. Never raises for the extra connections."""
+        self.list_calendars()
+        opened = [_READERS.submit(self._open) for _ in range(max(0, min(connections, self.s.caldav_pool_size - 1)))]
+        for f in opened:
+            with contextlib.suppress(Exception):
+                self._checkin(f.result())
 
     def _occurrences(self, principal: Any, calendar: str | None, s_dt: datetime, e_dt: datetime) -> Iterator[tuple[str, icalendar.Component]]:
         """Every event occurrence overlapping [s_dt, e_dt) in the chosen calendars, recurring events expanded (client-side:
