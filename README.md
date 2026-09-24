@@ -78,7 +78,7 @@ and hands-on runs against a live iCloud account for the quirks only Apple's serv
 
 <table>
 <tr>
-<td width="33%" valign="top"><b>Three times faster calendars</b><br>Warm connections, all calendars read at once: 30 days of events in a quarter of a second.</td>
+<td width="33%" valign="top"><b>About three times faster calendars</b><br>Warm connections and all calendars read at once (measured on a local test stack).</td>
 <td width="33%" valign="top"><b>Lighter mail</b><br>Reading messages fetches only the text; attachments come down only when asked for (465 KB became 55 KB).</td>
 <td width="33%" valign="top"><b>Instant first call</b><br>The server signs in to mail, calendar and contacts in the background as it starts.</td>
 </tr>
@@ -412,7 +412,7 @@ Measured on a local test stack with 40 ms added to every round trip, comparing 0
 | The same list, bytes returned | 26,017 | 12,384 |
 | Search 20 messages and read 10, received from iCloud | 465 KB | 55 KB |
 | A 20-hit mail search, bytes returned | 8,946 | 6,447 |
-| Schema text every client loads | 51,951 chars | 37,911 chars |
+| Schema text every client loads | 51,951 chars | 37,956 chars |
 
 Connections stay signed in for 10 minutes after the last call (`IMAP_IDLE_SECONDS`, `CALDAV_KEEPALIVE_SECONDS`), and
 `WARMUP_ON_START` signs in as the server starts. `dev/bench.py` repeats the measurements against your own account.

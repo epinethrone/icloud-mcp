@@ -815,7 +815,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 travel_routing: Annotated[str | None, _d("BICYCLE, WALKING, AUTOMOBILE or TRANSIT.")] = None,
                 travel_origin: Annotated[str | None, _d("New starting address. Omit to keep the current one.")] = None,
                 travel_origin_geo: Annotated[str | None, _d("Coordinates of travel_origin as 'lat,lon'.")] = None,
-                occurrence_start: Annotated[str | None, _d("One date of a repeating event to change: its 'recurrence_id' (or 'start') from calendar_list_events. Omit for the whole series.")] = None,
+                occurrence_start: Annotated[str | None, _d("ONE occurrence of a repeating event to change: its 'recurrence_id' if set, else its 'start'. Omit to change the whole series.")] = None,
                 add_attendees: Annotated[list[str] | None, _d("People to add; everyone else stays as they are. Not together with attendees.")] = None,
                 remove_attendees: Annotated[list[str] | None, _d("People to take off; iCloud emails them a cancellation. Not together with attendees.")] = None,
             ) -> dict[str, Any]:
@@ -835,7 +835,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             def calendar_delete_event(
                 uid: EventUid,
                 calendar: CalRead = None,
-                occurrence_start: Annotated[str | None, _d("One date of a repeating event to cancel: its 'recurrence_id' (or 'start') from calendar_list_events. Omit for the whole series.")] = None,
+                occurrence_start: Annotated[str | None, _d("ONE occurrence of a repeating event to cancel: its 'recurrence_id' if set, else its 'start'. Omit to delete the whole series.")] = None,
                 timezone: TzName = None,
             ) -> dict[str, Any]:
                 """Delete an event by uid. For a recurring event this deletes the entire series, unless occurrence_start names
@@ -861,7 +861,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 uid: EventUid,
                 response: Annotated[str, _d("accepted, tentative or declined.")],
                 calendar: CalRead = None,
-                occurrence_start: Annotated[str | None, _d("One date of a repeating invitation: its 'recurrence_id' (or 'start'). Omit to answer the whole series.")] = None,
+                occurrence_start: Annotated[str | None, _d("ONE occurrence of a repeating invitation: its 'recurrence_id' if set, else its 'start'. Omit to answer the whole series.")] = None,
                 timezone: TzName = None,
             ) -> dict[str, Any]:
                 """Answer an invitation someone else sent: accepted, tentative or declined. iCloud emails the answer to the
@@ -1230,7 +1230,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 query: Annotated[str, _d("Words to find INSIDE files; every word must occur (case and accents ignored).")],
                 path: Annotated[str | None, _d("Only search inside this folder. " + _DRIVE_PATH)] = None,
                 limit: Annotated[int, _d("Max results (1-100).")] = 20,
-                download: Annotated[bool, _d("Also download iCloud-only text, PDF and document files to the Mac in the background, so the next search includes them.")] = False,
+                download: Annotated[bool, _d("Also download iCloud-only text, PDF and document files to the Mac in the background, so the next search includes them. Their text is kept on the Mac.")] = False,
             ) -> dict[str, Any]:
                 """Search the text inside files in iCloud Drive (plain text, PDF, Word, RTF, ODT, HTML), not just their names, and
                 return each match with a short excerpt. Files are read once and remembered, so the first search can take a while:
