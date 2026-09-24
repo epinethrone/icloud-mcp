@@ -4,7 +4,7 @@
     python dev/privacy_check.py origin/main     # also every line added by each commit since that ref, and its author
 
 The commit scan matters because a value added in one commit and removed in the next is still published with the history.
-A line containing `privacy-ok` is skipped: use it for deliberately generic test values (an address from a private range
+Precise map coordinates (5+ decimals) are refused too. A line containing `privacy-ok` is skipped: use it for deliberately generic test values (an address from a private range
 that a test needs, for example). Placeholders such as `/Users/YOU/` are allowed as they are.
 """
 from __future__ import annotations
@@ -16,6 +16,8 @@ import sys
 PATTERNS = [
     ("private network address",
      re.compile(r"(?<![\d.])(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?![\d.])")),
+    # latitude,longitude with 5+ decimals points at a single building; examples use a public landmark at 4 decimals
+    ("precise map coordinates", re.compile(r"(?<![\d.])-?\d{1,3}\.\d{5,}\s*,\s*-?\d{1,3}\.\d{5,}(?!\d)")),
     ("home-folder path", re.compile(r"/Users/(?!YOU\b|you\b|Shared\b|<)[A-Za-z][\w.-]*|/home/(?!runner\b|user\b|<)[a-z][\w.-]*")),
     ("secret", re.compile(r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}"
                           r"|xox[bap]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY")),

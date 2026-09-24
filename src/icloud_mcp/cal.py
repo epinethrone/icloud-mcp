@@ -171,7 +171,7 @@ def _apply_structured_location(ev: icalendar.Event, location: str | None, geo: s
     if geo:
         g = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$", geo)
         if not g:
-            raise CalendarError(f"location_geo must look like '52.086126,5.104888', got '{geo}'.")
+            raise CalendarError(f"location_geo must look like '52.5163,13.3777', got '{geo}'.")
         value = f"geo:{g.group(1)},{g.group(2)}"
 
     existing = ev.get(_STRUCTURED_LOCATION)
