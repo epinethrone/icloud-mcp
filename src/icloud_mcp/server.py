@@ -25,6 +25,7 @@ from .bridge import BridgeError, MacBridge, build_bridge_app, ensure_tls, start_
 from .cal import CalendarError, CalendarService
 from .config import Settings
 from .contacts import ContactsError, ContactsService
+from .safety import clean_deep, warnings_for
 from .mail import MailError, MailService
 
 log = logging.getLogger("icloud_mcp")
@@ -213,7 +214,7 @@ def _guard(fn):
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         try:
-            return await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=_tool_timeout)
+            return clean_deep(await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=_tool_timeout))
         except asyncio.TimeoutError as e:
             raise ToolError(
                 f"{getattr(fn, '__name__', 'The tool')} took longer than {_tool_timeout:g}s and was abandoned. Try again; if it keeps "
@@ -323,6 +324,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             flagged_only: Annotated[bool, _d("true = only flagged messages.")] = False,
             limit: Annotated[int, _d("Max messages to return (1-100).")] = 20,
             offset: Annotated[int, _d("Skip this many matches, to page through results.")] = 0,
+            all_folders: Annotated[bool, _d("true = search EVERY folder at once (Archive, custom folders, Sent, Junk...), newest first, ignoring 'folder'. Use it when a message is not in the inbox: mail rules and replies often file mail away.")] = False,
         ) -> dict[str, Any]:
             """Search a folder, newest first. All filters are optional and combined with AND.
             'text' searches headers and body. since/before are dates (YYYY-MM-DD, before is exclusive).
@@ -331,6 +333,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             return mail.search(
                 folder, from_=from_address, to=to_address, subject=subject, text=text, since=since, before=before,
                 unread=True if unread_only else None, flagged=True if flagged_only else None, limit=limit, offset=offset,
+                all_folders=all_folders,
             )
 
         @mcp.tool(annotations=_READ)
@@ -594,22 +597,43 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 travel_routing: Annotated[str | None, _d("BICYCLE, WALKING, AUTOMOBILE or TRANSIT.")] = None,
                 travel_origin: Annotated[str | None, _d("New starting address. Omit to keep the current one.")] = None,
                 travel_origin_geo: Annotated[str | None, _d("Coordinates of travel_origin as 'lat,lon'.")] = None,
+                occurrence_start: Annotated[str | None, _d("For a repeating event: the start of the ONE occurrence to change, taken from calendar_list_events (its 'recurrence_id' if set, otherwise its 'start'). Omit to change the whole series.")] = None,
             ) -> dict[str, Any]:
-                """Change an existing event. Only pass the fields to change. For recurring events this edits the whole series,
-                not one occurrence. Changing an event that has attendees makes iCloud email them the update."""
+                """Change an existing event. Only pass the fields to change. For a recurring event this edits the whole series,
+                unless occurrence_start names ONE occurrence: then only that date changes and the rest of the series stays as it was.
+                Changing an event that has attendees makes iCloud email them the update."""
                 return cal.update_event(
                     uid, calendar=calendar, timezone_name=timezone, summary=summary, start=start, end=end, location=location,
                     description=description, rrule=rrule, attendees=attendees, alarms_minutes_before=alarms_minutes_before, url=url,
                     location_geo=location_geo, travel_minutes=travel_minutes, travel_routing=travel_routing,
-                    travel_origin=travel_origin, travel_origin_geo=travel_origin_geo,
+                    travel_origin=travel_origin, travel_origin_geo=travel_origin_geo, occurrence_start=occurrence_start,
                 )
 
             @mcp.tool(annotations=_DESTRUCTIVE)
             @_guard
-            def calendar_delete_event(uid: EventUid, calendar: CalRead = None) -> dict[str, Any]:
-                """Delete an event by uid (for recurring events, the entire series). This cannot be undone. If the event has
-                attendees, iCloud emails them a cancellation."""
-                return cal.delete_event(uid, calendar)
+            def calendar_delete_event(
+                uid: EventUid,
+                calendar: CalRead = None,
+                occurrence_start: Annotated[str | None, _d("For a repeating event: the start of the ONE occurrence to cancel, taken from calendar_list_events (its 'recurrence_id' if set, otherwise its 'start'). Omit to delete the whole series.")] = None,
+                timezone: TzName = None,
+            ) -> dict[str, Any]:
+                """Delete an event by uid. For a recurring event this deletes the entire series, unless occurrence_start names
+                ONE occurrence: then only that date is cancelled. This cannot be undone. If the event has attendees, iCloud emails
+                them a cancellation."""
+                return cal.delete_event(uid, calendar, occurrence_start=occurrence_start, timezone_name=timezone)
+
+            @mcp.tool(annotations=_WRITE)
+            @_guard
+            def calendar_rsvp(
+                uid: EventUid,
+                response: Annotated[str, _d("accepted, tentative or declined.")],
+                calendar: CalRead = None,
+                occurrence_start: Annotated[str | None, _d("For a repeating invitation: answer only this ONE occurrence (its 'recurrence_id' or 'start' from calendar_list_events). Omit to answer the whole series.")] = None,
+                timezone: TzName = None,
+            ) -> dict[str, Any]:
+                """Answer an invitation someone else sent: accepted, tentative or declined. iCloud emails the answer to the
+                organizer itself, so do not send a separate email. Only for events where the user is an invited attendee."""
+                return cal.rsvp(uid, response, calendar=calendar, occurrence_start=occurrence_start, timezone_name=timezone)
 
     # ---------------------------------------------------------------- contacts
     if s.enable_contacts:
@@ -807,7 +831,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 max_chars: Annotated[int | None, _d("Longest text to return (default 30000).")] = None,
             ) -> dict[str, Any]:
                 """Read one note as plain text. Password-protected notes are reported as locked and never read."""
-                return {"notice": _MAC_NOTICE, "note": bridge.call("note_read", _given(id=id, max_chars=max_chars))}
+                note = bridge.call("note_read", _given(id=id, max_chars=max_chars))
+                found = warnings_for(*(str(note.get(k) or "") for k in ("title", "name", "body", "text"))) if isinstance(note, dict) else []
+                return {"notice": _MAC_NOTICE, "note": note, **({"safety_warnings": found} if found else {})}
 
             if writable:
 
@@ -892,7 +918,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             ) -> dict[str, Any]:
                 """Read a file from iCloud Drive as text: plain text files, PDF, and Word/RTF/ODT/HTML documents. A file offloaded to
                 iCloud is downloaded first; if that takes too long the answer says it is still downloading, so ask again shortly."""
-                return {"notice": _DRIVE_NOTICE, **bridge.call("drive_read", _given(path=path, max_chars=max_chars, offset=offset))}
+                got = bridge.call("drive_read", _given(path=path, max_chars=max_chars, offset=offset))
+                found = warnings_for(str(got.get("text") or "")) if isinstance(got, dict) else []
+                return {"notice": _DRIVE_NOTICE, **got, **({"safety_warnings": found} if found else {})}
 
             if writable:
 
