@@ -213,7 +213,10 @@ def fold(s):
 def text_cache():
     os.makedirs(os.path.dirname(CACHE_PATH), mode=0o700, exist_ok=True)
     db = sqlite3.connect(CACHE_PATH)
-    os.chmod(CACHE_PATH, 0o600)
+    try:
+        os.chmod(CACHE_PATH, 0o600)                     # private; a file owned by someone else is left as it is
+    except OSError:
+        pass
     db.execute("CREATE TABLE IF NOT EXISTS text (path TEXT PRIMARY KEY, mtime REAL, size INTEGER, body TEXT)")
     return db
 
