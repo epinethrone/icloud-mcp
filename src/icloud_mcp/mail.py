@@ -37,6 +37,8 @@ from .safety import warnings_for
 from .mailbulk import bulk_view
 from .outbox import Outbox, OutboxFull, QueuedMessage
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
 log = logging.getLogger(__name__)
 
 SEEN, FLAGGED, ANSWERED, DRAFT, DELETED = "\\Seen", "\\Flagged", "\\Answered", "\\Draft", "\\Deleted"
@@ -744,6 +746,11 @@ class MailService:
             crit.append("FLAGGED")
         elif flagged is False:
             crit.append("UNFLAGGED")
+        for key, val in (("FROM", from_), ("TO", to), ("SUBJECT", subject), ("TEXT", text), ("Message-ID", message_id)):
+            if val and _CONTROL.search(val):
+                # imapclient quotes search strings but leaves CR/LF in place, and a server that recovers at the line break would
+                # run whatever follows as a new command (an EXPUNGE, say). Nothing a person searches for contains these.
+                raise MailError(f"{key} must not contain control characters.")
         for key, val in (("FROM", from_), ("TO", to), ("SUBJECT", subject), ("TEXT", text)):
             if val:
                 crit += [key, val]

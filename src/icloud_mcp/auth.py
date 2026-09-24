@@ -44,6 +44,7 @@ _PENDING_TTL = 600
 _CODE_TTL = 300
 _MAX_FAILURES = 10
 _FAILURE_WINDOW = 900
+_MAX_CLIENTS = 100     # registrations are open (that is how claude.ai connects), so the file they land in must stay bounded
 
 
 def _h(token: str) -> str:
@@ -161,8 +162,23 @@ class OwnerOAuthProvider:
                     f"Redirect host not allowed by OAUTH_ALLOWED_REDIRECT_HOSTS: {urlsplit(str(uri)).hostname}",
                 )
         with self._lock:
+            if client_info.client_id not in self.clients and len(self.clients) >= _MAX_CLIENTS:
+                self._prune_clients()
+                if len(self.clients) >= _MAX_CLIENTS:
+                    raise RegistrationError("invalid_client_metadata",
+                                            "Too many registered clients. The owner can revoke old ones by deleting oauth_state.json.")
             self.clients[client_info.client_id] = client_info.model_dump(mode="json")
             self._save()
+
+    def _prune_clients(self) -> None:
+        """Drop registrations that hold no token and no pending request, oldest first, down to half the cap. A client the
+        owner approved keeps its tokens and is never touched."""
+        self._prune()
+        live = ({v["client_id"] for v in self.access.values()} | {v["client_id"] for v in self.refresh.values()}
+                | {v["client_id"] for v in self.pending.values()} | {c.client_id for c in self.codes.values()})
+        idle = sorted((cid for cid in self.clients if cid not in live), key=lambda cid: self.clients[cid].get("client_id_issued_at") or 0)
+        for cid in idle[:max(0, len(self.clients) - _MAX_CLIENTS // 2)]:
+            del self.clients[cid]
 
     # -- authorization (consent page lives in register_routes) -------------------------
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
@@ -308,13 +324,15 @@ _PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <style>
 body{{font:16px/1.5 -apple-system,system-ui,sans-serif;background:#f5f5f7;color:#1d1d1f;margin:0;display:grid;place-items:center;min-height:100vh}}
 main{{background:#fff;padding:2rem;border-radius:14px;max-width:26rem;width:calc(100% - 2rem);box-shadow:0 2px 20px #0002}}
-h1{{font-size:1.25rem;margin:0 0 .5rem}} p{{margin:.5rem 0}} .err{{color:#c00}}
+h1{{font-size:1.25rem;margin:0 0 .5rem}} p{{margin:.5rem 0}} .err{{color:#c00}} .muted{{color:#666;font-size:.9rem}}
 input[type=password]{{width:100%;box-sizing:border-box;padding:.7rem;font-size:1rem;border:1px solid #bbb;border-radius:8px;margin:.5rem 0 1rem}}
 button{{padding:.7rem 1.2rem;font-size:1rem;border-radius:8px;border:0;cursor:pointer;margin-right:.5rem}}
 .ok{{background:#0071e3;color:#fff}} .no{{background:#e8e8ed}}
 </style></head><body><main>
 <h1>Authorize access to your iCloud</h1>
 <p><b>{client}</b> is requesting read and write access to your iCloud Mail and Calendar through this server.</p>
+<p class="muted">After you approve, it is sent back to <b>{redirect}</b> (client id {cid}). Approve only if you started this
+connection yourself a moment ago; anyone can ask for this page, and the password is what decides.</p>
 {error}
 <form method="post" action="/login">
 <input type="hidden" name="p" value="{pid}">
@@ -338,7 +356,10 @@ def _page(provider: OwnerOAuthProvider, pid: str, error: str = "", status: int =
         return HTMLResponse("<p>This authorization request has expired. Return to the app and try connecting again.</p>",
                             status_code=400, headers=_HEADERS)
     name = pend.get("client_name") or "An application"
-    body = _PAGE.format(client=html.escape(name), pid=html.escape(pid), error=f'<p class="err">{html.escape(error)}</p>' if error else "")
+    redirect = urlsplit(str(pend["params"].redirect_uri)).hostname or "?"
+    body = _PAGE.format(client=html.escape(name), pid=html.escape(pid), redirect=html.escape(redirect),
+                        cid=html.escape(OwnerOAuthProvider._cid(pend.get("client_id"))),
+                        error=f'<p class="err">{html.escape(error)}</p>' if error else "")
     return HTMLResponse(body, status_code=status, headers=_HEADERS)
 
 

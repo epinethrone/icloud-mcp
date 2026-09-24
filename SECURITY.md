@@ -14,7 +14,7 @@ The contents it handles (email, calendar events, contacts, notes, files) can be 
   - Deleting mail permanently while `ALLOW_PERMANENT_DELETE=false`.
   - Leaking the app-specific password, the owner password, OAuth tokens or the bridge token.
   - Anything that turns data into code, for example in the AppleScript or EventKit operations or `drive.py`.
-  - Reading or writing outside iCloud Drive through the Drive tools, or deleting anything permanently through the Mac helper.
+  - Reading or writing outside iCloud Drive through the Drive tools, or deleting a note or file permanently through the Mac helper.
   - Reaching the Mac bridge from the public address or through the tunnel, or defeating its certificate pinning.
   - Server-side request forgery, path traversal or remote code execution in the server.
 - **Out of scope:**
@@ -61,10 +61,11 @@ Never include a real app-specific password, owner password or token in a report.
 By default the server:
 
 - Queues outgoing mail for approval in a browser (`/outbox`), blocks calendar invitations, moves deleted mail to Trash, and caps recipients per message.
-- Stores OAuth tokens only as SHA-256 hashes (file mode 600), rotates refresh tokens, and locks the approval and outbox pages after 10 wrong passwords in 15 minutes.
+- Stores OAuth tokens only as SHA-256 hashes (file mode 600), rotates refresh tokens, caps open client registrations, and locks the approval and outbox pages after 10 wrong passwords in 15 minutes. The bridge port locks out an address after 20 wrong tokens, never the correct token.
+- Masks passwords and tokens in every tool error and cuts URLs to their host; refuses IMAP search strings that contain control characters; refuses repeat rules finer than hourly and never expands one it finds in a stranger's invitation; binds to loopback unless told otherwise (the Docker image binds all interfaces inside the container).
 - Validates `Host` and `Origin` on the MCP endpoint, labels every piece of iCloud content as untrusted, and keeps account identifiers out of HTTP client logs.
 - Serves the Mac bridge only on its own private port, pinned by certificate fingerprint and protected by a bearer token, never on the public address. The server sends the Mac only an operation name and validated arguments from a fixed list, never script text.
-- Confines iCloud Drive access to the Drive folder, and never deletes permanently through the Mac helper: notes go to Recently Deleted and files to the Trash.
+- Confines iCloud Drive access to the Drive folder, and never deletes notes or files permanently through the Mac helper: notes go to Recently Deleted and files to the Trash. Reminders have no trash: `reminders_delete` is final, which is accepted because a reminder is one line and easily recreated; `reminders_move` changes a reminder's list without deleting it.
 
 To tighten a deployment further:
 

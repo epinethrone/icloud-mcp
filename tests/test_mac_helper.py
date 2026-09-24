@@ -55,7 +55,7 @@ def test_helper_source_stays_valid_for_the_python_that_ships_with_macos():
 # ------------------------------------------------------------------ how a command is built: fixed program + one JSON argument
 def test_the_command_is_a_static_script_file_plus_one_json_argument():
     cmd = helper.build_command("note_folders", {})
-    assert cmd[:3] == ["osascript", "-l", "JavaScript"] and "-e" not in cmd and len(cmd) == 5
+    assert cmd[:3] == ["/usr/bin/osascript", "-l", "JavaScript"] and "-e" not in cmd and len(cmd) == 5
     assert pathlib.Path(cmd[3]).parent == HELPER_PATH.parent / "ops" and cmd[4] == "{}"
 
 
@@ -320,7 +320,7 @@ def test_the_launchd_job_uses_the_agents_python_and_is_always_removed(monkeypatc
 
     def run(cmd, **kw):
         calls.append(cmd)
-        if cmd[:2] == ["launchctl", "bootstrap"]:
+        if cmd[:2] == [helper.LAUNCHCTL, "bootstrap"]:
             job = plistlib.loads(pathlib.Path(cmd[3]).read_bytes())
             calls.append(job)
             out = job["ProgramArguments"][job["ProgramArguments"].index("--agent-out") + 1]
@@ -333,7 +333,7 @@ def test_the_launchd_job_uses_the_agents_python_and_is_always_removed(monkeypatc
     job = next(c for c in calls if isinstance(c, dict))
     assert job["Label"] == helper.PROBE_LABEL and "KeepAlive" not in job and job["EnvironmentVariables"] == {helper.IN_LAUNCHD: "1"}
     assert job["ProgramArguments"][:3] == ["/usr/bin/python3", str(HELPER_PATH), "--selftest"]
-    assert calls[-1][:2] == ["launchctl", "bootout"] and calls[-1][2].endswith("/" + helper.PROBE_LABEL)
+    assert calls[-1][:2] == [helper.LAUNCHCTL, "bootout"] and calls[-1][2].endswith("/" + helper.PROBE_LABEL)
 
 
 def test_script_errors_are_shown_without_osascript_wrapping():

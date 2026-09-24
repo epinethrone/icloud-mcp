@@ -49,7 +49,8 @@ class Obj:
     def __init__(self, data):
         self.data, self.saves = data, 0
 
-    def save(self):
+    def save(self, **kw):
+        assert kw == {"increase_seqno": False, "only_this_recurrence": False}   # SEQUENCE is ours; never a UID REPORT (412 on iCloud)
         self.saves += 1
 
 

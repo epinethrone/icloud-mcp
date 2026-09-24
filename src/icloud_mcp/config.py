@@ -102,7 +102,7 @@ class Settings:
     allowed_redirect_hosts: tuple[str, ...]
     access_token_ttl: int
     refresh_token_ttl: int
-    bridge_host: str = "0.0.0.0"  # address the bridge port binds to inside this process (127.0.0.1 when server and helper share a Mac)
+    bridge_host: str = "127.0.0.1"  # address the bridge port binds to inside this process (0.0.0.0 only inside Docker, set by the image)
     local_mode: bool = False      # stdio for a desktop client on this computer: no OAuth, no public URL, no browser outbox
     tools: tuple[str, ...] = ()   # TOOLS: 'essential' and/or tool names to expose; empty = every tool of the enabled areas
     imap_pool_size: int = 2       # IMAP_POOL_SIZE: logged-in IMAP connections kept for reuse (0 = log in for every call)
@@ -112,6 +112,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         username = _str("ICLOUD_USERNAME")
+        read_only = _bool("READ_ONLY", False)
         return cls(
             username=username,
             app_password=(_str("ICLOUD_APP_PASSWORD") or keychain_password(username, _str("ICLOUD_KEYCHAIN_SERVICE", "icloud-mcp"))).replace(" ", ""),
@@ -149,8 +150,8 @@ class Settings:
             bridge_job_timeout=_int("BRIDGE_JOB_TIMEOUT_SECONDS", 60),
             carddav_url=_str("CARDDAV_URL", "https://contacts.icloud.com"),
             carddav_username=_str("CARDDAV_USERNAME", username),
-            read_only=_bool("READ_ONLY", False),
-            allow_send=_bool("ALLOW_SEND", True),
+            read_only=read_only,
+            allow_send=_bool("ALLOW_SEND", True) and not read_only,   # READ_ONLY means no sending and no drafts either
             require_approval=_bool("SEND_REQUIRES_APPROVAL", True),
             outbox_ttl=_int("OUTBOX_TTL_SECONDS", 24 * 3600),
             outbox_max=_int("OUTBOX_MAX", 20),
@@ -158,7 +159,7 @@ class Settings:
             public_url=_str("MCP_PUBLIC_URL").rstrip("/"),
             owner_password=_str("MCP_OWNER_PASSWORD"),
             data_dir=_str("DATA_DIR", "./data"),
-            host=_str("MCP_HOST", "0.0.0.0"),
+            host=_str("MCP_HOST", "127.0.0.1"),
             port=_int("MCP_PORT", 8000),
             stateless_http=_bool("MCP_STATELESS", True),
             tool_timeout=_int("TOOL_TIMEOUT_SECONDS", 90),
@@ -167,7 +168,7 @@ class Settings:
             ),
             access_token_ttl=_int("ACCESS_TOKEN_TTL", 3600),
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),
-            bridge_host=_str("BRIDGE_HOST", "0.0.0.0"),
+            bridge_host=_str("BRIDGE_HOST", "127.0.0.1"),
             tools=tuple(_list("TOOLS")),
             imap_pool_size=max(0, min(_int("IMAP_POOL_SIZE", 2), 8)),
             imap_idle_seconds=max(30, _int("IMAP_IDLE_SECONDS", 600)),

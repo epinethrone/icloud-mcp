@@ -25,8 +25,8 @@ function run(argv) {
   try { folder = n.container().name(); } catch (e) {}
   var c = n.creationDate(), m = n.modificationDate();
   var head = { id: n.id(), title: n.name(), folder: folder, created: c ? c.toISOString() : null, modified: m ? m.toISOString() : null };
-  var locked = false;
-  try { locked = n.passwordProtected() === true; } catch (e3) {}
+  var locked;                                                        // fail closed: unknown counts as locked
+  try { locked = n.passwordProtected() === true; } catch (e3) { locked = true; }
   if (locked) { head.locked = true; head.text = ""; head.truncated = false; return JSON.stringify(head); }
   var text = String(n.plaintext() || ""), max = a.max_chars || 30000;
   head.locked = false;

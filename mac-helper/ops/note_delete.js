@@ -26,8 +26,8 @@ function run(argv) {
     throw new Error("title does not match: this id belongs to a note titled '" + title + "'. Nothing was deleted.");
   if (folder !== null && RECENTLY_DELETED.indexOf(norm(folder)) >= 0)
     throw new Error("this note is already in Recently Deleted; removing it from there is permanent, so it is left to the user. Nothing was deleted.");
-  var locked = false;
-  try { locked = n.passwordProtected() === true; } catch (e3) {}
+  var locked;                                                        // fail closed: unknown counts as locked
+  try { locked = n.passwordProtected() === true; } catch (e3) { locked = true; }
   if (locked) throw new Error("this note is locked; locked notes are never deleted. Nothing was deleted.");
   app.delete(n);
   return JSON.stringify({ deleted: id, title: title, folder: folder, recoverable: "moved to Recently Deleted in Notes, recoverable for about 30 days" });

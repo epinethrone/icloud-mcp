@@ -54,7 +54,7 @@ def test_arguments_are_validated_strictly(rich_ops):
 
 
 def test_the_real_operation_table_is_exactly_the_reminders_notes_and_drive_operations():
-    assert set(bridge_mod.OPS) == {"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete",
+    assert set(bridge_mod.OPS) == {"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete", "reminder_move",
                                    "note_folders", "notes_list", "note_read", "note_create", "note_delete",
                                    "note_folder_create", "note_move", "note_update",
                                    "drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file", "drive_write", "drive_mkdir", "drive_move", "drive_trash", "shortcut_run"}
@@ -189,11 +189,12 @@ async def test_every_bridge_route_needs_the_token(s):
         assert (await c.get("/bridge/ping", headers=AUTH)).status_code == 200
 
 
-async def test_repeated_wrong_tokens_lock_the_bridge_out_even_for_the_right_one(s):
+async def test_repeated_wrong_tokens_lock_that_address_out_but_never_the_right_token(s):
     async with await client(s, MacBridge()) as c:
         for _ in range(20):
             assert (await c.get("/bridge/ping", headers={"Authorization": "Bearer nope"})).status_code == 401
-        assert (await c.get("/bridge/ping", headers=AUTH)).status_code == 429
+        assert (await c.get("/bridge/ping", headers={"Authorization": "Bearer nope"})).status_code == 429
+        assert (await c.get("/bridge/ping", headers=AUTH)).status_code == 200      # the real helper is never locked out
 
 
 async def test_poll_and_result_round_trip_over_http(s):

@@ -32,12 +32,13 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
+OSASCRIPT, LAUNCHCTL = "/usr/bin/osascript", "/bin/launchctl"    # Apple's own binaries by absolute path, never resolved through PATH
 MAX_OUTPUT = 12 * 1024 * 1024       # largest script result accepted (drive_get_file hands over files of up to 7 MB, base64-encoded)
-MAX_RESPONSE = 1024 * 1024          # largest server response accepted
+MAX_RESPONSE = 4 * 1024 * 1024      # largest server response accepted (a drive_write job carries up to 500,000 characters, UTF-8)
 
 # The fixed operations, identical to the server's table (tests keep them in sync): name -> {argument: (type, required, max)}.
 OPS = {
@@ -51,6 +52,7 @@ OPS = {
                         "clear_due": ("bool", False, 0), "priority": ("int", False, 9)},
     "reminder_complete": {"id": ("str", True, 500), "completed": ("bool", False, 0)},
     "reminder_delete": {"id": ("str", True, 500)},
+    "reminder_move": {"id": ("str", True, 500), "list": ("str", False, 200), "list_id": ("str", False, 200)},
     # Notes
     "note_folders": {},
     "notes_list": {"folder": ("str", False, 200), "query": ("str", False, 200), "search_body": ("bool", False, 0), "limit": ("int", False, 100)},
@@ -88,14 +90,14 @@ DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
 # Shortcuts: one fixed script, run by the same Apple Python, which checks the Mac's own allowlist before `shortcuts run`.
 SHORTCUT_SCRIPT = os.path.join(OPS_DIR, "shortcut.py")
 SHORTCUT_OPS = frozenset({"shortcut_run"})
-EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete"})
+EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete", "reminder_move"})
 REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
 OP_FILES = {
     "note_folders": "note_folders.js", "notes_list": "notes_list.js", "note_read": "note_read.js", "note_create": "note_create.js",
     "note_delete": "note_delete.js", "note_folder_create": "note_folder_create.js", "note_move": "note_move.js", "note_update": "note_update.js",
 }
 
-_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
+_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?\Z")
 
 
 def _iso_ok(value):
@@ -187,7 +189,7 @@ def build_command(op, args):
         return [sys.executable, "-I", DRIVE_SCRIPT, op, payload]
     if op in SHORTCUT_OPS:
         return [sys.executable, "-I", SHORTCUT_SCRIPT, op, payload]
-    return ["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
+    return [OSASCRIPT, "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
 
 
 def run_op(op, args, timeout=60, extra=None):
@@ -326,7 +328,7 @@ HOSTILE = [
 def selftest(cfg_path=None):
     report = {"helper_version": VERSION, "python": sys.version.split()[0], "macos": platform.mac_ver()[0], "checks": {}}
     checks = report["checks"]
-    osa = shutil.which("osascript")
+    osa = os.path.exists(OSASCRIPT)
     checks["platform"] = {"ok": platform.system() == "Darwin" and bool(osa), "osascript": bool(osa)}
     if not checks["platform"]["ok"]:
         print(json.dumps(report, indent=2))
@@ -335,7 +337,7 @@ def selftest(cfg_path=None):
     marker = os.path.join(tempfile.gettempdir(), "icloud-helper-injection-marker-%d" % os.getpid())
     payload = [s.replace("{marker}", marker) for s in HOSTILE]
     try:
-        proc = subprocess.run(["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, "selftest_echo.js"), json.dumps(payload)],
+        proc = subprocess.run([OSASCRIPT, "-l", "JavaScript", os.path.join(OPS_DIR, "selftest_echo.js"), json.dumps(payload)],
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         echoed = json.loads(proc.stdout.decode("utf-8")) if proc.returncode == 0 else None
     except (subprocess.TimeoutExpired, ValueError):
@@ -433,7 +435,7 @@ def selftest_write():
     finally:
         if nid:
             try:
-                proc = subprocess.run(["osascript", "-l", "JavaScript", os.path.join(OPS_DIR, "selftest_note_delete.js"), json.dumps({"id": nid})],
+                proc = subprocess.run([OSASCRIPT, "-l", "JavaScript", os.path.join(OPS_DIR, "selftest_note_delete.js"), json.dumps({"id": nid})],
                                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
                 step("note delete (cleanup)", proc.returncode == 0, None if proc.returncode == 0 else proc.stderr.decode("utf-8", "replace")[:200])
             except subprocess.TimeoutExpired:
@@ -477,14 +479,14 @@ def run_in_launchd(helper_args, timeout=300):
         plistlib.dump({"Label": PROBE_LABEL, "ProgramArguments": [_agent_python(), os.path.abspath(__file__)] + list(helper_args) + ["--agent-out", out],
                        "EnvironmentVariables": {IN_LAUNCHD: "1"}, "RunAtLoad": True, "StandardErrorPath": err}, f)
     target = "gui/%d/%s" % (uid, PROBE_LABEL)
-    subprocess.run(["launchctl", "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([LAUNCHCTL, "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        boot = subprocess.run(["launchctl", "bootstrap", "gui/%d" % uid, plist], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        boot = subprocess.run([LAUNCHCTL, "bootstrap", "gui/%d" % uid, plist], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if boot.returncode != 0:
             raise HelperError("could not start the self-test through launchd: %s" % (boot.stderr.decode("utf-8", "replace").strip() or boot.returncode))
         deadline = time.time() + timeout
         while not os.path.exists(out):
-            state = subprocess.run(["launchctl", "print", target], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode("utf-8", "replace")
+            state = subprocess.run([LAUNCHCTL, "print", target], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode("utf-8", "replace")
             if re.search(r"last exit code = -?\d", state) and not os.path.exists(out):     # it ran and exited without a report
                 try:
                     with open(err, errors="replace") as f:
@@ -499,7 +501,7 @@ def run_in_launchd(helper_args, timeout=300):
             res = json.load(f)
         return res["exit"], res["stdout"]
     finally:
-        subprocess.run(["launchctl", "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([LAUNCHCTL, "bootout", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         shutil.rmtree(work, ignore_errors=True)
 
 

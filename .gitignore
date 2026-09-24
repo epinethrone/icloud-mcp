@@ -4,6 +4,7 @@
 !.gitignore
 !.github/
 !.github/FUNDING.yml
+!.github/dependabot.yml
 !.github/workflows/
 !.github/workflows/*.yml
 !LICENSE

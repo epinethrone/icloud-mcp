@@ -249,8 +249,27 @@ def _brief(c: dict[str, Any]) -> dict[str, Any]:
     return {k: c[k] for k in ("uid", "name", "nickname", "organization", "job_title", "emails", "phones", "has_email")}
 
 
+_CONTROL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")          # every control character except the newline, which is escaped below
+_EMAIL_OK = re.compile(r"^[^\s@<>,;\"]+@[^\s@<>,;\"]+\.[^\s@<>,;\"]+$")
+_BDAY_OK = re.compile(r"^(?:\d{4}-|--)\d{2}-\d{2}$")
+
+
 def _v_escape(value: str) -> str:
+    """A vCard text value: control characters (a bare CR would end the line and start a property of the writer's choosing) are
+    dropped, and the separators and newlines are escaped."""
+    value = _CONTROL.sub("", value)
     return value.replace("\\", "\\\\").replace("\n", "\\n").replace(";", "\\;").replace(",", "\\,")
+
+
+def _check_emails(emails: list[str] | None) -> None:
+    for address in emails or []:
+        if address.strip() and not _EMAIL_OK.match(address.strip()):
+            raise ContactsError(f"'{_CONTROL.sub('', address)[:80]}' is not a plain email address (name@example.org).")
+
+
+def _check_birthday(birthday: str | None) -> None:
+    if birthday and birthday.strip() and not _BDAY_OK.match(birthday.strip()):
+        raise ContactsError("birthday must be YYYY-MM-DD (or --MM-DD when the year is unknown).")
 
 
 def _v_line(name: str, value: str) -> str:
@@ -291,6 +310,8 @@ def build_vcard(*, uid: str, given_name: str = "", family_name: str = "", name: 
                 phones: list[str] | None = None, birthday: str = "", urls: list[str] | None = None,
                 addresses: list[dict[str, Any]] | None = None) -> str:
     """Build the safe, non-secret subset of an iCloud-compatible vCard 3.0."""
+    _check_emails(emails)
+    _check_birthday(birthday)
     display = name.strip() or " ".join(p for p in (given_name.strip(), family_name.strip()) if p) or organization.strip()
     if not display:
         raise ContactsError("A contact needs a name, given/family name, or organization.")
@@ -320,6 +341,8 @@ def _replace_vcard_fields(raw: str, **updates: Any) -> str:
     if not wanted:
         raise ContactsError("Provide at least one field to change.")
     keys = {key for field in wanted for key in replace[field]}
+    _check_emails(updates.get("emails"))
+    _check_birthday(updates.get("birthday"))
     old = parse_vcard(raw)
     if not old:
         raise ContactsError("The stored contact is not a valid vCard.")
