@@ -95,8 +95,11 @@ def test_content_search_finds_words_inside_files_with_an_excerpt_and_remembers_t
     first = ok(drive, "drive_search_content", {"query": "cafe CREME", "budget": 40})
     assert first["complete"] and [i["path"] for i in first["items"]] == ["Documents/recipe.txt"]
     assert "Café crème" in first["items"][0]["excerpt"] and first["read_now"] >= 3
-    rtf = ok(drive, "drive_search_content", {"query": "heating landlord", "budget": 40})
-    assert [i["path"] for i in rtf["items"]] == ["Documents/letter.rtf"] and rtf["read_now"] == 0      # all from the cache now
+    cached = ok(drive, "drive_search_content", {"query": "expenses", "budget": 40})
+    assert [i["path"] for i in cached["items"]] == ["Documents/Tax/2025.txt"] and cached["read_now"] == 0   # all from the cache now
+    if os.path.exists("/usr/bin/textutil"):                                   # RTF/Word text needs macOS's textutil
+        rtf = ok(drive, "drive_search_content", {"query": "heating landlord", "budget": 40})
+        assert [i["path"] for i in rtf["items"]] == ["Documents/letter.rtf"]
     assert ok(drive, "drive_search_content", {"query": "income", "path": "Documents/Tax"})["count"] == 1
     assert ok(drive, "drive_search_content", {"query": "nothing matches this"})["count"] == 0
     cache = root.parent / "cache" / "text.sqlite"
