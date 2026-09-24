@@ -12,9 +12,11 @@ import datetime
 import json
 import mimetypes
 import os
+import sqlite3
 import subprocess
 import sys
 import time
+import unicodedata
 
 ROOT = os.path.realpath(os.environ.get("ICLOUD_DRIVE_ROOT") or os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs"))
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -200,6 +202,117 @@ def op_search(a):
     return {"query": q, "count": len(hits), "truncated": False, "items": hits}
 
 
+SEARCHABLE = {".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".log", ".tex", ".pdf"} | TEXTUTIL
+MAX_INDEX_BYTES = 30 * 1024 * 1024
+CACHE_PATH = os.environ.get("ICLOUD_DRIVE_TEXT_CACHE") or os.path.expanduser(
+    "~/Library/Application Support/icloud-mac-helper/drive-text-cache.sqlite")
+
+
+def fold(s):
+    """Lower case without accents, so 'cafe' finds 'Café'."""
+    return "".join(ch for ch in unicodedata.normalize("NFKD", s.lower()) if not unicodedata.combining(ch))
+
+
+def text_cache():
+    os.makedirs(os.path.dirname(CACHE_PATH), mode=0o700, exist_ok=True)
+    db = sqlite3.connect(CACHE_PATH)
+    try:
+        os.chmod(CACHE_PATH, 0o600)                     # private; a file owned by someone else is left as it is
+    except OSError:
+        pass
+    db.execute("CREATE TABLE IF NOT EXISTS text (path TEXT PRIMARY KEY, mtime REAL, size INTEGER, body TEXT)")
+    return db
+
+
+def excerpt(text, word, width=90):
+    """A short passage around the first place the (accent-folded) word occurs."""
+    folded = [fold(ch) or ch for ch in text]
+    joined = "".join(folded)
+    pos = max(0, joined.find(word))
+    idx, total = 0, 0                                     # map the folded position back to the original text
+    for idx, piece in enumerate(folded):
+        if total >= pos:
+            break
+        total += len(piece)
+    a, b = max(0, idx - width), min(len(text), idx + width)
+    return ("..." if a else "") + " ".join(text[a:b].split()) + ("..." if b < len(text) else "")
+
+
+def op_search_content(a):
+    """Words INSIDE files (text, PDF, Word/RTF/ODT/HTML), not just names. Extracted text is kept in a private cache keyed by path,
+    modification time and size, so each file is read once and later searches are fast. Offloaded files are not downloaded for a
+    search. The time budget is honoured: if it runs out, the answer says how many files are still unread and to ask again."""
+    words = [fold(w) for w in str(a.get("query") or "").split() if w.strip()]
+    if not words:
+        raise DriveError("a search text is required")
+    start, limit = resolve(a.get("path")), a.get("limit") or 20
+    deadline = time.time() + max(5, (a.get("budget") or 45) - 8)
+    db, hits = text_cache(), []
+    stats = {"files_searched": 0, "read_now": 0, "not_yet_read": 0, "only_in_icloud": 0, "unreadable": 0, "folders_not_accessible": 0,
+             "downloads_started": 0}
+
+    def blocked(_err):                                     # os.walk skips unreadable folders silently: count them instead
+        stats["folders_not_accessible"] += 1
+
+    try:
+        for dp, dns, fns in os.walk(start, onerror=blocked):
+            dns[:] = [d for d in dns if d.lower() not in FORBIDDEN and not d.startswith(".") and inside(os.path.join(dp, d))
+                      and os.path.splitext(d)[1].lower() not in PACKAGES]
+            for name in fns:
+                full = os.path.join(dp, name)
+                if name.startswith(".") or os.path.splitext(name)[1].lower() not in SEARCHABLE or not inside(full):
+                    continue
+                st = os.lstat(full)
+                if st.st_size > MAX_INDEX_BYTES:
+                    continue
+                row = db.execute("SELECT mtime, size, body FROM text WHERE path = ?", (rel(full),)).fetchone()
+                cached = bool(row and row[0] == st.st_mtime and row[1] == st.st_size)
+                if not cached and offloaded(st):                   # text read before stays usable after macOS offloads the file
+                    stats["only_in_icloud"] += 1
+                    if a.get("download") and time.time() < deadline and stats["downloads_started"] < 200:
+                        try:
+                            run_tool(["/usr/bin/brctl", "download", full], 10, "Starting the download")
+                            stats["downloads_started"] += 1
+                        except DriveError:
+                            pass
+                    continue
+                if cached:
+                    body = row[2]
+                elif time.time() < deadline:
+                    try:
+                        body = extract_text(full, max(3, min(20, int(deadline - time.time()))))[0][:500000]
+                    except (DriveError, OSError):
+                        body = ""
+                        stats["unreadable"] += 1
+                    db.execute("INSERT OR REPLACE INTO text VALUES (?, ?, ?, ?)", (rel(full), st.st_mtime, st.st_size, body))
+                    stats["read_now"] += 1
+                else:
+                    stats["not_yet_read"] += 1
+                    continue
+                stats["files_searched"] += 1
+                haystack = fold(body) + "\n" + fold(name)
+                if len(hits) < limit and all(w in haystack for w in words):
+                    hits.append({**describe(full), "excerpt": excerpt(body, words[0]) if body else ""})
+        db.commit()
+    finally:
+        db.close()
+    done = stats["not_yet_read"] == 0
+    notes = []
+    if not done:
+        notes.append("Ran out of time before reading every file (the first search reads them all once). Ask again to search the "
+                     "rest; it gets faster each time.")
+    if stats["only_in_icloud"] and not a.get("download"):
+        notes.append("%d file(s) are only in iCloud and were not searched. Search again with download=true to fetch them to the Mac "
+                     "in the background; their text is then remembered even if macOS offloads them again." % stats["only_in_icloud"])
+    elif stats["downloads_started"]:
+        notes.append("Started downloading %d file(s) from iCloud; search again in a minute or two to include them."
+                     % stats["downloads_started"])
+    if stats["folders_not_accessible"]:
+        notes.append("%d folder(s) could not be opened, so they were not searched. %s" % (stats["folders_not_accessible"], BLOCKED))
+    return {"query": " ".join(words), "count": len(hits), "complete": done and not stats["folders_not_accessible"], **stats,
+            "items": hits, **({"message": " ".join(notes)} if notes else {})}
+
+
 def op_info(a):
     full = resolve(a.get("path"))
     out = describe(full)
@@ -309,7 +422,7 @@ def op_trash(a):
     return {"trashed": what["path"], "type": what["type"], "recoverable": "moved to the Trash; recover it from Recently Deleted in iCloud Drive"}
 
 
-OPS = {"drive_list": op_list, "drive_search": op_search, "drive_info": op_info, "drive_read": op_read, "drive_get_file": op_get_file,
+OPS = {"drive_list": op_list, "drive_search": op_search, "drive_search_content": op_search_content, "drive_info": op_info, "drive_read": op_read, "drive_get_file": op_get_file,
        "drive_write": op_write, "drive_mkdir": op_mkdir, "drive_move": op_move, "drive_trash": op_trash}
 
 

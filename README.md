@@ -351,10 +351,11 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>iCloud Drive</b> &nbsp;·&nbsp; 9 tools, with the Mac helper</summary>
 
-`drive_list`, `drive_search`, `drive_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
+`drive_list`, `drive_search`, `drive_search_content`, `drive_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
 
 - Works on your **whole iCloud Drive** as your Mac keeps it in sync, so every change syncs to your other devices by itself.
 - `drive_read` returns text from plain text files, **PDFs** and **Word, RTF, ODT and HTML** documents. Files offloaded by "Optimise Mac Storage" are downloaded first. If that takes too long, the answer says the file is still downloading, instead of timing out.
+- **Search inside files.** `drive_search_content` finds words in the text of plain text, PDF, Word, RTF, ODT and HTML files (case and accents ignored) and returns an excerpt for each match. Each file is read once and its text kept in a private cache on the Mac (`drive-text-cache.sqlite`, mode 600), so later searches are fast and still work after macOS offloads the file. Files that are only in iCloud are skipped unless `download=true`, and the answer always says how many were left out. (Spotlight was tried first and dropped: its index of iCloud Drive was measurably incomplete.)
 - `drive_write` creates plain text files. Replacing a file needs `overwrite`, and the old version goes to the Trash. `drive_move` never overwrites.
 - `drive_get_file` hands over the file itself (base64, up to `MAX_ATTACHMENT_BYTES`), so an agent can attach it or send it on, the way `mail_get_attachment` does for mail.
 - **Nothing is ever deleted permanently.** `drive_trash` moves items to the Trash, where you can recover them.
