@@ -535,6 +535,7 @@ def _flag_view(flags: tuple[Any, ...]) -> dict[str, Any]:
         "unread": "\\seen" not in low,
         "flagged": "\\flagged" in low,
         "answered": "\\answered" in low,
+        "forwarded": "$forwarded" in low,
         "draft": "\\draft" in low,
     }
 

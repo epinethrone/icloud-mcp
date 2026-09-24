@@ -95,7 +95,7 @@ def test_a_call_travels_to_the_helper_and_the_answer_comes_back():
     assert b.complete(job.id, True, [{"id": "1", "name": "Home"}], "") is True
     caller.join(3)
     assert out == [[{"id": "1", "name": "Home"}]]
-    assert b.status()["helper"]["host"] == "test-mac" and b.status()["online"] is True
+    assert "host" not in b.status()["helper"] and "test-mac" not in str(b.status()) and b.status()["online"] is True
 
 
 def test_a_failure_reported_by_the_mac_becomes_a_tool_error():

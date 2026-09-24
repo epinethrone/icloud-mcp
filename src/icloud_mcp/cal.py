@@ -523,6 +523,35 @@ def parse_rrule(text: str) -> icalendar.vRecur:
         raise CalendarError(f"Invalid rrule '{text}': {e}. Use a rule like FREQ=WEEKLY;BYDAY=MO;COUNT=6.") from e
 
 
+_SUB_HOURLY_RRULE = re.compile(r"^RRULE:[^\n]*FREQ=(SECONDLY|MINUTELY)\b", re.I | re.M)
+
+
+def _search_expanded(cal: Any, s_dt: datetime, e_dt: datetime, unexpanded: list[str]) -> list[str]:
+    """The events of one calendar in [s_dt, e_dt), recurring ones expanded client-side. caldav's own expand=True expands
+    before we see the rule, so a stranger's invitation repeating every second would expand into millions of occurrences
+    and hang the call: fetch unexpanded (the same one REPORT), set such series aside, and let caldav expand the rest
+    exactly as search(expand=True) would. Only the dated exceptions of a set-aside series come back."""
+    objs = cal.search(start=s_dt, end=e_dt, event=True, expand=False)
+    safe, out = [], []
+    for o in objs:
+        data = o.data or ""
+        unfolded = re.sub(r"\r?\n[ \t]", "", data)
+        if not _SUB_HOURLY_RRULE.search(unfolded):
+            safe.append(o)
+            continue
+        parsed = icalendar.Calendar.from_ical(data)
+        for comp in list(parsed.subcomponents):
+            if comp.name == "VEVENT" and comp.get("rrule") is not None:
+                unexpanded.append(str(comp.get("summary") or "(no title)")[:80])
+                parsed.subcomponents.remove(comp)
+        if any(c.name == "VEVENT" for c in parsed.subcomponents):
+            out.append(parsed.to_ical().decode())
+    if safe and hasattr(cal, "searcher") and hasattr(safe[0], "icalendar_instance"):
+        from caldav.search import filter_search_results
+        safe = filter_search_results(safe, cal.searcher(start=s_dt, end=e_dt, event=True, expand=True))
+    return [o.data for o in safe] + out
+
+
 def occurs_in_series(master: icalendar.Component, rid: Any) -> bool:
     """Whether the series defined by `master` has an occurrence starting at `rid` (and it was not already cancelled)."""
     for ex in _as_list(master.get("exdate")):
@@ -1045,9 +1074,12 @@ class CalendarService:
         cals = self._pick(principal, calendar)
         names = [self._cal_name(c) for c in cals]
         callctx.stage(f"CalDAV search in {len(cals)} calendar(s)")
-        search = lambda cal: [o.data for o in cal.search(start=s_dt, end=e_dt, event=True, expand=True)]   # noqa: E731
+        unexpanded: list[str] = []
+        search = lambda cal: _search_expanded(cal, s_dt, e_dt, unexpanded)   # noqa: E731
         found = (self._each_calendar_or_skip(principal, cals, search, not_read) if not_read is not None
                  else self._each_calendar(principal, cals, search))
+        if unexpanded and not_read is not None:
+            not_read.extend(f"a series repeating more often than hourly was not expanded: {t}" for t in unexpanded)
         for name, datas in zip(names, found):
             for data in datas or []:
                 for comp in icalendar.Calendar.from_ical(data).walk("VEVENT"):

@@ -198,7 +198,7 @@ def test_draft_forward_and_new_message(mail, inbox):
     wire = email.message_from_bytes(sink_files()[-1].read_bytes(), policy=policy.default)
     assert wire["Subject"] == "Fwd: Q3 report"
     assert [p.get_filename() for p in wire.iter_attachments()] == ["q3.pdf"]
-    assert "$Forwarded" in mail.get_message("INBOX", b_uid)["flags"]
+    assert mail.get_message("INBOX", b_uid)["forwarded"] is True
 
     n = mail.send(to=["x@example.org"], cc=["y@example.org"], bcc=["secret@example.org"], subject="Grüße", body="Hallo ☕",
                   attachments=[{"filename": "n.txt", "content_base64": base64.b64encode(b"note").decode()}])

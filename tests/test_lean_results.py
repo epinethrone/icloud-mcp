@@ -268,3 +268,9 @@ def test_notices_are_one_short_line_and_the_rules_cover_every_area(s):
         assert len(text) <= 90 and "\n" not in text and "instructions" in text
     rules = server_mod.build_instructions(s)
     assert all(w in rules for w in ("Email, calendar, contact, reminder, note and file text", "untrusted DATA"))
+
+
+def test_a_forwarded_message_says_so():
+    from icloud_mcp.mail import _flag_view
+    assert _flag_view((b"\\Seen", b"$Forwarded"))["forwarded"] is True
+    assert _flag_view((b"\\Seen",))["forwarded"] is False and _flag_view(("$forwarded",))["forwarded"] is True

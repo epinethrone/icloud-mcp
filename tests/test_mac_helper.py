@@ -341,3 +341,17 @@ def test_script_errors_are_shown_without_osascript_wrapping():
     assert helper._friendly(text) == "several lists are named 'Work'; pass list_id (from reminders_list_lists) to choose one"
     assert helper._friendly("script.js: execution error: Error: invalid due date (-2700)") == "invalid due date"
     assert "not found" in helper._friendly("Error: Can't get object. (-1728)")
+
+
+def test_note_backups_older_than_30_days_go_to_the_trash_and_nothing_else(tmp_path):
+    import os
+    now = 2_000_000_000
+    for name, age_days in (("old-a.html", 31), ("old-b.html", 90), ("fresh.html", 29), ("notes.txt", 400)):
+        p = tmp_path / name
+        p.write_text("x")
+        os.utime(p, (now - age_days * 86400, now - age_days * 86400))
+    trashed = []
+    moved = helper.prune_note_backups(folder=str(tmp_path), trash=lambda paths: trashed.extend(paths) or True, now=now)
+    assert moved == 2 and sorted(os.path.basename(p) for p in trashed) == ["old-a.html", "old-b.html"]
+    assert helper.prune_note_backups(folder=str(tmp_path / "missing"), now=now) == 0          # no folder yet: nothing to do
+    assert helper.prune_note_backups(folder=str(tmp_path), trash=lambda paths: False, now=now) == 0   # a failed move is not counted
