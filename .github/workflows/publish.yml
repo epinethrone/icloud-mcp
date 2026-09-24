@@ -47,6 +47,32 @@ jobs:
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
 
+  claude-desktop-bundle:
+    # One-click install for Claude Desktop: icloud-mcp-<version>.mcpb attached to the release. Built after PyPI because
+    # the bundle pins icloud-mcp-server==<version> and Claude Desktop installs it from there.
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m pip install .
+      - run: python packaging/mcpb/build.py --out dist-mcpb
+      - name: Validate the manifest with the official mcpb CLI
+        run: |
+          mkdir check && cd check && unzip -q ../dist-mcpb/*.mcpb
+          npx -y @anthropic-ai/mcpb@2.1.2 validate manifest.json
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist-mcpb/*.mcpb --clobber
+
   mcp-registry:
     needs: pypi
     runs-on: ubuntu-latest
