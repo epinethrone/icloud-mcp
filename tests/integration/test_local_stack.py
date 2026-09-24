@@ -266,8 +266,7 @@ def test_send_guards(settings, inbox):
 
 # ------------------------------------------------------------------------ calendar
 def test_a_saved_draft_is_updated_then_sent_as_saved(mail, inbox):
-    for f in SINK.glob("*"):
-        f.unlink()
+    before = set(SINK.glob("*.eml"))                    # the sink runs as root in CI: read only what this test adds
     mail.send(to=["Anna <anna@example.org>"], bcc=["boss@example.org"], subject="Plan", body="Draft one", draft=True)
     drafts = mail.search("Drafts")
     uid = next(m["uid"] for m in drafts["messages"] if m["subject"] == "Plan")
@@ -275,7 +274,8 @@ def test_a_saved_draft_is_updated_then_sent_as_saved(mail, inbox):
     assert upd["status"] == "draft_updated" and upd["uid"] != uid
     r = mail.send_draft(upd["uid"], uidvalidity=upd["uidvalidity"])
     assert r["status"] == "sent" and r["draft_moved_to_trash"] is True
-    eml = [f for f in sink_files() if f.suffix == ".eml"]
+    eml = sorted(set(SINK.glob("*.eml")) - before)
+    assert len(eml) == 1
     wire, rcpt = eml[0].read_bytes(), eml[0].with_suffix(".rcpt").read_text().split()
     assert b"Draft two" in wire and b"Draft one" not in wire
     assert "boss@example.org" in rcpt and b"boss@example.org" not in wire         # Bcc: delivered, never shown
