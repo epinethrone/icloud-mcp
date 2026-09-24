@@ -541,6 +541,8 @@ def delivery_report(ev: icalendar.Component, own_addresses: set[str]) -> list[di
 
 def _attach_delivery(out: dict[str, Any], report: list[dict[str, Any]]) -> None:
     if not report:
+        out["delivery_note"] = ("The event was saved, but iCloud's delivery status could not be read back. Say the invitation "
+                                "was requested, not confirmed; calendar_get_event shows the guests later.")
         return
     out["delivery"] = report
     failed = [r["address"] for r in report if r["ok"] is False]
