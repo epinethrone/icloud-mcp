@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 520" width="1280" height="520" role="img" aria-labelledby="t"><title id="t">How it works: Claude connects to your server over OAuth and MCP; the server talks to iCloud Mail, Calendar and Contacts; an optional Mac helper connects out to the server for Reminders, Notes and iCloud Drive.</title>
+<style>text{font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif}</style>
+
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+  <path d="M0 0 L10 5 L0 10 z" fill="#86868b"/></marker></defs>
+<rect width="1280" height="520" rx="36" fill="#000000"/>
+<text x="640" y="68" text-anchor="middle" font-size="40" font-weight="700" fill="#f5f5f7" letter-spacing="-1">How it works.</text>
+<rect x="60" y="150" width="280" height="110" rx="22" fill="#1c1c1e" stroke="#2c2c2e" stroke-width="1"/><text x="200.0" y="201.0" text-anchor="middle" font-size="24" font-weight="700" fill="#f5f5f7">Claude</text><text x="200.0" y="229.0" text-anchor="middle" font-size="18" fill="#a1a1a6">or any MCP client</text>
+<rect x="500" y="150" width="280" height="110" rx="22" fill="#1c1c1e" stroke="#6366f1" stroke-width="2.5"/><text x="640.0" y="201.0" text-anchor="middle" font-size="24" font-weight="700" fill="#f5f5f7">icloud-mcp</text><text x="640.0" y="229.0" text-anchor="middle" font-size="18" fill="#a1a1a6">on your server or your Mac</text>
+<rect x="940" y="150" width="280" height="110" rx="22" fill="#1c1c1e" stroke="#2c2c2e" stroke-width="1"/><text x="1080.0" y="201.0" text-anchor="middle" font-size="24" font-weight="700" fill="#f5f5f7">iCloud</text><text x="1080.0" y="229.0" text-anchor="middle" font-size="18" fill="#a1a1a6">Mail · Calendar · Contacts</text>
+<rect x="500" y="360" width="280" height="110" rx="22" fill="#1c1c1e" stroke="#2c2c2e" stroke-width="1"/><text x="640.0" y="411.0" text-anchor="middle" font-size="24" font-weight="700" fill="#f5f5f7">Mac helper</text><text x="640.0" y="439.0" text-anchor="middle" font-size="18" fill="#a1a1a6">optional, connects out</text>
+<rect x="940" y="360" width="280" height="110" rx="22" fill="#1c1c1e" stroke="#2c2c2e" stroke-width="1"/><text x="1080.0" y="411.0" text-anchor="middle" font-size="24" font-weight="700" fill="#f5f5f7">On your Mac</text><text x="1080.0" y="439.0" text-anchor="middle" font-size="18" fill="#a1a1a6">Reminders · Notes · Drive</text>
+<line x1="342" y1="205" x2="496" y2="205" stroke="#86868b" stroke-width="2" marker-end="url(#head)"/><text x="420" y="190" text-anchor="middle" font-size="18" fill="#86868b">OAuth + MCP</text>
+<line x1="782" y1="205" x2="936" y2="205" stroke="#86868b" stroke-width="2" marker-end="url(#head)"/><text x="860" y="190" text-anchor="middle" font-size="18" fill="#86868b">IMAP · SMTP · DAV</text>
+<line x1="640" y1="358" x2="640" y2="264" stroke="#86868b" stroke-width="2" marker-end="url(#head)"/><text x="656" y="316" text-anchor="start" font-size="18" fill="#86868b">pinned TLS, outbound only</text>
+<line x1="782" y1="415" x2="936" y2="415" stroke="#86868b" stroke-width="2" marker-end="url(#head)"/><text x="860" y="400" text-anchor="middle" font-size="18" fill="#86868b">EventKit · files</text>
+
+</svg>
