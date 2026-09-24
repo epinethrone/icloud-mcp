@@ -241,3 +241,10 @@ def test_a_rule_that_cannot_be_expanded_refuses_instead_of_guessing(monkeypatch)
         raise ValueError("unsupported rule")
     monkeypatch.setattr(dateutil.rrule, "rrulestr", boom)
     assert occurs_in_series(master, datetime(2030, 3, 11, 19, 0, tzinfo=TZ)) is False     # unverifiable = refused
+
+
+def test_an_unreadable_delivery_status_is_said_out_loud():
+    from icloud_mcp.cal import _attach_delivery
+    out = {}
+    _attach_delivery(out, [])
+    assert "could not be read back" in out["delivery_note"] and "delivery" not in out
