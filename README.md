@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (20 tools), Calendar (8), Contacts (6), Reminders (6), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (20 tools), Calendar (9), Contacts (6), Reminders (6), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -277,7 +277,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**63 tools.** 35 for Mail, Calendar, Contacts and the health check, 26 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**64 tools.** 36 for Mail, Calendar, Contacts and the health check, 26 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 <details>
 <summary><b>Mail</b> &nbsp;·&nbsp; 20 tools</summary>
@@ -303,13 +303,14 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 </details>
 
 <details>
-<summary><b>Calendar</b> &nbsp;·&nbsp; 8 tools</summary>
+<summary><b>Calendar</b> &nbsp;·&nbsp; 9 tools</summary>
 
-`calendar_list_calendars`, `calendar_list_events`, `calendar_find_free_time`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_rsvp`
+`calendar_list_calendars`, `calendar_list_events`, `calendar_find_free_time`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_move_event`, `calendar_delete_event`, `calendar_rsvp`
 
 - Multiple calendars, recurring events expanded when listing, all-day events, alerts, links, notes and attendees. Editing or deleting a recurring event changes the whole series, or just one date when you pass `occurrence_start` (the rest of the series is left alone).
 - **Finding free time is one call.** `calendar_find_free_time` returns openings of a given length within your hours and chosen weekdays. Travel time counts as busy; events marked free, cancelled events and invitations you declined do not; all-day events are listed separately instead of guessed about.
 - **Know whether an invitation went out.** After inviting people, the result reports what iCloud recorded for each guest (sent, delivered, or refused, for example a mistyped address), so an agent never claims someone was invited when they were not.
+- **Move between calendars.** `calendar_move_event` moves an event (a whole series, if it repeats) to another calendar with a WebDAV MOVE, so nothing is recreated and guests get no new invitation. Servers without MOVE get a copy first and the original deleted only after.
 - **Answer invitations.** `calendar_rsvp` accepts, declines or marks tentative, for the whole series or one date; iCloud emails the organizer itself.
 - **Safe to retry.** `calendar_create_event` and `contacts_create` take an optional `request_id`: if a call times out and is retried with the same one, the first attempt is found instead of creating a duplicate.
 - **Apple travel time and map locations.** Events can carry Apple's travel time (by bike, on foot, by car or public transport) and a structured destination, which is what makes Apple draw the map card.

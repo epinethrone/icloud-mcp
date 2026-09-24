@@ -801,6 +801,18 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 them a cancellation."""
                 return cal.delete_event(uid, calendar, occurrence_start=occurrence_start, timezone_name=timezone)
 
+            @mcp.tool(annotations=_IDEMPOTENT_WRITE)
+            @_guard
+            def calendar_move_event(
+                uid: EventUid,
+                to_calendar: Annotated[str, _d("The calendar to move it to, by name from calendar_list_calendars (e.g. 'Personal', 'Work', 'Health').")],
+                calendar: CalRead = None,
+            ) -> dict[str, Any]:
+                """Move an event to another of the user's calendars (for example from 'Calendar' to 'Personal'), keeping its time,
+                place, alarms, notes and uid. A repeating event moves as a whole series. Nothing is recreated, so guests get no new
+                invitation; events with guests still follow the invitation setting, like editing them."""
+                return cal.move_event(uid, to_calendar, calendar)
+
             @mcp.tool(annotations=_WRITE)
             @_guard
             def calendar_rsvp(
