@@ -65,7 +65,8 @@ jobs:
             renaming suggestions. Keep the existing idiom: small pure helpers, type hints, offline tests.
       # PR-Agent exits successfully even when every model fails, which hid a broken reviewer for days. Fail loudly instead.
       - name: Check a review was posted
-        if: github.event_name == 'pull_request'
+        # only where it reviews automatically; pushes to an open pull request are skipped by PR-Agent itself
+        if: github.event_name == 'pull_request' && github.event.action != 'synchronize'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STARTED: ${{ steps.start.outputs.at }}
