@@ -1,7 +1,7 @@
 name: PR-Agent review
 
 # AI review of every pull request from this repository (PR-Agent, https://github.com/The-PR-Agent/pr-agent), using a
-# Google AI Studio (Gemini) key stored as the GEMINI_API_KEY repository secret. It also answers /review, /improve,
+# Google AI Studio (Gemini) key stored as the GEMINI_API_KEY repository secret. Reviews run automatically; it also answers /review, /improve,
 # /describe and /ask comments, but only from the owner and collaborators, so strangers cannot spend the key.
 on:
   pull_request:
@@ -40,7 +40,7 @@ jobs:
           CONFIG__FALLBACK_MODELS: '["gemini/gemini-2.5-flash"]'
           CONFIG__CUSTOM_MODEL_MAX_TOKENS: "1000000"
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
-          GITHUB_ACTION_CONFIG__AUTO_IMPROVE: "true"
+          GITHUB_ACTION_CONFIG__AUTO_IMPROVE: "false"   # code suggestions only on request: comment /improve
           GITHUB_ACTION_CONFIG__AUTO_DESCRIBE: "false"   # keep the human-written PR description
           PR_REVIEWER__EXTRA_INSTRUCTIONS: >-
             This is a single-owner MCP server that gives AI agents access to someone's iCloud Mail, Calendar, Contacts,
