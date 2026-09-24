@@ -209,7 +209,7 @@ func findList(id: String?, name: String?) -> EKCalendar {
     if let name = name {
         let hits = lists.filter { $0.title == name }
         if hits.isEmpty { fail("list not found (-1728): \(name)") }
-        if hits.count > 1 { fail("several lists are named '\(name)'; pass list_id (from reminders_lists) to choose one") }
+        if hits.count > 1 { fail("several lists are named '\(name)'; pass list_id (from reminders_list_lists) to choose one") }
         return hits[0]
     }
     guard let d = store.defaultCalendarForNewReminders() ?? lists.first else { fail("no Reminders list is available") }

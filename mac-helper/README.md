@@ -59,7 +59,7 @@ python3 "$HOME/Library/Application Support/icloud-mac-helper/icloud_mac_helper.p
 prints one JSON report with pass/fail, counts and timings, never any reminder or note content. If Reminders access is missing, `reminders_access`
 says which state macOS reports (`notDetermined`, `denied`, `restricted` or `writeOnly`) and names the grant it needs. Notes access is reported but is optional: it only fails the
 install if you enable Notes on the server and macOS has not granted access. It also proves that hostile strings
-(quotes, backslashes, newlines, script-looking text) reach the scripts as plain data. In Claude, the `mac_helper_status` tool says
+(quotes, backslashes, newlines, script-looking text) reach the scripts as plain data. In Claude, the `icloud_get_helper_status` tool says
 whether the helper is online.
 
 To also prove the write operations on this Mac, run it with `--selftest-write`. It creates, edits (including through an old-style

@@ -99,7 +99,7 @@ def senders(mail: MailService, folder: str = "INBOX", *, days: int = 30, limit: 
     return {"folder": folder, "days": days, "scanned": len(uids), "senders_found": len(groups),
             "bulk_messages": sum(g["messages"] for g in groups.values() if g["bulk"]),
             "senders": ranked[:limit],
-            "hint": "bulk=true marks newsletters and automated mail. Use mail_bulk_action (dry run first) to clean up a sender, "
+            "hint": "bulk=true marks newsletters and automated mail. Use mail_run_bulk_action (dry run first) to clean up a sender, "
                     "or mail_unsubscribe with a message's uid to stop one."}
 
 
@@ -154,7 +154,7 @@ def unsubscribe(mail: MailService, folder: str, uid: int, *, uidvalidity: int | 
     if not opts:
         return {"unsubscribed": False, "sender": sender,
                 "reason": "This message has no List-Unsubscribe header. Links inside the message body are never followed; the user "
-                          "can unsubscribe from the message itself, or you can filter it with mail_bulk_action."}
+                          "can unsubscribe from the message itself, or you can filter it with mail_run_bulk_action."}
     if opts["one_click"]:
         url = opts["https"][0]
         why = check_url(url)
@@ -296,7 +296,7 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
             else:
                 mail._move_messages(c, chunk, dst)
     return {**preview, "done": len(uids), "action_id": entry["action_id"],
-            "undo": f"mail_bulk_undo with action_id {entry['action_id']} reverses this for {UNDO_DAYS} days"}
+            "undo": f"mail_undo_bulk_action with action_id {entry['action_id']} reverses this for {UNDO_DAYS} days"}
 
 
 def bulk_undo(mail: MailService, action_id: str) -> dict[str, Any]:

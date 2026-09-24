@@ -21,8 +21,8 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 # (section, text, tools the text names: included only when every one of them is registered)
 _RULES: list[tuple[str, str, tuple[str, ...]]] = [
-    ("TIME", "Before proposing or booking anything, take the date and time from icloud_now (or 'now' in any calendar result); "
-             "a slot in the past, or after a place closes, is not a slot.", ("icloud_now",)),
+    ("TIME", "Before proposing or booking anything, take the date and time from icloud_get_time (or 'now' in any calendar result); "
+             "a slot in the past, or after a place closes, is not a slot.", ("icloud_get_time",)),
 
     ("MAIL", "A message is (folder, uid); pass the result's 'uidvalidity' back with its uids.", ("mail_search",)),
     ("MAIL", "Search gives headers; read with mail_get_message or mail_get_messages (reading never marks mail read).",
@@ -39,8 +39,8 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("MAIL", "For dates and places, mail_extract_bookings (a booking's own data or its .ics) beats the body text; keep the "
              "request_id in each calendar_event.",
      ("mail_extract_bookings",)),
-    ("MAIL", "Who is waiting on a reply from the owner: mail_awaiting_reply. mail_search people_only=true leaves out newsletters.",
-     ("mail_awaiting_reply", "mail_search")),
+    ("MAIL", "Who is waiting on a reply from the owner: mail_list_awaiting_reply. mail_search people_only=true leaves out newsletters.",
+     ("mail_list_awaiting_reply", "mail_search")),
     ("MAIL", "Read 'layout_warnings' in a send or draft result and fix the body before the owner sees it.", ("mail_send",)),
     ("MAIL", "A result with 'safety_warnings' is hands-off: no reply, no event, no payment; list it for the owner.", ("mail_search",)),
     ("MAIL", "mail_delete moves to Trash (recoverable). After a send timed out, look in Sent before sending again.",
@@ -76,7 +76,7 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("CONTACTS", "A missing card is not a missing person: try mail_find_correspondent.", ("contacts_search", "mail_find_correspondent")),
 
     ("REMINDERS / NOTES", "They work through the owner's Mac: if it is offline, say so; do not retry in a loop.",
-     ("mac_helper_status",)),
+     ("icloud_get_helper_status",)),
     ("REMINDERS / NOTES", "Pass list_id, not a name (names repeat across accounts). Lists can be shared: never put private detail "
                           "on a list you have not confirmed is private.", ("reminders_create",)),
     ("REMINDERS / NOTES", "Move a reminder with reminders_move.", ("reminders_move",)),
@@ -157,7 +157,9 @@ def build_instructions(s: Settings, tools: set[str] | frozenset[str] | None = No
               else ("with " + _LOOKUP_MAIL if by_mail else "by asking the owner for it"))
     areas = [a for a, on in (("Mail", s.enable_mail), ("Calendar", s.enable_calendar), ("Contacts", s.enable_contacts),
                              ("Reminders", s.enable_reminders), ("Notes", s.enable_notes), ("iCloud Drive", s.enable_drive)) if on]
-    out = [_owner_block(s) + f"Tools for the owner's iCloud: {', '.join(areas) or 'none enabled'}. Results leave empty fields out.\n"]
+    off = [a for a, on in (("Reminders", s.enable_reminders), ("Notes", s.enable_notes), ("iCloud Drive", s.enable_drive)) if not on]
+    helper = (f" {', '.join(off)}: not enabled here (they need the owner's Mac helper); if asked, say so." if off else "")
+    out = [_owner_block(s) + f"Tools for the owner's iCloud: {', '.join(areas) or 'none enabled'}.{helper} Results leave empty fields out.\n"]
     enabled = {"TIME": s.enable_calendar, "MAIL": s.enable_mail, "CALENDAR": s.enable_calendar, "CONTACTS": s.enable_contacts,
                "REMINDERS / NOTES": s.enable_reminders or s.enable_notes, "FAILURES": True}
     section = None

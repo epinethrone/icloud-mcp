@@ -84,7 +84,7 @@ and hands-on runs against a live iCloud account for the quirks only Apple's serv
 </tr>
 <tr>
 <td width="33%" valign="top"><b>Your own rules</b><br><code>AGENT_NOTES_FILE</code>: which calendar for what, how to sign mail, what never to touch.</td>
-<td width="33%" valign="top"><b>Replies owed</b><br><code>mail_awaiting_reply</code> and an unanswered-only, people-only search.</td>
+<td width="33%" valign="top"><b>Replies owed</b><br><code>mail_list_awaiting_reply</code> and an unanswered-only, people-only search.</td>
 <td width="33%" valign="top"><b>Clash checks</b><br>New events report overlaps and likely duplicates, and can be refused on either.</td>
 </tr>
 <tr>
@@ -94,7 +94,7 @@ and hands-on runs against a live iCloud account for the quirks only Apple's serv
 </tr>
 </table>
 
-<p align="center"><sub>Also since 0.4: reused mail connections, <code>mail_changes</code>, newsletter radar, safe bulk clean-up with undo, safe unsubscribe, exact bookings, note editing, search inside Drive files, birthdays and Shortcuts. In 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP and scam warnings.</sub></p>
+<p align="center"><sub>Also since 0.4: reused mail connections, <code>mail_list_changes</code>, newsletter radar, safe bulk clean-up with undo, safe unsubscribe, exact bookings, note editing, search inside Drive files, birthdays and Shortcuts. In 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP and scam warnings.</sub></p>
 
 <br>
 
@@ -274,24 +274,26 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 **67 tools.** 38 for Mail, Calendar, Contacts, the clock and the health check, 27 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
+Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
+
 <details>
 <summary><b>Mail</b> &nbsp;·&nbsp; 21 tools</summary>
 
 | Kind | Tools |
 |---|---|
-| Read | `mail_list_folders`, `mail_search`, `mail_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
-| Read | `mail_senders` (who fills a folder, busiest first, with bulk and unsubscribe info), `mail_awaiting_reply` (mail you sent that has had no answer) |
-| Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder`, `mail_bulk_action`, `mail_bulk_undo`, `mail_unsubscribe` |
+| Read | `mail_list_folders`, `mail_search`, `mail_list_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
+| Read | `mail_list_senders` (who fills a folder, busiest first, with bulk and unsubscribe info), `mail_list_awaiting_reply` (mail you sent that has had no answer) |
+| Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_create_folder`, `mail_run_bulk_action`, `mail_undo_bulk_action`, `mail_unsubscribe` |
 
 - Replies keep the `Re:` subject, `In-Reply-To` and `References`, the right recipients and the quoted original in plain text and HTML. Sent mail is copied to Sent and the original is flagged Answered (forwards get `$Forwarded`). `draft=true` saves to Drafts instead of sending.
 - `mail_get_messages` reads a batch (a day's unread mail, a whole thread) in one IMAP round trip, about 7 times faster than one at a time.
 - **Search every folder at once.** `mail_search` with `all_folders=true` looks in Archive, Sent, Junk and your own folders too, newest first, because mail rules and replies file messages away from the inbox.
-- **Newsletters are told apart from people.** Search results mark `bulk` mail (a List-Unsubscribe or List-Id header, bulk precedence, automated or no-reply senders) and say how it can be unsubscribed from; `mail_senders` groups a folder by sender.
-- **Clean up in bulk, safely.** `mail_bulk_action` (move, archive, trash, mark read) always previews first: the count, a sample and a confirm token that stands for exactly those messages. Running needs that token, so mail that arrived since is never touched. Every run is logged by Message-ID and `mail_bulk_undo` reverses it for 30 days. It needs at least one filter and never deletes permanently.
+- **Newsletters are told apart from people.** Search results mark `bulk` mail (a List-Unsubscribe or List-Id header, bulk precedence, automated or no-reply senders) and say how it can be unsubscribed from; `mail_list_senders` groups a folder by sender.
+- **Clean up in bulk, safely.** `mail_run_bulk_action` (move, archive, trash, mark read) always previews first: the count, a sample and a confirm token that stands for exactly those messages. Running needs that token, so mail that arrived since is never touched. Every run is logged by Message-ID and `mail_undo_bulk_action` reverses it for 30 days. It needs at least one filter and never deletes permanently.
 - **Unsubscribe without following links.** `mail_unsubscribe` uses only the List-Unsubscribe header: the standard one-click request (RFC 8058, HTTPS to public addresses only) or an unsubscribe email through the normal send path, so approval rules apply. Links in the body are never followed, unsubscribe web pages are only handed to you, and mail in Junk is refused.
 - **Bookings come out exact.** `mail_extract_bookings` reads the schema.org booking data airlines, hotels, rail and ticket shops embed (flights, stays, trains, buses, rental cars, restaurants, events) and `.ics` invitations, and returns each with a ready `calendar_create_event` block. Nothing is guessed from the wording; a message without that data says so.
-- **Only what changed.** `mail_changes` returns a token; passed back next time, it lists just the new messages and those whose read, flagged or answered state changed, using IMAP CONDSTORE instead of re-reading the folder. If iCloud renumbered the folder, it says to start over rather than guess.
-- **Who is waiting on whom.** `mail_awaiting_reply` lists mail you sent to a person that has had no reply and no later message from them, in any folder, longest waiting first; `mail_search` takes `people_only` (no newsletters), `unanswered_only` and `since_hours`.
+- **Only what changed.** `mail_list_changes` returns a token; passed back next time, it lists just the new messages and those whose read, flagged or answered state changed, using IMAP CONDSTORE instead of re-reading the folder. If iCloud renumbered the folder, it says to start over rather than guess.
+- **Who is waiting on whom.** `mail_list_awaiting_reply` lists mail you sent to a person that has had no reply and no later message from them, in any folder, longest waiting first; `mail_search` takes `people_only` (no newsletters), `unanswered_only` and `since_hours`.
 - **Layout checked, never rewritten.** Send and draft results carry `layout_warnings` when a plain-text body has HTML tags, Windows line endings or one long paragraph.
 - **Stale ids are refused.** Every message comes with its folder's `uidvalidity`; tools that act on a uid accept it back and refuse if iCloud has renumbered the folder since, instead of touching a different message.
 - Reading a message does not mark it read. Bcc recipients receive the mail, but the header is stripped on the wire.
@@ -320,12 +322,12 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>Contacts</b> &nbsp;·&nbsp; 6 tools</summary>
 
-`contacts_search`, `contacts_get`, `contacts_upcoming_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`
+`contacts_search`, `contacts_get`, `contacts_list_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`
 
 - Contacts are fetched whole, cached and searched locally by name, nickname, company, email or phone, ignoring accents. A contact with no email comes back with `has_email: false`, so an agent asks instead of guessing.
 - **Misspelled names are handled.** `contacts_search` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.
 - **Postal addresses** are read and written as street, city, region, postcode and country, with home, work or your own labels ("Holiday house"), stored the way Apple's Contacts app expects.
-- **Birthdays coming up.** `contacts_upcoming_birthdays` lists them soonest first, with the age turned when the year is known (Apple's "year unknown" 1604 is understood, and 29 February falls on the 28th in other years).
+- **Birthdays coming up.** `contacts_list_birthdays` lists them soonest first, with the age turned when the year is known (Apple's "year unknown" 1604 is understood, and 29 February falls on the 28th in other years).
 - Updates keep every field outside the changed ones and use ETags to refuse stale overwrites. `add_emails` and `add_phones` add to a card without touching its existing addresses or their labels. Contact photos and notes are never returned.
 
 </details>
@@ -333,7 +335,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>Reminders</b> &nbsp;·&nbsp; 7 tools, with the Mac helper</summary>
 
-`reminders_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_move` (the same reminder to another list, nothing deleted), `reminders_delete` (Reminders has no Recently Deleted, so this is final)
+`reminders_list_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_move` (the same reminder to another list, nothing deleted), `reminders_delete` (Reminders has no Recently Deleted, so this is final)
 
 - Runs through Apple's EventKit: every read is live and takes about 20 to 40 ms, however long your lists are. Only active reminders are returned.
 - List names can repeat across accounts, so tools accept a `list_id` and refuse an ambiguous name. Due dates are validated as real dates (a bare date means 09:00 local time).
@@ -343,7 +345,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>Notes</b> &nbsp;·&nbsp; 9 tools, with the Mac helper</summary>
 
-`notes_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_append`, `notes_update`, `notes_create_folder`, `notes_move`, `notes_delete`
+`notes_list_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_append`, `notes_update`, `notes_create_folder`, `notes_move`, `notes_delete`
 
 - Read, create, **edit** and **organise**: add to a note (`notes_append`, keeps headings, lists and styling; notes with tables are refused) or rewrite it (`notes_update`, keeps the title), create folders and subfolders, and move notes between them.
 - **Edits are guarded.** `notes_read` returns a `content_hash`; append and update need it with the current title, so a note that changed since it was read is never overwritten. Locked notes, notes with attachments and notes in Recently Deleted are refused, and the old version is saved to `~/Library/Application Support/icloud-mac-helper/note-backups/` before anything is written.
@@ -355,7 +357,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>iCloud Drive</b> &nbsp;·&nbsp; 10 tools, with the Mac helper</summary>
 
-`drive_list`, `drive_search`, `drive_search_content`, `drive_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
+`drive_list`, `drive_search`, `drive_search_content`, `drive_get_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
 
 - Works on your **whole iCloud Drive** as your Mac keeps it in sync, so every change syncs to your other devices by itself.
 - `drive_read` returns text from plain text files, **PDFs** and **Word, RTF, ODT and HTML** documents. Files offloaded by "Optimise Mac Storage" are downloaded first. If that takes too long, the answer says the file is still downloading, instead of timing out.
@@ -370,7 +372,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 <details>
 <summary><b>Status and time</b> &nbsp;·&nbsp; 3 tools</summary>
 
-`icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `mac_helper_status` says whether the Mac helper is online, when it was last seen, which version it runs, how many jobs are queued and how long they take. `icloud_now` gives the current date, weekday and time in your timezone, so an agent never books from a guessed date.
+`icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `icloud_get_helper_status` says whether the Mac helper is online, when it was last seen, which version it runs, how many jobs are queued and how long they take. `icloud_get_time` gives the current date, weekday and time in your timezone, so an agent never books from a guessed date.
 
 </details>
 
@@ -391,8 +393,8 @@ shows the idea: which calendar gets what, how to sign mail, lists that are share
 
 Tools that save an agent guesswork:
 
-- `icloud_now` gives the owner's date, time and timezone, so "tomorrow" means the right day.
-- `mail_awaiting_reply` lists mail you sent that nobody answered; `mail_search` with `unanswered_only` and `people_only` finds
+- `icloud_get_time` gives the owner's date, time and timezone, so "tomorrow" means the right day.
+- `mail_list_awaiting_reply` lists mail you sent that nobody answered; `mail_search` with `unanswered_only` and `people_only` finds
   what you still owe, without newsletters.
 - `calendar_create_event` reports overlapping events and likely duplicates, and can refuse to create either;
   `calendar_list_events` with `needs_reply` finds invitations still waiting for an answer.

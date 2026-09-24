@@ -62,7 +62,7 @@ def _d(text: str) -> Any:
     return Field(description=text)
 
 
-Folder = Annotated[str, _d("Mail folder: INBOX, Sent, Drafts, Trash, Junk, Archive or a custom name.")]
+Folder = Annotated[str, _d("Mail folder, e.g. INBOX, Sent, Archive or a custom name.")]
 Uid = Annotated[int, _d("Message uid in that folder (from mail_search).")]
 Uids = Annotated[list[int], _d("Message uids in that folder (from mail_search).")]
 UidValidity = Annotated[int | None, _d("The 'uidvalidity' from the result the uid came from: a renumbered folder is then refused, not misread.")]
@@ -92,6 +92,10 @@ class Attachment(BaseModel):
     filename: str
     content_base64: str
     content_type: str | None = None
+
+
+Attachments = Annotated[list[Attachment] | None, _d("Files to attach (from mail_get_attachment as is; from drive_get_file, name and "
+                                                    "data_base64 go in filename and content_base64).")]
 
 
 _tool_timeout = 90.0     # set from TOOL_TIMEOUT_SECONDS in create_server()
@@ -189,7 +193,7 @@ def _register_prompts(mcp: MCPServer, s: Settings) -> None:
         @mcp.prompt(name="follow_ups", title="Follow-ups I am waiting on",
                     description="Mail I sent that has had no answer, with a suggested follow-up.")
         def follow_ups(days: str = "21") -> str:
-            return (f"Use mail_awaiting_reply for the last {days} days. List each person with what I asked and how long ago, and "
+            return (f"Use mail_list_awaiting_reply for the last {days} days. List each person with what I asked and how long ago, and "
                     "suggest a short, friendly follow-up for the ones worth chasing (skip anything that was only for their "
                     "information)." + ask)
 
@@ -217,7 +221,7 @@ def _register_prompts(mcp: MCPServer, s: Settings) -> None:
         @mcp.prompt(name="tidy_reminders", title="Tidy my reminders",
                     description="Exact duplicates and clearly finished reminders, listed for approval before anything changes.")
         def tidy_reminders() -> str:
-            return ("Go through my reminders with reminders_lists and reminders_list (pass list_id; names can repeat). List only "
+            return ("Go through my reminders with reminders_list_lists and reminders_list (pass list_id; names can repeat). List only "
                     "exact duplicates and items that are clearly done (for example a date that has passed for a one-off errand), "
                     "grouped by list, and what you would do with each (complete, or delete a duplicate). Nothing else counts as "
                     "tidying." + ask)
@@ -226,7 +230,7 @@ def _register_prompts(mcp: MCPServer, s: Settings) -> None:
         @mcp.prompt(name="birthdays_coming_up", title="Birthdays coming up",
                     description="Upcoming birthdays from my contacts, with a suggested message for each.")
         def birthdays_coming_up(days: str = "14") -> str:
-            return (f"Use contacts_upcoming_birthdays for the next {days} days. List each person with the date and the age they "
+            return (f"Use contacts_list_birthdays for the next {days} days. List each person with the date and the age they "
                     "turn if known, and suggest a short personal message for each that I can send myself." + ask)
 
 
@@ -330,7 +334,15 @@ def _finish(mcp: MCPServer, s: Settings) -> None:
 # (TOOLS=essential). TOOLS also takes area presets (mail, calendar, contacts, reminders, notes, drive) and tool names.
 AREA_PRESETS = {"mail": ("mail_",), "calendar": ("calendar_",), "contacts": ("contacts_",), "reminders": ("reminders_",),
                 "notes": ("notes_",), "drive": ("drive_",)}
-ALWAYS_KEPT = ("icloud_check_health", "mac_helper_status")   # the diagnostics stay with any area preset
+ALWAYS_KEPT = ("icloud_check_health", "icloud_get_helper_status")   # the diagnostics stay with any area preset
+# Tool names before 0.7.0, which made every name verb_noun. TOOLS still accepts them (with a warning); they are not tools any more.
+RENAMED = {
+    "mail_changes": "mail_list_changes", "mail_senders": "mail_list_senders", "mail_awaiting_reply": "mail_list_awaiting_reply",
+    "mail_bulk_action": "mail_run_bulk_action", "mail_bulk_undo": "mail_undo_bulk_action",
+    "contacts_upcoming_birthdays": "contacts_list_birthdays", "icloud_now": "icloud_get_time",
+    "mac_helper_status": "icloud_get_helper_status", "notes_folders": "notes_list_folders",
+    "reminders_lists": "reminders_list_lists", "drive_info": "drive_get_info",
+}
 ESSENTIAL_TOOLS = (
     "mail_search", "mail_get_message", "mail_get_messages", "mail_reply", "mail_send",
     "calendar_list_events", "calendar_find_free_time", "calendar_create_event", "calendar_update_event",
@@ -358,6 +370,9 @@ def apply_tool_filter(mcp: MCPServer, wanted: tuple[str, ...]) -> None:
             keep.update(n for n in present if n.startswith(prefixes) or n in ALWAYS_KEPT)
         elif name in present:
             keep.add(name)
+        elif RENAMED.get(name) in present:
+            log.warning("TOOLS: %s was renamed to %s in 0.7.0; please update the setting", name, RENAMED[name])
+            keep.add(RENAMED[name])
         else:
             unknown.append(name)
     if unknown:
@@ -458,7 +473,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
-        def mail_awaiting_reply(
+        def mail_list_awaiting_reply(
             days: Annotated[int, _d("Look at mail the owner sent in the last N days (1-90).")] = 21,
             limit: Annotated[int, _d("Max messages to return (1-50).")] = 20,
         ) -> dict[str, Any]:
@@ -504,9 +519,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
-        def mail_changes(
+        def mail_list_changes(
             folder: Folder = "INBOX",
-            since: Annotated[str | None, _d("The 'token' from the previous mail_changes call. Omit on the first call.")] = None,
+            since: Annotated[str | None, _d("The 'token' from the previous mail_list_changes call. Omit on the first call.")] = None,
             limit: Annotated[int, _d("At most this many new and this many changed messages are listed (default 50, max 200).")] = 50,
         ) -> dict[str, Any]:
             """What changed in a folder since the last check: new messages (as summaries) and messages whose read, flagged or
@@ -523,7 +538,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
-        def mail_senders(
+        def mail_list_senders(
             folder: Folder = "INBOX",
             days: Annotated[int, _d("Look back this many days (default 30, max 365).")] = 30,
             limit: Annotated[int, _d("How many senders to return, busiest first (default 20, max 100).")] = 20,
@@ -562,7 +577,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 cc: Cc = None,
                 bcc: Bcc = None,
                 body_html: BodyHtml = None,
-                attachments: Annotated[list[Attachment] | None, _d("Files to attach: filename + base64 content.")] = None,
+                attachments: Attachments = None,
                 draft: Draft = False,
             ) -> dict[str, Any]:
                 """Compose a NEW email (use mail_reply to answer an existing message). Addresses may be 'a@b.com' or
@@ -570,7 +585,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 multipart/alternative). A signature configured on the server is appended. The message is sent immediately
                 and saved to the Sent folder (status "sent"). If the operator turned on owner approval, the result has sent=false
                 and says where the message waits for the owner (outbox or Drafts): it is NOT sent.
-                draft=true saves to Drafts instead. Example: to=['anna@example.org'], subject='Agenda', body='Hi Anna, ...'."""
+                draft=true saves to Drafts instead. Files go in 'attachments' (from drive_get_file or mail_get_attachment); to pass
+                on a received message with its attachments, use mail_forward. Example: to=['anna@example.org'], subject='Agenda',
+                body='Hi Anna, ...'."""
                 return mail.send(to=to, subject=subject, body=body, body_html=body_html, cc=cc, bcc=bcc,
                                  attachments=_atts(attachments), draft=draft)
 
@@ -586,7 +603,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 to: Annotated[list[str] | None, _d("Override the computed recipients. Omit to reply to the sender (and others if reply_all).")] = None,
                 cc: Cc = None,
                 bcc: Bcc = None,
-                attachments: Annotated[list[Attachment] | None, _d("Files to attach: filename + base64 content.")] = None,
+                attachments: Attachments = None,
                 draft: Draft = False,
                 uidvalidity: UidValidity = None,
             ) -> dict[str, Any]:
@@ -594,7 +611,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 Replies to the sender (or Reply-To); reply_all=true also includes the other To/Cc recipients.
                 Pass 'to' only to override the computed recipients. 'body' is your new text only (the quote is added).
                 Sent immediately, saved to Sent, and the original is flagged Answered (unless owner approval is on: then the result
-                has sent=false and the reply waits for the owner). draft=true saves a draft instead.
+                has sent=false and the reply waits for the owner). draft=true saves a draft instead. Files go in 'attachments'.
                 Example (after mail_search found the message): mail_reply(folder='INBOX', uid=8851, body='Thanks, see you then.')"""
                 return mail.reply(folder, uid, body, body_html=body_html, reply_all=reply_all, quote=quote_original,
                                   to=to, cc=cc, bcc=bcc, attachments=_atts(attachments), draft=draft, uidvalidity=uidvalidity)
@@ -659,7 +676,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_WRITE)
             @_guard
-            def mail_bulk_action(
+            def mail_run_bulk_action(
                 action: Annotated[str, _d("move, archive, trash (to the Trash, recoverable) or mark_read.")],
                 folder: Folder = "INBOX",
                 destination: Annotated[str | None, _d("Destination folder, only for action 'move'.")] = None,
@@ -676,7 +693,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 """Clean up many messages at once, safely, in two steps. First call with dry_run=true (the default): it returns how
                 many messages match, a sample, and a confirm_token. Show the user the count and sample; only then call again with
                 dry_run=false and that token. The token stands for exactly the previewed messages, so nothing that arrived since
-                is touched. Every run is logged and can be reversed with mail_bulk_undo. At least one filter is required, and
+                is touched. Every run is logged and can be reversed with mail_undo_bulk_action. At least one filter is required, and
                 nothing is ever deleted permanently."""
                 return mailbulk.bulk_action(mail, folder, action, destination=destination, dry_run=dry_run, confirm_token=confirm_token,
                                             max_messages=max_messages, from_=from_address, subject=subject, text=text, since=since,
@@ -684,8 +701,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_WRITE)
             @_guard
-            def mail_bulk_undo(action_id: Annotated[str, _d("The action_id returned by mail_bulk_action.")]) -> dict[str, Any]:
-                """Reverse a mail_bulk_action (up to 30 days later): moved or trashed messages go back to their folder, messages
+            def mail_undo_bulk_action(action_id: Annotated[str, _d("The action_id returned by mail_run_bulk_action.")]) -> dict[str, Any]:
+                """Reverse a mail_run_bulk_action (up to 30 days later): moved or trashed messages go back to their folder, messages
                 marked read become unread again. Messages are found by Message-ID, so ones moved elsewhere since are skipped."""
                 return mailbulk.bulk_undo(mail, action_id)
 
@@ -901,7 +918,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
-        def contacts_upcoming_birthdays(days: Annotated[int, _d("How many days ahead to look (default 30, max 366).")] = 30) -> dict[str, Any]:
+        def contacts_list_birthdays(days: Annotated[int, _d("How many days ahead to look (default 30, max 366).")] = 30) -> dict[str, Any]:
             """Birthdays coming up in the next N days from the user's contacts, soonest first, with the date, days until, and the
             age they turn when the birth year is known (today counts as 0). Only contacts with a birthday saved appear."""
             return contacts.upcoming_birthdays(days)
@@ -973,7 +990,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
-        def mac_helper_status() -> dict[str, Any]:
+        def icloud_get_helper_status() -> dict[str, Any]:
             """Say whether the helper on the user's Mac (needed for Reminders and Notes) is connected: online, seconds since it was last
             seen, and its version. Use it to explain a failure; the Reminders and Notes tools report an offline Mac themselves."""
             return bridge.status()
@@ -986,7 +1003,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_READ)
             @_guard
-            def reminders_lists() -> dict[str, Any]:
+            def reminders_list_lists() -> dict[str, Any]:
                 """List the user's Reminders lists (id, name and account). List names are NOT unique (two accounts can each have a "Groceries"),
                 so pass the list_id to the other reminder tools whenever a name appears more than once. Reminders live on the user's Mac,
                 which must be online."""
@@ -995,8 +1012,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             @mcp.tool(annotations=_READ)
             @_guard
             def reminders_list(
-                list_name: Annotated[str | None, _d("Only this Reminders list (name from reminders_lists). Omit for all lists.")] = None,
-                list_id: Annotated[str | None, _d("Only this list, by id from reminders_lists (use it when a name is not unique).")] = None,
+                list_name: Annotated[str | None, _d("Only this Reminders list (name from reminders_list_lists). Omit for all lists.")] = None,
+                list_id: Annotated[str | None, _d("Only this list, by id from reminders_list_lists (use it when a name is not unique).")] = None,
                 query: Annotated[str | None, _d("Only reminders whose title or notes contain this text (case-insensitive).")] = None,
                 refresh: Annotated[bool, _d("Accepted for compatibility. Every read is already live, so this changes nothing.")] = False,
                 limit: Annotated[int, _d("Max reminders to return (1-200).")] = 50,
@@ -1015,8 +1032,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 @_guard
                 def reminders_create(
                     title: Annotated[str, _d("The reminder's title.")],
-                    list_name: Annotated[str | None, _d("List to add it to (name from reminders_lists). Omit for the default list. An error if several lists share the name.")] = None,
-                    list_id: Annotated[str | None, _d("List to add it to, by id from reminders_lists (use it when names repeat).")] = None,
+                    list_name: Annotated[str | None, _d("List to add it to (name from reminders_list_lists). Omit for the default list. An error if several lists share the name.")] = None,
+                    list_id: Annotated[str | None, _d("List to add it to, by id from reminders_list_lists (use it when names repeat).")] = None,
                     notes: Annotated[str | None, _d("Notes text for the reminder.")] = None,
                     due: Annotated[str | None, _d("Due date-time, ISO 8601: '2026-09-21T15:00:00' (local time), '2026-09-21T15:00:00+02:00', or a bare date '2026-09-21' which means 09:00 that day.")] = None,
                     priority: Annotated[int | None, _d("0 none, 1 high, 5 medium, 9 low.")] = None,
@@ -1051,8 +1068,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 @_guard
                 def reminders_move(
                     id: Annotated[str, _d("Reminder id from reminders_list.")],
-                    list_name: Annotated[str | None, _d("List to move it to (name from reminders_lists). An error if several lists share the name.")] = None,
-                    list_id: Annotated[str | None, _d("List to move it to, by id from reminders_lists (use it when names repeat).")] = None,
+                    list_name: Annotated[str | None, _d("List to move it to (name from reminders_list_lists). An error if several lists share the name.")] = None,
+                    list_id: Annotated[str | None, _d("List to move it to, by id from reminders_list_lists (use it when names repeat).")] = None,
                 ) -> dict[str, Any]:
                     """Move a reminder to another list. The same reminder moves, keeping its title, notes, due date, priority and
                     state; nothing is deleted or recreated. Lists in different accounts cannot be moved between."""
@@ -1072,14 +1089,14 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_READ)
             @_guard
-            def notes_folders() -> dict[str, Any]:
+            def notes_list_folders() -> dict[str, Any]:
                 """List the user's Notes folders (id, name and account). Notes live on the user's Mac, which must be online."""
                 return {"notice": _MAC_NOTICE, "folders": bridge.call("note_folders")}
 
             @mcp.tool(annotations=_READ)
             @_guard
             def notes_list(
-                folder: Annotated[str | None, _d("Only this folder (name from notes_folders). Omit for all folders.")] = None,
+                folder: Annotated[str | None, _d("Only this folder (name from notes_list_folders). Omit for all folders.")] = None,
                 query: Annotated[str | None, _d("Only notes whose title contains this text (case-insensitive).")] = None,
                 search_body: Annotated[bool, _d("true = also search inside the note text (much slower on large libraries; returns a snippet).")] = False,
                 limit: Annotated[int, _d("Max notes to return (1-100).")] = 25,
@@ -1108,7 +1125,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 def notes_create(
                     title: Annotated[str, _d("The note's title (its first line).")],
                     body: Annotated[str, _d("The note text. Plain text; line breaks are kept.")] = "",
-                    folder: Annotated[str | None, _d("Folder name from notes_folders. Omit for the 'Notes' folder.")] = None,
+                    folder: Annotated[str | None, _d("Folder name from notes_list_folders. Omit for the 'Notes' folder.")] = None,
                 ) -> dict[str, Any]:
                     """Create a note on the user's Mac (it syncs to their other devices). Returns the new note's id."""
                     return {"created": bridge.call("note_create", _given(title=title, body=body or None, folder=folder))}
@@ -1128,8 +1145,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 @_guard
                 def notes_create_folder(
                     name: Annotated[str, _d("The new folder's name.")],
-                    account: Annotated[str | None, _d("Account name from notes_folders (e.g. 'iCloud'). Omit for the default Notes account.")] = None,
-                    parent_folder_id: Annotated[str | None, _d("Folder id from notes_folders, to create a subfolder inside it.")] = None,
+                    account: Annotated[str | None, _d("Account name from notes_list_folders (e.g. 'iCloud'). Omit for the default Notes account.")] = None,
+                    parent_folder_id: Annotated[str | None, _d("Folder id from notes_list_folders, to create a subfolder inside it.")] = None,
                 ) -> dict[str, Any]:
                     """Create a Notes folder (or a subfolder). If one with that name already exists in the same place, that folder is
                     returned with existed: true and nothing is created. Returns the folder id to use with notes_move."""
@@ -1140,7 +1157,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 def notes_move(
                     id: Annotated[str, _d("Note id from notes_list.")],
                     title: Annotated[str, _d("The note's current title, exactly as notes_list returned it. A mismatch moves nothing.")],
-                    folder_id: Annotated[str | None, _d("Destination folder id from notes_folders or notes_create_folder (preferred).")] = None,
+                    folder_id: Annotated[str | None, _d("Destination folder id from notes_list_folders or notes_create_folder (preferred).")] = None,
                     folder: Annotated[str | None, _d("Destination folder name, if no id; refused when several folders share the name.")] = None,
                 ) -> dict[str, Any]:
                     """Move one note into another folder. Give the destination as folder_id (preferred) or folder. Moving into Recently
@@ -1242,14 +1259,14 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_READ)
             @_guard
-            def drive_info(path: Annotated[str, _d(_DRIVE_PATH)]) -> dict[str, Any]:
+            def drive_get_info(path: Annotated[str, _d(_DRIVE_PATH)]) -> dict[str, Any]:
                 """Details of one file or folder in iCloud Drive: type, size, modified time, whether it is offloaded, item count."""
-                return bridge.call("drive_info", {"path": path})
+                return bridge.call("drive_info", {"path": path})    # the helper operation keeps its name
 
             @mcp.tool(annotations=_READ)
             @_guard
             def drive_read(
-                path: Annotated[str, _d("File path inside iCloud Drive. " + _DRIVE_PATH)],
+                path: Annotated[str, _d(_DRIVE_PATH)],
                 max_chars: Annotated[int | None, _d("Longest text to return (default 30000, max 200000).")] = None,
                 offset: Annotated[int | None, _d("Start this many characters in, to read a long file in parts.")] = None,
             ) -> dict[str, Any]:
@@ -1261,7 +1278,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
             @mcp.tool(annotations=_READ)
             @_guard
-            def drive_get_file(path: Annotated[str, _d("File path inside iCloud Drive. " + _DRIVE_PATH)]) -> dict[str, Any]:
+            def drive_get_file(path: Annotated[str, _d(_DRIVE_PATH)]) -> dict[str, Any]:
                 """Get the file itself from iCloud Drive (not its text), base64-encoded in 'data_base64', with its name, size and type,
                 so it can be attached or sent (up to MAX_ATTACHMENT_BYTES, 5 MB by default). Use drive_read to READ a file; use this to
                 SEND it. Folders and app documents such as .pages are refused: export them to PDF first. An offloaded file is
@@ -1307,7 +1324,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
     @mcp.tool(annotations=_READ)
     @_guard
-    def icloud_now(timezone: TzName = None) -> dict[str, Any]:
+    def icloud_get_time(timezone: TzName = None) -> dict[str, Any]:
         """The current date, weekday and time in the owner's timezone. Check it before proposing or booking anything."""
         n = datetime.now(get_tz(timezone or s.default_timezone)).replace(microsecond=0)
         return {"now": n.isoformat(), "date": n.date().isoformat(), "weekday": n.strftime("%A"), "time": n.strftime("%H:%M"),

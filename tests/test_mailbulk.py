@@ -257,9 +257,9 @@ def test_the_tools_exist_only_when_writable(box):
     svc, _ = box
     s = svc.s
     names = lambda st: {t.name for t in asyncio.run(create_server(st)[0].list_tools())}
-    assert {"mail_senders", "mail_bulk_action", "mail_bulk_undo", "mail_unsubscribe"} <= names(s)
+    assert {"mail_list_senders", "mail_run_bulk_action", "mail_undo_bulk_action", "mail_unsubscribe"} <= names(s)
     ro = names(dataclasses.replace(s, read_only=True))
-    assert "mail_senders" in ro and not {"mail_bulk_action", "mail_bulk_undo", "mail_unsubscribe"} & ro
+    assert "mail_list_senders" in ro and not {"mail_run_bulk_action", "mail_undo_bulk_action", "mail_unsubscribe"} & ro
 
 
 def test_messages_without_a_message_id_are_left_alone_so_every_change_can_be_undone(box):

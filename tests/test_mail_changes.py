@@ -1,4 +1,4 @@
-"""mail_changes: only what changed since the last token, via CONDSTORE, never guessing across a renumbered folder."""
+"""mail_list_changes: only what changed since the last token, via CONDSTORE, never guessing across a renumbered folder."""
 import contextlib
 from email.message import EmailMessage
 

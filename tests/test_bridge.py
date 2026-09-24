@@ -316,18 +316,18 @@ def names(settings):
 
 def test_bridge_tools_exist_only_when_enabled(s):
     on = names(s)
-    assert {"mac_helper_status", "reminders_lists"} <= set(on)
+    assert {"icloud_get_helper_status", "reminders_list_lists"} <= set(on)
     off = names(dataclasses.replace(s, enable_reminders=False))
-    assert "reminders_lists" not in off and "mac_helper_status" not in off
-    assert all(v.get("description") for t in (on["reminders_lists"], on["mac_helper_status"]) for v in (getattr(t, "input_schema", None) or t.inputSchema).get("properties", {}).values())
+    assert "reminders_list_lists" not in off and "icloud_get_helper_status" not in off
+    assert all(v.get("description") for t in (on["reminders_list_lists"], on["icloud_get_helper_status"]) for v in (getattr(t, "input_schema", None) or t.inputSchema).get("properties", {}).values())
 
 
 def test_a_tool_call_with_no_helper_says_so_plainly(s):
     async def go():
         mcp, _ = create_server(s)
         with pytest.raises(Exception, match="has not connected since the server started"):
-            await mcp.call_tool("reminders_lists", {})
-        status = await mcp.call_tool("mac_helper_status", {})
+            await mcp.call_tool("reminders_list_lists", {})
+        status = await mcp.call_tool("icloud_get_helper_status", {})
         return status.content[0].text
     assert '"online": false' in asyncio.run(go())
 
@@ -353,7 +353,7 @@ def test_instructions_mention_the_mac_only_when_enabled(s):
     assert "REMINDERS / NOTES" not in build_instructions(dataclasses.replace(s, enable_reminders=False))
 
 
-DRIVE_READ = {"drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file"}
+DRIVE_READ = {"drive_list", "drive_search", "drive_search_content", "drive_get_info", "drive_read", "drive_get_file"}
 DRIVE_WRITE = {"drive_write", "drive_create_folder", "drive_move", "drive_trash"}
 
 
@@ -364,7 +364,7 @@ def test_drive_tools_exist_only_when_enabled_and_writes_only_when_writable(s):
     ro = names(dataclasses.replace(on, read_only=True))
     assert DRIVE_READ <= set(ro) and not DRIVE_WRITE & set(ro)
     alone = names(dataclasses.replace(on, enable_reminders=False))                           # Drive alone still starts the bridge
-    assert "mac_helper_status" in alone and DRIVE_READ <= set(alone) and "reminders_lists" not in alone
+    assert "icloud_get_helper_status" in alone and DRIVE_READ <= set(alone) and "reminders_list_lists" not in alone
     assert names(on)["drive_trash"].annotations.destructive_hint is True
 
 

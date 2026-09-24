@@ -1,5 +1,5 @@
-"""The tools and parameters that replace hand-written agent rules: icloud_now, needs_reply and starting_within_minutes,
-conflict and duplicate detection on create, add/remove_attendees, people_only / unanswered_only / since_hours, mail_awaiting_reply,
+"""The tools and parameters that replace hand-written agent rules: icloud_get_time, needs_reply and starting_within_minutes,
+conflict and duplicate detection on create, add/remove_attendees, people_only / unanswered_only / since_hours, mail_list_awaiting_reply,
 layout_warnings, prefilled booking request_ids and add_emails."""
 import asyncio
 import contextlib
@@ -44,7 +44,7 @@ def call(mcp, tool, args):
 
 def test_icloud_now_gives_the_owners_date_and_time(s):
     mcp, _ = create_server(dataclasses.replace(s, enable_mail=False, enable_contacts=False))
-    now = call(mcp, "icloud_now", {})
+    now = call(mcp, "icloud_get_time", {})
     assert now["timezone"] == "UTC" and now["date"] == datetime.now(timezone.utc).date().isoformat() and now["weekday"]
 
 

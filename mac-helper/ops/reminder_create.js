@@ -23,7 +23,7 @@ function run(argv) {
     var names = app.lists.name(), ids = app.lists.id(), hits = [];    // list names are NOT unique (two accounts can both have "Groceries")
     for (var i = 0; i < names.length; i++) if (names[i] === a.list) hits.push(ids[i]);
     if (hits.length === 0) throw new Error("list not found (-1728): " + a.list);
-    if (hits.length > 1) throw new Error("several lists are named '" + a.list + "'; pass list_id (from reminders_lists) to choose one");
+    if (hits.length > 1) throw new Error("several lists are named '" + a.list + "'; pass list_id (from reminders_list_lists) to choose one");
     list = app.lists.byId(hits[0]);
   } else {
     list = app.defaultList();

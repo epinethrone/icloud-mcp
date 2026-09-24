@@ -221,9 +221,9 @@ class MacBridge:
             if picked_up:
                 raise BridgeError(f"The Mac picked up the request but did not finish within {self.timeout}s: the Mac is slow or busy "
                                   "(Notes in particular can be). The operation may still complete there, so check before repeating a "
-                                  "change; try again in a minute, or run mac_helper_status to see how long jobs take.")
+                                  "change; try again in a minute, or run icloud_get_helper_status to see how long jobs take.")
             raise BridgeError(f"The Mac did not pick up the request within {self.timeout}s: it may have just gone to sleep or lost its "
-                              "connection. Run mac_helper_status, and tell the user instead of retrying repeatedly.")
+                              "connection. Run icloud_get_helper_status, and tell the user instead of retrying repeatedly.")
         if not job.ok:
             err = job.error or "The Mac helper reported an error."
             if "-1728" in err:                                     # Apple's "object not found"

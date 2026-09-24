@@ -337,7 +337,7 @@ def test_the_launchd_job_uses_the_agents_python_and_is_always_removed(monkeypatc
 
 
 def test_script_errors_are_shown_without_osascript_wrapping():
-    text = "execution error: Error: several lists are named 'Work'; pass list_id (from reminders_lists) to choose one (-2700)"
-    assert helper._friendly(text) == "several lists are named 'Work'; pass list_id (from reminders_lists) to choose one"
+    text = "execution error: Error: several lists are named 'Work'; pass list_id (from reminders_list_lists) to choose one (-2700)"
+    assert helper._friendly(text) == "several lists are named 'Work'; pass list_id (from reminders_list_lists) to choose one"
     assert helper._friendly("script.js: execution error: Error: invalid due date (-2700)") == "invalid due date"
     assert "not found" in helper._friendly("Error: Can't get object. (-1728)")

@@ -17,11 +17,11 @@ function findNote(app, id) {
 
 function findFolder(app, a) {
   if (a.folder_id) { var f = app.folders.byId(a.folder_id); f.name(); return f; }   // throws "not found" for an unknown id
-  if (!a.folder) throw new Error("give the destination as folder_id (from notes_folders) or folder (a name). Nothing was moved.");
+  if (!a.folder) throw new Error("give the destination as folder_id (from notes_list_folders) or folder (a name). Nothing was moved.");
   var all = app.folders(), hits = [];
   for (var i = 0; i < all.length; i++) if (norm(all[i].name()) === norm(a.folder)) hits.push(all[i]);
   if (hits.length === 0) throw new Error("folder '" + a.folder + "' not found (-1728). Create it first. Nothing was moved.");
-  if (hits.length > 1) throw new Error(hits.length + " folders are called '" + a.folder + "'; pass folder_id from notes_folders instead. Nothing was moved.");
+  if (hits.length > 1) throw new Error(hits.length + " folders are called '" + a.folder + "'; pass folder_id from notes_list_folders instead. Nothing was moved.");
   return hits[0];
 }
 
