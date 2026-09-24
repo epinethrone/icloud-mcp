@@ -1108,6 +1108,15 @@ def _parse_args(argv: list[str] | None):
     return p.parse_args(argv)
 
 
+def drop_unfilled_placeholders() -> None:
+    """A desktop bundle substitutes install-form values into the environment. An optional field the user left empty must
+    read as unset, never as the literal placeholder text (e.g. TOOLS='${user_config.tools}')."""
+    for key, value in list(os.environ.items()):
+        v = value.strip()
+        if v.startswith("${user_config.") and v.endswith("}"):
+            del os.environ[key]
+
+
 def store_password() -> None:
     """Save the app-specific password in the macOS login Keychain. `security` prompts for it itself, so it never appears in
     argv, shell history or a file. Local mode (and any server run as this user) then finds it when ICLOUD_APP_PASSWORD is unset."""
@@ -1152,6 +1161,7 @@ def main_local(s: Settings) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
+    drop_unfilled_placeholders()
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if args.env_file:
         load_env_file(args.env_file)

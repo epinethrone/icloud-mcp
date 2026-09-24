@@ -40,7 +40,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server t
 | ✋ **You approve what leaves** | Outgoing mail is queued for your approval in a browser by default. Invitations to other people are blocked unless you allow them. Deletes go to the Trash. |
 | 🛡️ **Built for prompt injection** | Every email, event, note and file is marked as untrusted data, and the dangerous actions are gated by configuration rather than by asking the model nicely. |
 | 💻 **Server or no server** | Host it once for Claude on the web and your phone, or run it locally for Claude Desktop and Claude Code with one command: no domain, tunnel or Docker needed. |
-| 🧪 **Tested against the real iCloud** | 308 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
+| 🧪 **Tested against the real iCloud** | 311 offline tests on every push (Python 3.11 to 3.13), plus integration tests against local mail, calendar and contacts servers, plus manual runs against a live account for the quirks only Apple's servers show. |
 
 ## What you can ask Claude
 
@@ -160,6 +160,16 @@ With the default `SEND_REQUIRES_APPROVAL=true`, `mail_send`, `mail_reply` and `m
 ## Run it locally (Claude Desktop and Claude Code)
 
 The same server can run on your own computer as a local MCP server. Your desktop client starts it when it needs it and talks to it over stdio, so there is no public address, tunnel, Docker or OAuth. Claude on the web and on your phone cannot reach it, which is the trade-off.
+
+### Claude Desktop in one click
+
+1. Download **`icloud-mcp-<version>.mcpb`** from the [latest release](https://github.com/epinethrone/icloud-mcp/releases/latest).
+2. Double-click it (or drag it onto Claude Desktop → Settings → Extensions).
+3. Fill in the form: your Apple Account email, an [app-specific password](https://account.apple.com) (Claude Desktop keeps it in your system keychain), your name and time zone. The safety switches start approval-first: mail is saved to Drafts for you to send, invitations to other people are off.
+
+That covers Mail, Calendar and Contacts. Reminders, Notes and iCloud Drive need the [Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) and the manual setup below.
+
+### Manual setup (Claude Code, or Claude Desktop with more options)
 
 **1. Put your settings in a file only you can read**
 
