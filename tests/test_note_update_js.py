@@ -60,12 +60,13 @@ def test_replace_keeps_the_title_heading():
     ({"note": {"att": 2}, "args": {"id": "i", "title": "Shopping", "expected_hash": "CURRENT", "text": "x", "mode": "append"}}, "attachment"),
     ({"note": {"folder": "Recently Deleted"}, "args": {"id": "i", "title": "Shopping", "expected_hash": "CURRENT", "text": "x", "mode": "replace"}}, "Recently Deleted"),
     ({"args": {"id": "i", "title": "Shopping", "expected_hash": "CURRENT", "text": "x", "mode": "prepend"}}, "mode must be"),
+    ({"note": {"body": "<h1>Shopping</h1><table><tr><td>1</td></tr></table>"}, "args": {"id": "i", "title": "Shopping", "expected_hash": "CURRENT", "text": "x", "mode": "append"}}, "table"),
     ({"backupFails": True, "args": {"id": "i", "title": "Shopping", "expected_hash": "CURRENT", "text": "x", "mode": "append"}}, "backup"),
 ])
 def test_every_refusal_changes_nothing(case, message):
     (r,) = run_cases([case])
     assert not r["ok"] and message in r["error"] and "Nothing was changed" in r["error"]
-    assert r["body"] == "<h1>Shopping</h1><div>milk</div>"
+    assert r["body"] == (case.get("note") or {}).get("body", "<h1>Shopping</h1><div>milk</div>")
 
 
 def test_note_read_and_note_update_compute_the_same_hash():
@@ -75,3 +76,12 @@ def test_note_read_and_note_update_compute_the_same_hash():
         return subprocess.run(["osascript", "-l", "JavaScript", "-e", src, "[]"], capture_output=True, text=True, timeout=30).stdout.strip()
     a, b = hash_in("note_read.js"), hash_in("note_update.js")
     assert a == b and len(a) == 8
+
+
+def test_if_notes_cannot_answer_the_safety_checks_nothing_is_changed():
+    src = (OPS / "note_update.js").read_text().replace("function run(argv)", "function realRun(argv)") + HARNESS.replace(
+        "attachments: function () { return new Array(n._att); }", "attachments: function () { throw new Error('-1728'); }")
+    p = subprocess.run(["osascript", "-l", "JavaScript", "-e", src, json.dumps([{"args": {"id": "i", "title": "Shopping",
+                        "expected_hash": "CURRENT", "text": "x", "mode": "append"}}])], capture_output=True, text=True, timeout=30)
+    (r,) = json.loads(p.stdout)
+    assert not r["ok"] and "could not check the note for attachments" in r["error"] and r["body"] == "<h1>Shopping</h1><div>milk</div>"
