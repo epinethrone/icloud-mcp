@@ -560,6 +560,12 @@ class MailService:
         return (self.s.display_name, self.s.email_address)
 
     # -- reading ---------------------------------------------------------------
+    def health(self) -> dict[str, Any]:
+        """Sign in and open the inbox read-only: the cheapest proof that IMAP works with these credentials."""
+        with self.imap() as c:
+            info = c.select_folder("INBOX", readonly=True) or {}
+            return {"inbox_messages": info.get(b"EXISTS"), "can_move": bool(c.has_capability("MOVE") or c.has_capability("UIDPLUS"))}
+
     def list_folders(self) -> list[dict[str, Any]]:
         with self.imap() as c:
             out = []
