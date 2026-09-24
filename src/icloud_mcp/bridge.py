@@ -82,6 +82,8 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "drive_mkdir": {"path": ("str", True, 1000)},
     "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
     "drive_trash": {"path": ("str", True, 1000)},
+    # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
+    "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$")
