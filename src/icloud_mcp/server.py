@@ -26,7 +26,8 @@ from .cal import CalendarError, CalendarService
 from .config import Settings
 from .contacts import ContactsError, ContactsService
 from .safety import clean_deep, warnings_for
-from .mail import MailError, MailService
+from . import mailbulk
+from .mail import UNTRUSTED_NOTICE, MailError, MailService
 
 log = logging.getLogger("icloud_mcp")
 
@@ -441,6 +442,18 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
 
         @mcp.tool(annotations=_READ)
         @_guard
+        def mail_senders(
+            folder: Folder = "INBOX",
+            days: Annotated[int, _d("Look back this many days (default 30, max 365).")] = 30,
+            limit: Annotated[int, _d("How many senders to return, busiest first (default 20, max 100).")] = 20,
+        ) -> dict[str, Any]:
+            """Who fills a folder: senders grouped by address, busiest first, with message and unread counts, whether the mail is
+            bulk (newsletters, notifications, no-reply) and whether the sender can be unsubscribed from. Reads headers only. Use it
+            to find what to clean up; search results also mark bulk messages with 'bulk' and 'unsubscribe'."""
+            return {"notice": UNTRUSTED_NOTICE, **mailbulk.senders(mail, folder, days=days, limit=limit)}
+
+        @mcp.tool(annotations=_READ)
+        @_guard
         def mail_get_attachment(folder: Folder, uid: Uid, index: Annotated[int, _d("Attachment index from the message's attachments list (starts at 0).")],
                                 uidvalidity: UidValidity = None) -> dict[str, Any]:
             """Fetch one attachment by its index from mail_get_message. Text-like files are returned as text, other
@@ -552,6 +565,47 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             def mail_create_folder(name: Annotated[str, _d("Name of the new folder.")]) -> dict[str, Any]:
                 """Create a mail folder."""
                 return mail.create_folder(name)
+
+            @mcp.tool(annotations=_WRITE)
+            @_guard
+            def mail_bulk_action(
+                action: Annotated[str, _d("move, archive, trash (to the Trash, recoverable) or mark_read.")],
+                folder: Folder = "INBOX",
+                destination: Annotated[str | None, _d("Destination folder, only for action 'move'.")] = None,
+                from_address: Annotated[str | None, _d("Only messages from this address or name (partial match).")] = None,
+                subject: Annotated[str | None, _d("Only messages whose subject contains this.")] = None,
+                text: Annotated[str | None, _d("Only messages containing this text.")] = None,
+                since: Annotated[str | None, _d("Only messages on or after this date, YYYY-MM-DD.")] = None,
+                before: Annotated[str | None, _d("Only messages before this date, YYYY-MM-DD.")] = None,
+                unread: Annotated[bool | None, _d("true = only unread, false = only read.")] = None,
+                dry_run: Annotated[bool, _d("true (default) = only preview: count, sample and a confirm_token. Nothing changes.")] = True,
+                confirm_token: Annotated[str | None, _d("From the dry run; required when dry_run=false.")] = None,
+                max_messages: Annotated[int, _d("Handle at most this many, newest first (default 200, max 1000).")] = 200,
+            ) -> dict[str, Any]:
+                """Clean up many messages at once, safely, in two steps. First call with dry_run=true (the default): it returns how
+                many messages match, a sample, and a confirm_token. Show the user the count and sample; only then call again with
+                dry_run=false and that token. The token stands for exactly the previewed messages, so nothing that arrived since
+                is touched. Every run is logged and can be reversed with mail_bulk_undo. At least one filter is required, and
+                nothing is ever deleted permanently."""
+                return mailbulk.bulk_action(mail, folder, action, destination=destination, dry_run=dry_run, confirm_token=confirm_token,
+                                            max_messages=max_messages, from_=from_address, subject=subject, text=text, since=since,
+                                            before=before, unread=unread)
+
+            @mcp.tool(annotations=_WRITE)
+            @_guard
+            def mail_bulk_undo(action_id: Annotated[str, _d("The action_id returned by mail_bulk_action.")]) -> dict[str, Any]:
+                """Reverse a mail_bulk_action (up to 30 days later): moved or trashed messages go back to their folder, messages
+                marked read become unread again. Messages are found by Message-ID, so ones moved elsewhere since are skipped."""
+                return mailbulk.bulk_undo(mail, action_id)
+
+            @mcp.tool(annotations=_WRITE)
+            @_guard
+            def mail_unsubscribe(folder: Folder, uid: Uid, uidvalidity: UidValidity = None) -> dict[str, Any]:
+                """Unsubscribe from the mailing list a message came from, using its List-Unsubscribe header only: the standard
+                one-click request (RFC 8058), or an unsubscribe email (sent the normal way, so approval rules apply). Links in the
+                message body are never followed, unsubscribe web pages are only returned for the user to open, and mail in Junk
+                is refused. Only when the user asked to unsubscribe from this sender."""
+                return mailbulk.unsubscribe(mail, folder, uid, uidvalidity=uidvalidity)
 
     # -------------------------------------------------------------- calendar
     if s.enable_calendar:
