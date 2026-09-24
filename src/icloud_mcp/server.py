@@ -330,7 +330,19 @@ def apply_tool_filter(mcp: MCPServer, wanted: tuple[str, ...]) -> None:
             mcp.remove_tool(name)
 
 
-def _timed(check) -> dict[str, Any]:
+def redact_error(message: str, secrets: tuple[str, ...]) -> str:
+    """An error message fit for a tool result: known secrets and account addresses masked, URLs cut to their host (iCloud
+    DAV paths carry the numeric account id), and any remaining long digit runs removed."""
+    import re as _re
+
+    for secret in sorted({x for x in secrets if x and len(x) >= 4}, key=len, reverse=True):
+        message = message.replace(secret, "***")
+    message = _re.sub(r"\b(https?://[^/\s'\"]+)[^\s'\"]*", r"\1/…", message)
+    message = _re.sub(r"\d{6,}", "…", message)
+    return message[:300]
+
+
+def _timed(check, secrets: tuple[str, ...] = ()) -> dict[str, Any]:
     import time as _time
 
     t0 = _time.monotonic()
@@ -338,7 +350,7 @@ def _timed(check) -> dict[str, Any]:
         detail = check()
         return {"ok": True, "ms": int((_time.monotonic() - t0) * 1000), **(detail or {})}
     except Exception as e:  # noqa: BLE001 - a health check reports failures, it does not raise them
-        return {"ok": False, "ms": int((_time.monotonic() - t0) * 1000), "error": f"{type(e).__name__}: {e}"[:300]}
+        return {"ok": False, "ms": int((_time.monotonic() - t0) * 1000), "error": redact_error(f"{type(e).__name__}: {e}", secrets)}
 
 
 def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | None = None) -> None:
@@ -1016,7 +1028,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         """Check every enabled area in one call: signs in to mail (IMAP), lists calendars (CalDAV), reads the address book
         (CardDAV) and asks whether the Mac helper is online, with how long each took. Read-only. Use it when something
         fails, before telling the user a service is down."""
-        results = {area: _timed(check) for area, check in health.items()}
+        secrets = (s.app_password, s.owner_password, s.bridge_token, s.username, s.email_address,
+                   s.imap_username, s.smtp_username, s.caldav_username, s.carddav_username)
+        results = {area: _timed(check, secrets) for area, check in health.items()}
         return {"ok": all(r["ok"] for r in results.values()), "areas": results}
 
 def build_app(s: Settings, mcp: MCPServer):

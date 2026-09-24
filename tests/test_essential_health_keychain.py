@@ -113,3 +113,12 @@ def test_store_password_never_puts_the_password_on_the_command_line(monkeypatch,
     (argv,) = fake.calls
     assert argv[0] == "/usr/bin/security" and argv[1] == "add-generic-password" and argv[-1] == "-w"   # security prompts itself
     assert "Stored in the login Keychain" in capsys.readouterr().out
+
+
+def test_health_errors_never_carry_secrets_or_account_ids():
+    from icloud_mcp.server import redact_error
+    msg = ("AuthorizationError: 401 for https://p48-caldav.icloud.com/123456789/calendars/home/ as me@icloud.com "
+           "with aaaa-bbbb-cccc-dddd")
+    out = redact_error(msg, ("aaaa-bbbb-cccc-dddd", "me@icloud.com", ""))
+    assert "aaaa-bbbb" not in out and "me@icloud.com" not in out and "123456789" not in out
+    assert "https://p48-caldav.icloud.com/…" in out and out.startswith("AuthorizationError: 401")
