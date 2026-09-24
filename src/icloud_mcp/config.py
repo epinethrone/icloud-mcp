@@ -238,7 +238,7 @@ class Settings:
             ("MCP_OWNER_PASSWORD", "change-me" in self.owner_password.lower()),
             ("ICLOUD_APP_PASSWORD", "xxxx-xxxx" in self.app_password.lower()),
             ("ICLOUD_USERNAME", self.username.lower() == "you@icloud.com"),
-            ("MCP_PUBLIC_URL", "icloud-mcp.example.com" in self.public_url.lower()),
+            ("MCP_PUBLIC_URL", (urlparse(self.public_url).hostname or "") == "icloud-mcp.example.com"),
         ]
         self._refuse_placeholders(placeholders)
         if not self.public_url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
