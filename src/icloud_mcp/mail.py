@@ -686,6 +686,45 @@ class MailService:
                 "messages": self._summaries(c, folder, page, uv),
             }
 
+    def changes(self, folder: str = "INBOX", since: str | None = None, *, limit: int = 50) -> dict[str, Any]:
+        """What changed in a folder since a token from the previous call: new messages, and messages whose flags (read, flagged,
+        answered) changed. Uses IMAP CONDSTORE (a per-message change counter), so nothing is re-read. The token carries the
+        folder's uidvalidity; if the server renumbered the folder, the answer says to start over instead of guessing."""
+        limit = max(1, min(int(limit), 200))
+        with self.imap() as c:
+            folder = self.resolve_folder(c, folder)
+            with contextlib.suppress(Exception):          # iCloud applies ENABLE without sending ENABLED back
+                c.enable("CONDSTORE")
+            info = c.select_folder(folder, readonly=True) or {}
+            uv, modseq, uidnext = (info.get(b"UIDVALIDITY"), info.get(b"HIGHESTMODSEQ"), info.get(b"UIDNEXT"))
+            if modseq is None or uv is None or uidnext is None:
+                raise MailError("This mail server does not report changes (no CONDSTORE); use mail_search with since instead.")
+            token = f"v1:{int(uv)}:{int(modseq)}:{int(uidnext)}"
+            base = {"notice": UNTRUSTED_NOTICE, "folder": folder, "uidvalidity": int(uv), "token": token}
+            if not since:
+                unread = len(c.search(["UNSEEN"]))
+                return {**base, "first_call": True, "messages": info.get(b"EXISTS"), "unread": unread,
+                        "note": "Keep this token and pass it as 'since' next time to get only what changed."}
+            try:
+                version, old_uv, old_modseq, old_next = since.split(":")
+                assert version == "v1"
+                old_uv, old_modseq, old_next = int(old_uv), int(old_modseq), int(old_next)
+            except (ValueError, AssertionError) as e:
+                raise MailError("That token is not one this tool returned; call without 'since' to start.") from e
+            if old_uv != int(uv):
+                return {**base, "start_over": True, "note": "The server renumbered this folder since that token, so changes cannot be "
+                                                            "listed. Use this new token from now on and search the folder normally."}
+            new = sorted((u for u in c.search(["UID", f"{old_next}:*"]) if u >= old_next), reverse=True)
+            changed = sorted((u for u in c.search(["MODSEQ", str(old_modseq + 1)]) if u < old_next), reverse=True) \
+                if int(modseq) > old_modseq else []
+            out = {**base, "new_count": len(new), "changed_count": len(changed),
+                   "new": self._summaries(c, folder, new[:limit], int(uv)),
+                   "changed": [{k: m.get(k) for k in ("uid", "subject", "from", "date", "unread", "flagged", "answered")}
+                               for m in self._summaries(c, folder, changed[:limit], int(uv))]}
+            if len(new) > limit or len(changed) > limit:
+                out["note"] = f"Only the newest {limit} of each are listed; use mail_search for the rest."
+            return out
+
     def _search_everywhere(self, crit: list[Any], charset: str | None, limit: int, offset: int) -> dict[str, Any]:
         """The same search in every selectable folder, merged newest first. Mail rules and replies file messages away from
         the inbox; this finds them wherever they went. Each result names its folder and that folder's uidvalidity."""
