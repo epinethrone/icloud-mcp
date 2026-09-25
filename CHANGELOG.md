@@ -6,7 +6,7 @@ Update the Mac helper before the server whenever its version changes.
 ## Unreleased
 
 - **iCloud MCP Control**, a menu bar app for the Mac (`menubar/`): status, health, pause, restart and stop, owner passcode,
-  iCloud app-specific password and sign out all apps.
+  iCloud app-specific password, and the connected apps (which ones, when each was last used, sign out one or all).
 - Admin API for it, off unless `ADMIN_PORT` is set: loopback only, on its own port, token in `DATA_DIR/admin-token`.
 - Pause: while `DATA_DIR/paused` exists every tool except the diagnostics answers that the server is paused.
 - A passcode or app-specific password changed through the admin API is stored in `DATA_DIR/overrides.json` and takes

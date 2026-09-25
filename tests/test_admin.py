@@ -125,3 +125,21 @@ def test_admin_port_is_off_by_default_and_never_shares_a_port(s, monkeypatch):
     monkeypatch.setenv("ADMIN_PORT", "8000")
     with pytest.raises(SystemExit, match="ADMIN_PORT must differ"):
         Settings.from_env().validate_for_server()
+
+
+def test_connected_apps_are_listed_without_secrets_and_can_be_signed_out_one_at_a_time(s):
+    _, provider, token, app = served(s)
+    provider.clients["c1"] = {"client_id": "c1", "client_name": "Claude", "client_secret": "s3cret",
+                              "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"], "client_id_issued_at": 1790000000}
+    provider.clients["c2"] = {"client_id": "c2", "client_name": "Codex", "redirect_uris": ["http://127.0.0.1:50000/cb"]}
+    provider._issue("c1", ["icloud"], None)
+    provider._issue("c2", ["icloud"], None)
+    r = call(app, "GET", "/admin/v1/apps", token=token)
+    assert "s3cret" not in r.text
+    apps = {a["name"]: a for a in r.json()["apps"]}
+    assert apps["Claude"]["host"] == "claude.ai" and apps["Claude"]["connected_at"] == 1790000000 and apps["Claude"]["last_used"]
+    assert apps["Codex"]["host"] == "127.0.0.1"
+    assert call(app, "POST", "/admin/v1/apps/sign-out", token=token, json={"id": "c2"}).json() == {"signed_out": True}
+    assert [a["name"] for a in call(app, "GET", "/admin/v1/apps", token=token).json()["apps"]] == ["Claude"]
+    assert "c2" not in provider.clients and provider.connected_clients() == 1                   # the other app is untouched
+    assert call(app, "POST", "/admin/v1/apps/sign-out", token=token, json={"id": "c2"}).status_code == 404

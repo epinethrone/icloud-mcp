@@ -80,8 +80,26 @@ private struct SecurityPane: View {
     @Environment(Controller.self) private var controller
     @State private var showPasscode = false
     @State private var showAppPassword = false
-    @State private var confirmSignOut = false
-    @State private var signOutResult: String?
+    @State private var confirmSignOutAll = false
+    @State private var signingOut: ConnectedApp?
+    @State private var signingOutGroup: (name: String, apps: [ConnectedApp])?
+    @State private var message: String?
+
+    /// Apps with the same name and host (every Claude session signs in on its own) shown together.
+    private var groups: [(key: String, name: String, host: String, apps: [ConnectedApp])] {
+        var order: [String] = []
+        var byKey: [String: [ConnectedApp]] = [:]
+        for app in controller.apps {
+            let key = app.name + "|" + app.host
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(app)
+        }
+        return order.map { key in
+            let apps = byKey[key]!
+            let host = ["127.0.0.1", "localhost", "::1"].contains(apps[0].host) ? "This Mac" : apps[0].host
+            return (key, apps[0].name, host, apps)
+        }
+    }
 
     var body: some View {
         Form {
@@ -90,7 +108,7 @@ private struct SecurityPane: View {
                     Button("Change…") { showPasscode = true }
                 } label: {
                     Text("Owner Passcode")
-                    Text("Used to connect apps and to approve messages.")
+                    Text("Apps enter it when they connect. It also opens the approval page.")
                 }
                 LabeledContent {
                     Button("Replace…") { showAppPassword = true }
@@ -99,45 +117,137 @@ private struct SecurityPane: View {
                     Text("How the server signs in to your iCloud account.")
                 }
             }
+
             Section {
-                LabeledContent {
-                    Button("Sign Out All…", role: .destructive) { confirmSignOut = true }
-                        .disabled(controller.status == nil)
-                } label: {
-                    Text("Connected Apps")
-                    Text(signOutResult ?? connectedText)
+                if controller.apps.isEmpty {
+                    Text(controller.status == nil ? "Not available while the server is not responding." : "No apps are signed in.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(groups, id: \.key) { group in
+                    if group.apps.count == 1 {
+                        appRow(group.apps[0], title: group.name, detail: detail(group.apps[0], host: group.host))
+                    } else {
+                        DisclosureGroup {
+                            ForEach(group.apps) { app in
+                                appRow(app, title: used(app), detail: connected(app))
+                            }
+                            LabeledContent {
+                                Button("Sign Out All \(group.apps.count)…") { signingOutGroup = (group.name, group.apps) }
+                            } label: {
+                                Text("Every \(group.name) Session")
+                            }
+                        } label: {
+                            LabeledContent {
+                                Text("\(group.apps.count) sign-ins")
+                            } label: {
+                                Text(group.name)
+                                Text(group.host.isEmpty ? "Each session signs in separately." : "\(group.host) · each session signs in separately")
+                            }
+                        }
+                    }
+                }
+                if controller.apps.count > 1 {
+                    LabeledContent {
+                        Button("Sign Out All…", role: .destructive) { confirmSignOutAll = true }
+                    } label: {
+                        Text("Every App")
+                    }
+                }
+            } header: {
+                Text("Connected Apps")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let message { Text(message) }
+                    Text("A signed-out app can sign in again: connect it from the app itself and enter the owner passcode. To keep an app out for good, also change the passcode.")
+                    HStack(spacing: 16) {
+                        Link("Reconnect Claude", destination: URL(string: "https://claude.ai/settings/connectors")!)
+                        if let status = controller.status {
+                            Button("Copy Connector Address") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString("\(status.publicUrl)/mcp", forType: .string)
+                                message = "Copied \(status.publicUrl)/mcp."
+                            }
+                            .buttonStyle(.link)
+                        }
+                    }
                 }
             }
         }
         .formStyle(.grouped)
-        .scrollDisabled(true)
         .fixedSize(horizontal: false, vertical: true)
+        .frame(maxHeight: 560)
         .disabled(controller.status == nil)
+        .task { await controller.loadApps() }
         .sheet(isPresented: $showPasscode) { PasscodeSheet() }
         .sheet(isPresented: $showAppPassword) { AppPasswordSheet() }
-        .confirmationDialog("Sign out all apps?", isPresented: $confirmSignOut) {
-            Button("Sign Out All Apps", role: .destructive) {
+        .confirmationDialog("Sign out \(signingOut?.name ?? "this app")?", isPresented: Binding(
+            get: { signingOut != nil }, set: { if !$0 { signingOut = nil } }), presenting: signingOut) { app in
+            Button("Sign Out", role: .destructive) {
                 Task {
                     do {
-                        let n = try await controller.signOutAll()
-                        signOutResult = n == 1 ? "1 app was signed out." : "\(n) apps were signed out."
+                        try await controller.signOut(app)
+                        message = "\(app.name) was signed out."
                     } catch {
-                        signOutResult = error.localizedDescription
+                        message = error.localizedDescription
+                    }
+                }
+            }
+        } message: { app in
+            Text("\(app.name) loses access until it connects again with the owner passcode.")
+        }
+        .confirmationDialog("Sign out every \(signingOutGroup?.name ?? "") session?", isPresented: Binding(
+            get: { signingOutGroup != nil }, set: { if !$0 { signingOutGroup = nil } })) {
+            Button("Sign Out \(signingOutGroup?.apps.count ?? 0) Sessions", role: .destructive) {
+                guard let group = signingOutGroup else { return }
+                Task {
+                    do {
+                        for app in group.apps { try await controller.signOut(app) }
+                        message = "\(group.apps.count) \(group.name) sessions were signed out."
+                    } catch {
+                        message = error.localizedDescription
                     }
                 }
             }
         } message: {
-            Text("Claude and every other app connected to this server lose access until you reconnect them with the owner passcode. Scheduled agents that use it stop working until then.")
+            Text("They lose access until they connect again with the owner passcode.")
+        }
+        .confirmationDialog("Sign out all apps?", isPresented: $confirmSignOutAll) {
+            Button("Sign Out All Apps", role: .destructive) {
+                Task {
+                    do {
+                        let n = try await controller.signOutAll()
+                        message = n == 1 ? "1 app was signed out." : "\(n) apps were signed out."
+                    } catch {
+                        message = error.localizedDescription
+                    }
+                }
+            }
+        } message: {
+            Text("Claude and every other connected app lose access until you reconnect them with the owner passcode. Scheduled agents that use it stop working until then.")
         }
     }
 
-    private var connectedText: String {
-        guard let n = controller.status?.connectedApps else { return "Not available while the server is not responding." }
-        switch n {
-        case 0: return "No apps are signed in."
-        case 1: return "1 app is signed in."
-        default: return "\(n) apps are signed in."
+    private func appRow(_ app: ConnectedApp, title: String, detail: String) -> some View {
+        LabeledContent {
+            Button("Sign Out…") { signingOut = app }
+        } label: {
+            Text(title)
+            Text(detail)
         }
+    }
+
+    private func detail(_ app: ConnectedApp, host: String) -> String {
+        [host.isEmpty ? nil : host, connected(app), used(app)].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private func connected(_ app: ConnectedApp) -> String {
+        guard let t = app.connectedAt else { return "Connected earlier" }
+        return "Connected " + Date(timeIntervalSince1970: TimeInterval(t)).formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func used(_ app: ConnectedApp) -> String {
+        guard let t = app.lastUsed else { return "Not used recently" }
+        return "Used " + Date(timeIntervalSince1970: TimeInterval(t)).formatted(.relative(presentation: .named))
     }
 }
 
@@ -161,12 +271,13 @@ private struct PasscodeSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Change Owner Passcode")
                 .font(.headline)
-            Form {
-                SecureField("New Passcode", text: $passcode)
-                SecureField("Confirm", text: $confirm)
+            VStack(alignment: .leading, spacing: 10) {
+                SecureField("New passcode", text: $passcode)
+                SecureField("Confirm passcode", text: $confirm)
                 Toggle("Also sign out all apps", isOn: $signOut)
+                    .toggleStyle(.checkbox)
             }
-            .formStyle(.grouped)
+            .textFieldStyle(.roundedBorder)
             .disabled(working)
             Text(error ?? problem ?? (signOut
                 ? "Every app has to reconnect with the new passcode."
@@ -236,11 +347,9 @@ private struct AppPasswordSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Link("Open Apple Account", destination: URL(string: "https://account.apple.com")!)
-                Form {
-                    SecureField("New Password", text: $password, prompt: Text("xxxx-xxxx-xxxx-xxxx"))
-                }
-                .formStyle(.grouped)
-                .disabled(working)
+                SecureField("New password", text: $password, prompt: Text("xxxx-xxxx-xxxx-xxxx"))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(working)
                 if let error {
                     Text(error)
                         .font(.callout)

@@ -1,4 +1,5 @@
-"""The owner's admin API, for the menu bar app: status, health, pause, sign out all apps, and changing the owner passcode or the
+"""The owner's admin API, for the menu bar app: status, health, pause, the connected apps (list, sign out one or all), and
+changing the owner passcode or the
 iCloud app-specific password.
 
 It is a separate listener on 127.0.0.1:ADMIN_PORT (off unless ADMIN_PORT is set), never mounted on the public app, so a tunnel
@@ -164,6 +165,19 @@ def build_admin_app(s: Settings, mcp: Any, provider: Any, token: str, *, exit_fn
             return JSONResponse({"error": "no sign-ins on this server"}, status_code=400)
         return JSONResponse({"signed_out": provider.sign_out_all()})
 
+    async def apps(request: Request) -> JSONResponse:
+        if r := refuse(request):
+            return r
+        return JSONResponse({"apps": provider.connected_apps() if provider is not None else []})
+
+    async def sign_out_one(request: Request) -> JSONResponse:
+        if r := refuse(request):
+            return r
+        client_id = str((await body(request)).get("id", ""))
+        if provider is None or not client_id or not provider.sign_out(client_id):
+            return JSONResponse({"error": "That app is not signed in."}, status_code=404)
+        return JSONResponse({"signed_out": True})
+
     async def owner_passcode(request: Request) -> JSONResponse:
         if r := refuse(request):
             return r
@@ -204,6 +218,8 @@ def build_admin_app(s: Settings, mcp: Any, provider: Any, token: str, *, exit_fn
         Route("/admin/v1/health", health, methods=["GET"]),
         Route("/admin/v1/pause", pause, methods=["POST"]),
         Route("/admin/v1/sign-out-all", sign_out_all, methods=["POST"]),
+        Route("/admin/v1/apps", apps, methods=["GET"]),
+        Route("/admin/v1/apps/sign-out", sign_out_one, methods=["POST"]),
         Route("/admin/v1/owner-passcode", owner_passcode, methods=["POST"]),
         Route("/admin/v1/app-password", app_password, methods=["POST"]),
         Route("/admin/v1/restart", restart, methods=["POST"]),

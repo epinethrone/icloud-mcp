@@ -23,6 +23,15 @@ struct ServerStatus: Decodable, Equatable, Sendable {
     let overridesActive: [String]
 }
 
+/// One app signed in to the server (GET /admin/v1/apps). Metadata only: the server never returns tokens or secrets.
+struct ConnectedApp: Decodable, Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let host: String
+    let connectedAt: Int?
+    let lastUsed: Int?
+}
+
 /// The result of the server's own health check (GET /admin/v1/health).
 struct HealthReport: Decodable, Equatable, Sendable {
     struct Area: Decodable, Equatable, Sendable {
@@ -121,6 +130,15 @@ struct AdminClient: Sendable {
     func signOutAll() async throws -> Int {
         let data = try await request("POST", "sign-out-all")
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["signed_out"] as? Int ?? 0
+    }
+
+    func apps() async throws -> [ConnectedApp] {
+        struct Answer: Decodable { let apps: [ConnectedApp] }
+        return try Self.decoder.decode(Answer.self, from: try await request("GET", "apps")).apps
+    }
+
+    func signOut(appID: String) async throws {
+        _ = try await request("POST", "apps/sign-out", body: ["id": appID])
     }
 
     func setOwnerPasscode(_ passcode: String) async throws {

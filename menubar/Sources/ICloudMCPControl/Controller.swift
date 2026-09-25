@@ -55,6 +55,7 @@ final class Controller {
     private(set) var health: HealthReport?
     private(set) var healthCheckedAt: Date?
     private(set) var busy: String?
+    private(set) var apps: [ConnectedApp] = []
     var lastError: String?
 
     private let defaults = UserDefaults.standard
@@ -270,8 +271,19 @@ final class Controller {
 
     func signOutAll() async throws -> Int {
         let n = try await client.signOutAll()
+        await loadApps()
         await refresh()
         return n
+    }
+
+    func loadApps() async {
+        apps = (try? await client.apps()) ?? []
+    }
+
+    func signOut(_ app: ConnectedApp) async throws {
+        try await client.signOut(appID: app.id)
+        await loadApps()
+        await refresh()
     }
 
     /// Saves the passcode, optionally signs every app out, and restarts the server so the new passcode applies.
