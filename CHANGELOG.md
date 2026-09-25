@@ -3,7 +3,7 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
-## Unreleased
+## 0.11.0
 
 - **iCloud MCP Control**, a menu bar app for the Mac (`menubar/`): status, health, pause, restart and stop, owner passcode,
   iCloud app-specific password, and the connected apps (which ones, when each was last used, sign out one or all).
