@@ -37,7 +37,7 @@ from . import callctx
 from .config import Settings
 from .keepalive import TICKER
 from .matching import fuzzy_match_all, norm, similar_enough
-from .safety import compact, confirm_problem, warnings_for
+from .safety import HIDDEN_TEXT_WARNING, compact, confirm_problem, strip_hidden_html, warnings_for
 from .safety import confirm_token as make_confirm_token
 from .mailbulk import bulk_view
 from . import mailparts
@@ -165,7 +165,13 @@ def _safe_content(part: email.message.Message) -> str:
             return payload.decode("utf-8", errors="replace")
 
 
+def _names(msg: Any) -> str:
+    """The display names in From, Reply-To and To: text an attacker controls that the body checks would miss."""
+    return " ".join(n for n, _ in parse_addrs(msg.get_all("From", []) + msg.get_all("Reply-To", []) + msg.get_all("To", [])) if n)
+
+
 def html_to_text(html: str) -> str:
+    html, _ = strip_hidden_html(html)
     h = html2text.HTML2Text()
     h.ignore_images = True
     h.body_width = 0
@@ -882,8 +888,17 @@ class MailService:
                     "has_attachments": has_att,
                     **_flag_view(d.get(b"FLAGS", ())),
                     **bulk_view(hdr),
+                    "safety_warnings": warnings_for(_hdr(hdr, "Subject"), _names(hdr)),   # a subject or display name can carry it too
                 }, keep=("uid", "folder", "subject", "from", "date", "unread", "flagged")))   # empty fields left out
         return out
+
+    def _floor_since(self, since: str | None) -> str | None:
+        """MAIL_MAX_AGE_DAYS: a search never reaches further back than the owner allows (the task-scoped access the guidance asks
+        for: an agent reading today's mail has no business in ten years of archive)."""
+        if not self.s.mail_max_age_days:
+            return since
+        floor = (date.today() - timedelta(days=self.s.mail_max_age_days)).isoformat()
+        return floor if since is None or since < floor else since
 
     @_retrying
     def search(
@@ -913,6 +928,7 @@ class MailService:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=int(since_hours))
             day = (cutoff - timedelta(days=1)).date()                     # IMAP SINCE is a whole day; the exact hour is checked below
             since = max(since, day.isoformat()) if since else day.isoformat()
+        since = self._floor_since(since)
         crit, charset = self.criteria(from_=from_, to=to, subject=subject, text=text, since=since, before=before, unread=unread,
                                       flagged=flagged, message_id=message_id, unanswered=unanswered_only)
         limit = max(1, min(int(limit), 100))
@@ -1181,13 +1197,14 @@ class MailService:
             "date": _iso_date(msg, internal),
             "text": text,
             "text_truncated": truncated,
-            **({"safety_warnings": w} if (w := warnings_for(_hdr(msg, "Subject"), text if text is not None else
-                                                           (html_to_text(htm) if htm else None))) else {}),
+            **({"safety_warnings": w} if (w := warnings_for(_hdr(msg, "Subject"), _names(msg), text if text is not None else
+                                                           (html_to_text(htm) if htm else None))
+                                          + ([HIDDEN_TEXT_WARNING] if htm and strip_hidden_html(htm)[1] else [])) else {}),
             "attachments": list_attachments(msg),
             **_flag_view(flags),
         }
         if include_html and htm is not None:
-            out["html"] = htm[: body_chars * 2]
+            out["html"] = strip_hidden_html(htm)[0][: body_chars * 2]
         return out
 
     @_retrying
@@ -1541,7 +1558,29 @@ class MailService:
             "from": str(msg["From"]), "to": str(msg["To"] or ""), "cc": str(msg["Cc"] or ""), "bcc": str(msg["Bcc"] or ""),
             "envelope_recipients": q.recipients, "subject": str(msg["Subject"] or ""), "body": body,
             "attachments": list_attachments(msg), "is_reply": bool(msg["In-Reply-To"]),
+            **self._approval_context(q),
         }
+
+    def _approval_context(self, q: QueuedMessage) -> dict[str, Any]:
+        """What the owner needs to judge an injected message: the message this one answers or forwards (its sender, subject and
+        the warnings its text carried) and any recipient whose address an agent added to a contact card. Best effort: a
+        failure to read the original never hides the queued item."""
+        out: dict[str, Any] = {}
+        fu = q.followup or {}
+        if fu.get("folder") and fu.get("uid"):
+            try:
+                with self.imap() as c:
+                    folder = self.resolve_folder(c, str(fu["folder"]))
+                    raw, flags, internal, uv = self._fetch_raw(c, folder, int(fu["uid"]), uidvalidity=fu.get("uidvalidity"))
+                view = self._message_view(folder, int(fu["uid"]), raw, flags, internal, body_chars=2000, uidvalidity=uv)
+                out["original"] = {k: view.get(k) for k in ("from", "subject", "date", "safety_warnings", "bulk") if view.get(k)}
+            except Exception as e:  # noqa: BLE001
+                out["original"] = {"unavailable": f"{type(e).__name__}"}
+        from .agentlog import agent_added_addresses
+        flagged = [r for r in q.recipients if r.lower() in agent_added_addresses(self.s.data_dir)]
+        if flagged:
+            out["agent_added_recipients"] = flagged
+        return out
 
     def release(self, item_id: str) -> dict[str, Any]:
         """Send a queued message. Called only from the password-protected approval page, never from an MCP tool."""

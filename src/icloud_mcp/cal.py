@@ -1385,9 +1385,25 @@ class CalendarService:
                 return comp
         return preferred
 
-    def _refuse_invites(self, *, attendees_given: bool = False, existing=None) -> None:
+    def _check_guests(self, addresses: list[str]) -> None:
+        """With invites on, INVITE_ALLOWLIST and MAX_ATTENDEES bound whom an event may reach (the calendar is an outbound channel
+        like mail: an invitation carries the event's text to every guest)."""
+        from .mail import recipient_allowed
+
+        own = {a.lower() for a in self.s.own_addresses}   # the account address, the Apple ID, the mail logins and OWNER_ADDRESSES
+        guests = [a for a in dict.fromkeys(x.lower() for x in addresses) if a not in own]
+        if len(guests) > self.s.max_attendees:
+            raise CalendarError(f"Too many attendees ({len(guests)}); this server allows at most MAX_ATTENDEES={self.s.max_attendees}.")
+        blocked = [a for a in guests if not recipient_allowed(a, self.s.invite_allowlist)]
+        if blocked:
+            raise CalendarError("Blocked: these addresses are not on this server's INVITE_ALLOWLIST, so they cannot be invited: "
+                                + ", ".join(sorted(blocked)) + ". Ask the owner to add them or to invite them in the Calendar app.")
+
+    def _refuse_invites(self, *, attendees_given: bool = False, existing=None, addresses: list[str] | None = None) -> None:
         """Attendee changes make iCloud email other people, which would bypass the mail approval gate."""
         if self.s.allow_calendar_invites:
+            if addresses:
+                self._check_guests(addresses)
             return
         if attendees_given or (existing is not None and existing.get("attendee")):
             raise CalendarError(
@@ -1415,7 +1431,7 @@ class CalendarService:
     ) -> dict[str, Any]:
         if on_conflict not in ("warn", "refuse") or on_duplicate not in ("warn", "refuse"):
             raise CalendarError("on_conflict and on_duplicate must be 'warn' or 'refuse'.")
-        self._refuse_invites(attendees_given=bool(attendees))
+        self._refuse_invites(attendees_given=bool(attendees), addresses=[a for _, a in parse_attendees(attendees or [])])
         tz = get_tz(timezone_name or self.s.default_timezone)
         fixed_uid = retry_uid(self.s.username, request_id) if request_id else None
         uid, ical = build_event(
@@ -1526,7 +1542,8 @@ class CalendarService:
                 current = [a for a in (_attendee_email(x) for x in _as_list(ev.get("attendee")))
                            if a and a not in gone and a not in self.s.own_addresses]
                 attendees = list(dict.fromkeys(current + [a for _, a in parse_attendees(add_attendees or []) if a.lower() not in gone]))
-            self._refuse_invites(attendees_given=bool(attendees) or attendees == [], existing=self._guests(parsed, ev))
+            self._refuse_invites(attendees_given=bool(attendees) or attendees == [], existing=self._guests(parsed, ev),
+                                 addresses=[a for _, a in parse_attendees(attendees or [])])
 
             if start is not None or end is not None:
                 old_start = ev.get("dtstart").dt
@@ -1718,6 +1735,8 @@ class CalendarService:
             else:
                 ev = self._master(parsed)
             organizer = _attendee_email(ev["organizer"]) if ev.get("organizer") is not None else None
+            if self.s.invite_allowlist and organizer:
+                self._check_guests([organizer.removeprefix('mailto:').removeprefix('MAILTO:')])
             if organizer and organizer in own:
                 raise CalendarError("You are the organizer of this event; there is nothing to answer.")
             mine = [a for a in _as_list(ev.get("attendee")) if _attendee_email(a) in own]

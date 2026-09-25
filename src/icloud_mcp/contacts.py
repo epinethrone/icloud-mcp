@@ -22,8 +22,9 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
-from . import callctx
+from . import agentlog, callctx
 from .config import Settings
+from .safety import warnings_for
 from .matching import fuzzy_match_all, norm as _norm_shared
 
 log = logging.getLogger(__name__)
@@ -269,6 +270,13 @@ def next_birthday(month: int, day: int, today: date) -> date:
 
 def _brief(c: dict[str, Any]) -> dict[str, Any]:
     return {k: c[k] for k in ("uid", "name", "nickname", "organization", "job_title", "emails", "phones", "has_email")}
+
+
+def _card_warnings(c: dict[str, Any]) -> list[str]:
+    """A vCard is third-party text too (a card made from a signature, a shared contact): screen the fields agents read."""
+    labels = [str(e.get("label") or "") for e in c.get("emails") or [] if isinstance(e, dict)]
+    return warnings_for(str(c.get("name") or ""), str(c.get("nickname") or ""), str(c.get("organization") or ""),
+                        str(c.get("job_title") or ""), " ".join(labels))
 
 
 _CONTROL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")          # every control character except the newline, which is escaped below
@@ -709,7 +717,8 @@ class ContactsService:
         limit = max(1, min(int(limit), _MAX_LIMIT))
         offset = max(0, int(offset))
         groups = self._membership()
-        page = [{**_brief(c), **({"groups": groups[c["uid"]]} if c["uid"] in groups else {})} for c in hits[offset:offset + limit]]
+        page = [{**_brief(c), **({"groups": groups[c["uid"]]} if c["uid"] in groups else {}), **self._marks(c)}
+                for c in hits[offset:offset + limit]]
         out: dict[str, Any] = {"notice": UNTRUSTED_NOTICE, "total_matches": len(hits), "offset": offset, "returned": len(page), "contacts": page,
                                "complete": True}                    # the whole address book was read
         if not hits and tokens:
@@ -764,9 +773,20 @@ class ContactsService:
                 d = {k: v for k, v in c.items() if not k.startswith("_")}
                 if groups := self._membership().get(uid):
                     d["groups"] = groups
+                d.update(self._marks(c))
                 d["notice"] = UNTRUSTED_NOTICE
                 return d
         raise ContactsError(f"No contact with uid '{uid}'. Use contacts_search to find the uid.")
+
+    def _marks(self, c: dict[str, Any]) -> dict[str, Any]:
+        """Per-card provenance an agent should see: warnings in the card's text, and addresses an agent itself added."""
+        out: dict[str, Any] = {}
+        if w := _card_warnings(c):
+            out["safety_warnings"] = w
+        if added := agentlog.agent_added(self.s.data_dir, c["uid"]):
+            out["agent_added"] = added
+            out["agent_added_note"] = "An agent added these addresses recently; confirm with the owner before mailing them."
+        return out
 
     def _record(self, uid: str) -> dict[str, Any]:
         for c in self._people():
@@ -901,6 +921,10 @@ class ContactsService:
                **updates: Any) -> dict[str, Any]:
         if (add_emails and updates.get("emails") is not None) or (add_phones and updates.get("phones") is not None):
             raise ContactsError("Use emails/phones (the complete list) or add_emails/add_phones, not both for the same field.")
+        touches = bool(add_emails or add_phones or updates.get("emails") is not None or updates.get("phones") is not None)
+        if touches and not self.s.contacts_allow_email_changes:
+            raise ContactsError("Blocked: changing a contact's email addresses or phone numbers is disabled on this server "
+                                "(CONTACTS_ALLOW_EMAIL_CHANGES=false). Tell the owner the address so they can add it themselves.")
         with self._lock:
             record = self._record(uid)
             with self._client() as client:
@@ -914,12 +938,14 @@ class ContactsService:
                 new_raw = raw
                 if add_emails or add_phones:
                     new_raw, added = _append_vcard_items(new_raw, add_emails, add_phones)
+                changed_addresses = list(added) + [str(x) for x in (updates.get("emails") or [])] + [str(x) for x in (updates.get("phones") or [])]
                 if any(v is not None for v in updates.values()):
                     new_raw = _replace_vcard_fields(new_raw, **updates)
                 elif not added:
                     return {"updated": False, "uid": uid, "name": record["name"],
                             "note": "Everything given is already on this contact, so nothing was changed."}
                 response = self._mutate(client, "PUT", record["_href"], data=new_raw, etag=etag)
+                agentlog.record(self.s.data_dir, uid, changed_addresses)
                 card = parse_vcard(new_raw)
                 if card:
                     card.update(_href=record["_href"], _etag=response.headers.get("etag"), _book=record.get("_book"))

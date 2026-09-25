@@ -13,10 +13,23 @@ from __future__ import annotations
 
 import hashlib as _hashlib
 import hmac as _hmac
+import json as _json
+from html.parser import HTMLParser as _HTMLParser
+import logging
 import re
 import secrets as _secrets
+import subprocess as _subprocess
+import threading as _threading
 import time as _time
+from collections import Counter
 from typing import Any
+
+log = logging.getLogger("icloud_mcp.safety")
+
+# Monitoring: how often each warning fired since the server started (pattern ids only, never text). Read by icloud_check_health.
+STATS: Counter = Counter()
+_STATS_LOCK = _threading.Lock()
+_SCREEN_COMMAND: str | None = None   # set by configure_screen(); None = built-in patterns only
 
 _INVISIBLE = re.compile(
     "[­᠎​‪-‮⁠-⁤⁦-⁩﻿\U000e0000-\U000e007f]"
@@ -46,6 +59,149 @@ _WARNINGS: list[tuple[re.Pattern[str], str]] = [
 def clean(value: str) -> str:
     """The text with invisible steering characters removed."""
     return _INVISIBLE.sub("", value)
+
+
+# ------------------------------------------------------------------------------------------- text a human reader cannot see
+# HTML mail can carry text that never renders: hidden elements, zero-size fonts, HTML comments. A reader does not see it, a model
+# converting the HTML to text does, which is exactly where instructions get hidden. Those parts are removed before conversion;
+# colour tricks (white on white) cannot be judged without rendering and are left in place.
+_HIDDEN_STYLE = re.compile(r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:\.0+)?(?:px|pt|em|rem|%)?)\s*(?:;|$)", re.I)
+_VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+
+def _is_hidden(attrs: list[tuple[str, str | None]]) -> bool:
+    for name, value in attrs:
+        if name.lower() == "hidden":
+            return True
+        if name.lower() == "style" and value and _HIDDEN_STYLE.search(value.replace("\n", " ")):
+            return True
+    return False
+
+
+class _HiddenStripper(_HTMLParser):
+    """Rebuilds the document without hidden subtrees and comments. A real parser, not a regex: a hidden <div> that contains
+    another <div> stays hidden to its own closing tag, so nested markup cannot end the hidden region early."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.out: list[str] = []
+        self.hidden: list[str] = []       # open hidden elements, innermost last; while non-empty, everything is dropped
+        self.depth: list[str] = []        # open elements inside the outermost hidden one, to find its closing tag
+        self.removed = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.hidden:
+            if tag not in _VOID:
+                self.depth.append(tag)
+            return
+        if _is_hidden(attrs) and tag not in _VOID:
+            self.hidden.append(tag)
+            self.removed = True
+            return
+        self.out.append(self.get_starttag_text() or "")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.hidden:
+            return
+        if _is_hidden(attrs):
+            self.removed = True
+            return
+        self.out.append(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.hidden:
+            if self.depth and self.depth[-1] == tag:
+                self.depth.pop()
+            elif not self.depth and self.hidden[-1] == tag:
+                self.hidden.pop()
+            elif tag in self.depth:                        # a mis-nested close: unwind to it
+                while self.depth and self.depth.pop() != tag:
+                    pass
+            return
+        self.out.append(f"</{tag}>")
+
+    def _keep(self, text: str) -> None:
+        if not self.hidden:
+            self.out.append(text)
+
+    def handle_data(self, data: str) -> None:
+        self._keep(data)
+
+    def handle_entityref(self, name: str) -> None:
+        self._keep(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self._keep(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        self.removed = True                            # comments never render; dropped everywhere
+
+    def handle_decl(self, decl: str) -> None:
+        self._keep(f"<!{decl}>")
+
+    def handle_pi(self, data: str) -> None:
+        self._keep(f"<?{data}>")
+
+
+def strip_hidden_html(html: str) -> tuple[str, bool]:
+    """(html without the parts a reader cannot see, whether anything was removed): hidden elements with everything inside
+    them, and comments. Bounded: a document over 2 MB is left as is. If the parser fails, the original is returned unchanged
+    and flagged, so a broken document is never silently trusted more than a clean one."""
+    if not html or len(html) > 2_000_000:
+        return html, False
+    p = _HiddenStripper()
+    try:
+        p.feed(html)
+        p.close()
+    except Exception:  # noqa: BLE001 - html.parser is lenient, but a pathological document must not take the mail down
+        return html, True
+    return "".join(p.out), p.removed
+
+
+HIDDEN_TEXT_WARNING = "It contained text hidden from a human reader (removed before conversion); that is how instructions are smuggled past the person."
+
+
+def configure_screen(setting: str) -> None:
+    """SAFETY_SCREEN: '' keeps the built-in patterns; 'command:<path>' adds the owner's own classifier, a program that reads the
+    text on stdin and prints JSON with a boolean 'injection_suspected'. Nothing leaves the server unless the owner's program
+    sends it somewhere, which is their choice and their configuration."""
+    global _SCREEN_COMMAND
+    setting = (setting or "").strip()
+    if not setting:
+        _SCREEN_COMMAND = None
+    elif setting.startswith("command:") and setting[8:].strip():
+        _SCREEN_COMMAND = setting[8:].strip()
+    else:
+        raise SystemExit("SAFETY_SCREEN must be empty or 'command:<path to a program>'.")
+
+
+SCREEN_WARNING = "The owner's screening program judged this text a likely attempt to steer an AI."
+SCREEN_FAILED_WARNING = "The owner's screening program could not judge this text (it failed or timed out)."
+
+
+def _run_screen(text: str) -> str | None:
+    if _SCREEN_COMMAND is None:
+        return None
+    try:
+        r = _subprocess.run([_SCREEN_COMMAND], input=text[:200_000].encode("utf-8", "replace"), capture_output=True, timeout=8)
+        verdict = _json.loads(r.stdout.decode("utf-8", "replace") or "{}")
+        if r.returncode != 0 or not isinstance(verdict, dict) or not isinstance(verdict.get("injection_suspected"), bool):
+            raise ValueError("bad verdict")
+    except (OSError, ValueError, _subprocess.TimeoutExpired) as e:
+        log.warning("safety screen failed: %s", type(e).__name__)
+        return SCREEN_FAILED_WARNING
+    return SCREEN_WARNING if verdict["injection_suspected"] else None
+
+
+def _count(key: str) -> None:
+    with _STATS_LOCK:
+        STATS[key] += 1
+    log.info("safety: warning %s", key)          # the id only: the text and its sender stay out of the log
+
+
+def stats() -> dict[str, int]:
+    with _STATS_LOCK:
+        return dict(STATS)
 
 
 _BASE64 = re.compile(r"[A-Za-z0-9+/=\r\n]*")
@@ -82,8 +238,15 @@ def warnings_for(*texts: str | None) -> list[str]:
     out = []
     if _INVISIBLE.search(joined):
         out.append("It contained hidden characters (removed), which is how instructions are smuggled past a reader.")
+        _count("invisible_characters")
     visible = clean(joined)
-    out += [msg for pattern, msg in _WARNINGS if pattern.search(visible)]
+    for i, (pattern, msg) in enumerate(_WARNINGS):
+        if pattern.search(visible):
+            out.append(msg)
+            _count(f"pattern_{i}")
+    if (screened := _run_screen(visible)) is not None:
+        out.append(screened)
+        _count("screen_flagged" if screened == SCREEN_WARNING else "screen_failed")
     return out
 
 

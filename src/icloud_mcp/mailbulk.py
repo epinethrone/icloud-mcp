@@ -264,6 +264,7 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
         raise _MailError("give at least one filter (from_address, subject, text, since, before, unread, flagged): "
                          "a bulk action on a whole folder is refused.")
     limit = max(1, min(int(max_messages), MAX_BULK))
+    filters["since"] = mail._floor_since(filters.get("since"))
     crit, charset = mail.criteria(**filters)
     with mail.imap() as c:
         src = mail.resolve_folder(c, folder)

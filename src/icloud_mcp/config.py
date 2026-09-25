@@ -133,6 +133,11 @@ class Settings:
     warmup_on_start: bool = True  # WARMUP_ON_START: log in to mail, calendar and contacts in the background right after start
     tool_workers: int = 8         # TOOL_WORKERS: threads that run tool calls, so parallel calls do not queue behind each other
     agent_notes_file: str = ""    # AGENT_NOTES_FILE: the owner's own rules for agents, appended to the instructions (never shipped)
+    invite_allowlist: tuple[str, ...] = ()   # INVITE_ALLOWLIST: addresses/domains that may be invited when invites are on (empty = anyone)
+    max_attendees: int = 10                 # MAX_ATTENDEES: most guests one event may carry through the connector
+    contacts_allow_email_changes: bool = True  # CONTACTS_ALLOW_EMAIL_CHANGES: false = agents cannot add or replace emails/phones on cards
+    mail_max_age_days: int = 0              # MAIL_MAX_AGE_DAYS: 0 = whole mailbox; N = searches never reach further back than N days
+    safety_screen: str = ""                 # SAFETY_SCREEN: "" (built-in patterns) or "command:<path>" (the owner's own classifier)
     owner_addresses: tuple[str, ...] = ()   # OWNER_ADDRESSES: more addresses that are the owner's (aliases), e.g. on invitations
     shortcuts_allow: tuple[str, ...] = ()   # SHORTCUTS_ALLOW: exact Shortcut names the assistant may run (the Mac keeps its own list too)
 
@@ -214,6 +219,11 @@ class Settings:
             warmup_on_start=_bool("WARMUP_ON_START", True),
             tool_workers=max(2, min(_int("TOOL_WORKERS", 8), 32)),
             agent_notes_file=_str("AGENT_NOTES_FILE"),
+            invite_allowlist=tuple(x.lower() for x in _list("INVITE_ALLOWLIST")),
+            max_attendees=max(1, _int("MAX_ATTENDEES", 10)),
+            contacts_allow_email_changes=_bool("CONTACTS_ALLOW_EMAIL_CHANGES", True),
+            mail_max_age_days=max(0, _int("MAIL_MAX_AGE_DAYS", 0)),
+            safety_screen=_str("SAFETY_SCREEN"),
             owner_addresses=tuple(a.strip().lower() for a in _list("OWNER_ADDRESSES") if a.strip()),
             shortcuts_allow=tuple(n.strip() for n in _str("SHORTCUTS_ALLOW").split(";" if ";" in _str("SHORTCUTS_ALLOW") else ",") if n.strip()),
         )
