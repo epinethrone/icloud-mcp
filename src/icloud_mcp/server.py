@@ -30,6 +30,7 @@ from .auth import SCOPE, OwnerOAuthProvider, register_routes
 from .bridge import BridgeError, MacBridge, build_bridge_app, ensure_tls, start_bridge_listener
 from .cal import CalendarError, CalendarService, get_tz, too_frequent
 from .imessage import IMessageError, IMessageService
+from .outbox import Outbox
 from .config import Settings
 from .contacts import ContactsError, ContactsService
 from .instructions import build_instructions, read_agent_notes
@@ -459,6 +460,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     warm: dict[str, Any] = {}                   # area -> zero-argument warm-up, run in the background at start (WARMUP_ON_START)
     pools: dict[str, Any] = {}                  # area -> zero-argument view of its kept connections, for the health check
     mcp._icloud_warmups = warm
+    approval = {"mail": None, "imessage": None, "imessage_outbox": None}   # what the owner's /outbox page serves, if anything
 
     # ------------------------------------------------------------------ mail
     if s.enable_mail:
@@ -468,7 +470,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         pools["mail"] = lambda: {"warm": bool(mail._pool), "imap_kept": len(mail._pool), "imap_pool_size": s.imap_pool_size,
                                  "smtp_connected": mail._smtp is not None}
         if s.allow_send and writable and s.require_approval and provider is not None:
-            register_outbox_routes(mcp, provider, s, mail)
+            approval["mail"] = mail
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -1438,6 +1440,24 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 """Search the text of the owner's iMessage and SMS history, newest first, with each match's conversation."""
                 return messages.search(query, chat_id=chat_id, limit=limit, since=since, before=before)
 
+            if s.imessage_allow_send and writable:
+                messages_outbox = None
+                if s.imessage_send_requires_approval and not s.local_mode and provider is not None:
+                    messages_outbox = Outbox(s.data_dir, s.outbox_ttl, s.outbox_max, filename="imessage-outbox.json")
+                    approval.update(imessage=messages, imessage_outbox=messages_outbox)
+
+                @mcp.tool(annotations=_WRITE)
+                @_guard
+                def imessage_send_message(
+                    text: Annotated[str, _d("The message.")],
+                    chat_id: Annotated[str | None, _d("An existing conversation, from imessage_list_chats.")] = None,
+                    handle: Annotated[str | None, _d("Or a new one: an email or +number (iMessage only).")] = None,
+                ) -> dict[str, Any]:
+                    """Send an iMessage from the owner's Mac, only to a conversation or person the owner named in this
+                    conversation. It waits for the owner's approval unless they turned that off: status queued_for_owner_approval
+                    means NOT sent. Only people on the owner's allowlist can receive one; the owner's own assistant never can."""
+                    return messages.send(text, chat_id=chat_id, handle=handle, outbox=messages_outbox, public_url=s.public_url)
+
         if s.enable_maps:
             _maps_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}
 
@@ -1605,6 +1625,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 results[area]["connections"] = view
         return {"ok": all(r["ok"] for r in results.values()), "since_start_seconds": round(time.monotonic() - _STARTED),
                 "areas": results}
+
+    if (approval["mail"] or approval["imessage_outbox"]) and provider is not None:
+        register_outbox_routes(mcp, provider, s, approval["mail"], approval["imessage"], approval["imessage_outbox"])
 
 def build_app(s: Settings, mcp: MCPServer):
     """The ASGI app exactly as served in production (used by main() and by the tests)."""

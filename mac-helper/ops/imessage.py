@@ -1,4 +1,4 @@
-"""iMessage for icloud-mac-helper: read and search the owner's own Messages history, read-only.
+"""iMessage for icloud-mac-helper: read and search the owner's own Messages history (read-only), and send through Messages.
 
 Run by the helper as `python3 -I imessage.py <op> '<json args>'` with Apple's Python 3.9 and the standard library only. It opens one
 file, ~/Library/Messages/chat.db of the macOS user running it (the owner's), read-only (mode=ro, query_only), and never any other
@@ -7,7 +7,9 @@ what lets it read the file; without it the answer says so.
 
 Since macOS 13 most message text is not in the `text` column but inside `attributedBody`, an NSAttributedString typedstream;
 decode_attributed_body() takes the string out of it (checked on 97,702 real rows with no failures). Tapbacks are folded into the
-message they react to; retracted messages, system items and messages marked as spam are left out.
+message they react to; retracted messages, system items and messages marked as spam are left out. Sending (imessage_send) goes
+through Messages with a static script, iMessage only, never to a handle in this Mac's imessage-never-send.txt, and is confirmed by
+the new row Messages writes.
 """
 import datetime as dt
 import json
@@ -98,6 +100,18 @@ def split_list(value):
     return [x.strip() for x in (value or "").split(",") if x.strip()]
 
 
+def key(handle):
+    """Handles compared in one form: emails lower-case, phone numbers by their last nine digits (+31 6..., 06... and 0031 6...
+    are the same number), anything else lower-case."""
+    h = (handle or "").strip()
+    if "@" in h:
+        return h.lower()
+    digits = "".join(ch for ch in h if ch.isdigit())
+    if len(digits) >= 9 and all(ch.isdigit() or ch in " +().-" for ch in h):
+        return digits[-9:]
+    return h.lower()
+
+
 # ---------------------------------------------------------------------------------------------------- the database
 def connect():
     if not os.path.exists(DB):
@@ -120,14 +134,16 @@ def connect():
 def chat_groups(db, exclude):
     """Conversations by chat_identifier: the SMS and iMessage rows of one person are one conversation."""
     groups = {}
+    exclude = {key(x) for x in exclude}
     for rowid, guid, ident, name, service, style, archived in db.execute(
             "SELECT ROWID, guid, chat_identifier, display_name, service_name, style, is_archived FROM chat"):
-        if not ident or ident in exclude:
+        if not ident or key(ident) in exclude:
             continue
-        g = groups.setdefault(ident, {"chat_id": ident, "rowids": [], "guids": {}, "name": "", "group": False, "services": set(),
+        g = groups.setdefault(ident, {"chat_id": ident, "rowids": [], "guids": {}, "row_service": {}, "name": "", "group": False, "services": set(),
                                       "participants": set(), "archived": True, "last": 0, "unread": 0})
         g["rowids"].append(rowid)
         g["guids"][rowid] = guid
+        g["row_service"][rowid] = service or ""
         g["name"] = g["name"] or (name or "")
         g["group"] = g["group"] or style == 43
         if service:
@@ -314,7 +330,90 @@ def op_search(a):
     return {"matches": matches, "scanned": scanned, "complete": complete}
 
 
-OPS = {"imessage_chats": op_chats, "imessage_read": op_read, "imessage_search": op_search}
+OSASCRIPT = "/usr/bin/osascript"
+if os.environ.get("ICLOUD_MAC_HELPER_TESTING") == "1" and os.environ.get("ICLOUD_IMESSAGE_OSASCRIPT"):
+    OSASCRIPT = os.environ["ICLOUD_IMESSAGE_OSASCRIPT"]              # tests only: a fake that writes to the fixture database
+SEND_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "imessage_send.js")
+NEVER_SEND_FILE = os.path.expanduser("~/Library/Application Support/icloud-mac-helper/imessage-never-send.txt")
+CONFIRM_SECONDS = 8.0
+if os.environ.get("ICLOUD_MAC_HELPER_TESTING") == "1":                  # tests only
+    NEVER_SEND_FILE = os.environ.get("ICLOUD_IMESSAGE_NEVER_SEND_FILE", NEVER_SEND_FILE)
+    CONFIRM_SECONDS = float(os.environ.get("ICLOUD_IMESSAGE_CONFIRM_SECONDS", CONFIRM_SECONDS))
+
+
+def never_send_here():
+    """This Mac's own list of handles nothing is ever sent to (one per line; # starts a comment). It holds even if the server's
+    settings do not, so the Mac never messages, say, the owner's own assistant, whatever the server asks."""
+    try:
+        with open(NEVER_SEND_FILE) as f:
+            return {key(line.split("#", 1)[0]) for line in f if line.split("#", 1)[0].strip()}
+    except OSError:
+        return set()
+
+
+def op_send(a):
+    import subprocess
+    text = a.get("text") or ""
+    if not text.strip():
+        fail("text is empty")
+    chat_id, handle = a.get("chat_id"), a.get("handle")
+    if bool(chat_id) == bool(handle):
+        fail("give exactly one of chat_id or handle")
+    db = connect()
+    groups = chat_groups(db, set())
+    target = chat_id or handle
+    blocked = never_send_here()
+    g = groups.get(target)
+    people = set(g["participants"] if g else []) | {target}
+    hit = sorted(p for p in people if key(p) in blocked)
+    if hit:
+        fail("this Mac never sends to %s (imessage-never-send.txt). Nothing was sent." % ", ".join(hit))
+    if chat_id and g is None:
+        fail("no conversation with chat_id '%s'. Nothing was sent." % chat_id)
+    payload = {"text": text}
+    if g is not None:
+        imessage_rows = [r for r in g["rowids"] if g["row_service"][r] == "iMessage"]
+        if not imessage_rows:
+            fail("that conversation exists only as SMS; only iMessage is sent from here. Nothing was sent.")
+        last = dict(db.execute("SELECT chat_id, max(message_date) FROM chat_message_join WHERE chat_id IN (%s) GROUP BY chat_id"
+                               % placeholders(len(imessage_rows)), imessage_rows).fetchall())
+        payload["guid"] = g["guids"][max(imessage_rows, key=lambda r: last.get(r) or 0)]
+    else:
+        payload["handle"] = handle
+    before = db.execute("SELECT coalesce(max(ROWID), 0) FROM message").fetchone()[0]
+    db.close()
+    try:
+        p = subprocess.run([OSASCRIPT, "-l", "JavaScript", SEND_SCRIPT, json.dumps(payload)], stdin=subprocess.DEVNULL,
+                           capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        fail("Messages did not answer within 30 seconds; check Messages on the Mac before sending again (it may have gone out)")
+    if p.returncode != 0:
+        err = p.stderr.decode("utf-8", "replace")
+        if "-1743" in err or "not allowed" in err.lower():
+            fail("the helper is not allowed to control Messages: allow it in System Settings > Privacy & Security > Automation. Nothing was sent.")
+        if "-1728" in err or "Can't get" in err:
+            fail("Messages does not know that conversation or handle (no iMessage). Nothing was sent.")
+        fail("Messages refused the message: %s" % err.strip()[:200])
+    deadline = time.monotonic() + CONFIRM_SECONDS
+    while time.monotonic() < deadline:
+        db = connect()
+        row = db.execute("SELECT m.guid, m.is_sent, m.is_delivered, m.error, m.text, m.attributedBody FROM message m "
+                         "JOIN chat_message_join j ON j.message_id = m.ROWID JOIN chat c ON c.ROWID = j.chat_id "
+                         "WHERE m.ROWID > ? AND m.is_from_me = 1 AND c.chat_identifier = ? ORDER BY m.ROWID DESC LIMIT 5",
+                         (before, target)).fetchall()
+        db.close()
+        mine = next((r for r in row if text_of(r[4], r[5]) == text.replace("\ufffc", "[attachment]").strip()), None)
+        if mine and (mine[1] or mine[2] or mine[3]):
+            if mine[3]:
+                return {"status": "failed", "message_id": mine[0], "error": mine[3],
+                        "note": "Messages could not deliver it (error %d); it shows as not delivered on the Mac." % mine[3]}
+            return {"status": "sent", "message_id": mine[0], "delivered": bool(mine[2])}
+        time.sleep(0.5)
+    return {"status": "unconfirmed", "note": "Messages accepted it but did not confirm within 8 seconds: check the conversation before "
+                                             "sending again."}
+
+
+OPS = {"imessage_chats": op_chats, "imessage_read": op_read, "imessage_search": op_search, "imessage_send": op_send}
 
 
 def main(argv):

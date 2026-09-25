@@ -120,3 +120,17 @@ def test_reads_go_to_the_mac_with_exactly_the_given_arguments(s):
         return json.loads(r.content[0].text)
     out = asyncio.run(go())
     assert seen == [("imessage_read", {"chat_id": "anna@example.org", "limit": 10})] and "other people" in out["notice"]
+
+
+def test_service_senders_are_hidden_by_default(s):
+    codes = {"chats": [{"chat_id": "12345", "participants": ["12345"], "last_text": "Your code is 845120", "unread": 0},
+                       {"chat_id": "ING", "participants": ["ING"], "last_text": "x", "unread": 0},
+                       {"chat_id": "anna@example.org", "participants": ["anna@example.org"], "last_text": "hi", "unread": 0},
+                       {"chat_id": "chat77", "participants": ["anna@example.org", "+31612345678"], "last_text": "g", "unread": 0}]}
+    m, _ = svc(s, {"imessage_chats": codes})
+    assert s.imessage_hide_short_codes is True
+    assert [c["chat_id"] for c in m.list_chats()["chats"]] == ["anna@example.org", "chat77"]
+    with pytest.raises(IMessageError):
+        m.read_chat("12345")
+    m, _ = svc(s, {"imessage_chats": codes}, imessage_hide_short_codes=False)
+    assert len(m.list_chats()["chats"]) == 4

@@ -98,6 +98,8 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("MESSAGES", "Address a conversation by its chat_id from imessage_list_chats. A participant matched to a contact with "
                  "match 'suffix' (same last digits) is not a confirmation of who it is.", ("imessage_list_chats",)),
     ("MESSAGES", "A chat marked assistant_thread is the owner's own assistant: never send to it.", ("imessage_list_chats",)),
+    ("MESSAGES", "Send with imessage_send_message only to a conversation or person the owner named here, with wording they "
+                 "approved; status queued_for_owner_approval or not_sent_needs_owner means NOT sent.", ("imessage_send_message",)),
     ("FAILURES", "An error, or 'complete': false with 'not_read', is not an empty inbox or a free calendar: say what could not "
                  "be read, run icloud_check_health once and report it. Repeat a write at most once: after a timeout it may have "
                  "gone through.", ("icloud_check_health",)),

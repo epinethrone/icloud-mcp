@@ -43,6 +43,10 @@ Apple Maps travel times and place search (`ENABLE_MAPS`) run through a small Map
 installer. It needs no permission and never uses this Mac's location: places are only what the agent passes.
 Messages (`ENABLE_IMESSAGE`) are read from this Mac user's own `~/Library/Messages/chat.db`, read-only, by `ops/imessage.py`
 with the same Python and its Full Disk Access; no other user's Messages are ever opened.
+Sending (`IMESSAGE_ALLOW_SEND`) goes through Messages with a static script (`ops/imessage_send.js`), iMessage only. Handles listed
+in `~/Library/Application Support/icloud-mac-helper/imessage-never-send.txt` (one per line) are never sent to, whatever the
+server asks: put your own assistant's Apple ID there. The first send asks once for permission to control Messages; run
+`python3 icloud_mac_helper.py --selftest-imessage-send you@example.com` (your own address) to get that prompt while you are at the Mac.
 
 **It needs Full Disk Access.** In System Settings > Privacy & Security > Full Disk Access, press **+**, press Cmd+Shift+G and add:
 

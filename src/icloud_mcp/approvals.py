@@ -1,4 +1,4 @@
-"""Owner approval pages for outgoing mail queued by the MCP tools.
+"""Owner approval pages for outgoing mail and iMessages queued by the MCP tools.
 
 An MCP client (possibly steered by injected text in an email) can only *queue* a message. It is delivered only after the
 owner opens /outbox in a browser, types the owner password, reviews the exact message and presses Approve. No page here
@@ -59,7 +59,7 @@ def _page(title: str, inner: str, status: int = 200) -> Response:
 
 def _login_form(error: str = "", status: int = 200) -> Response:
     err = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    return _page("Outgoing mail approval", f"""<div class="card"><h1>Outgoing mail approval</h1>
+    return _page("Outgoing message approval", f"""<div class="card"><h1>Outgoing message approval</h1>
 <p>Enter the owner password to review messages your agents have queued. Nothing is sent until you approve it here.</p>{err}
 <form method="post" action="/outbox"><label for="pw">Owner password</label>
 <input id="pw" type="password" name="password" autocomplete="current-password" autofocus required>
@@ -70,29 +70,43 @@ def _row(label: str, value: str) -> str:
     return f"<tr><th>{html.escape(label)}</th><td>{html.escape(value) if value else '<span class=muted>(none)</span>'}</td></tr>" if value or label in ("Cc", "Bcc") else ""
 
 
-def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Settings, mail: MailService) -> None:
+def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Settings, mail: MailService | None,
+                           imessage: Any = None, imessage_outbox: Any = None) -> None:
     key = secrets.token_bytes(32)  # per-process: buttons issued before a restart simply stop working
+    outboxes = {k: o for k, o in (("mail", mail.outbox if mail is not None else None), ("imessage", imessage_outbox)) if o is not None}
 
-    def _tok(item_id: str, sha: str, action: str, exp: int) -> str:
-        return hmac.new(key, f"{item_id}|{sha}|{action}|{exp}".encode(), hashlib.sha256).hexdigest()
+    def _tok(kind: str, item_id: str, sha: str, action: str, exp: int) -> str:
+        return hmac.new(key, f"{kind}|{item_id}|{sha}|{action}|{exp}".encode(), hashlib.sha256).hexdigest()
+
+    def _buttons(kind: str, q: Any, exp: int, send_label: str) -> str:
+        forms = ""
+        for action, label, cls in (("approve", send_label, "ok"), ("discard", "Discard", "no")):
+            forms += (f'<form method="post" action="/outbox/act" style="display:inline"><input type="hidden" name="id" value="{html.escape(q.id)}">'
+                      f'<input type="hidden" name="kind" value="{kind}">'
+                      f'<input type="hidden" name="action" value="{action}"><input type="hidden" name="exp" value="{exp}">'
+                      f'<input type="hidden" name="tok" value="{_tok(kind, q.id, q.sha256, action, exp)}">'
+                      f'<button class="{cls}" type="submit">{label}</button></form>')
+        return forms
 
     def _queue_page(note: str = "") -> Response:
-        items = mail.outbox.pending()
+        items = [(k, q) for k, o in outboxes.items() for q in o.pending()]
         exp = int(time.time()) + _TOKEN_TTL
-        parts = [f'<div class="card"><h1>Outgoing mail waiting for your approval</h1>{note}'
+        parts = [f'<div class="card"><h1>Outgoing messages waiting for your approval</h1>{note}'
                  f'<p class="muted">{len(items)} waiting. Review the exact recipients and text below; this is what will be sent.</p></div>']
-        for q in items:
+        for kind, q in items:
+            mins = max(1, int((q.expires_at - time.time()) / 60))
+            if kind == "imessage":
+                d = imessage.describe_queued(q)
+                group = '<p class="warn">A group conversation: everyone in it receives this.</p>' if d["group"] else ""
+                parts.append(f"""<div class="card"><h2>iMessage to {html.escape(d['to'] or d['chat_id'] or '')}</h2><table>
+{_row('Conversation', d['chat_id'] or '')}</table>{group}
+<pre>{html.escape(d['text'])}</pre><p class="muted">Sent from your Mac once you approve. Expires in about {mins} min. Approve only if you asked your agent to send this.</p>{_buttons(kind, q, exp, "Approve and send")}</div>""")
+                continue
             d = mail.describe_queued(q)
             atts = "".join(f"<li>{html.escape(str(a.get('filename')))} ({html.escape(str(a.get('content_type')))}, {a.get('size')} bytes)</li>"
                            for a in d["attachments"]) or ""
             body = d["body"] if len(d["body"]) <= _BODY_PREVIEW else d["body"][:_BODY_PREVIEW] + "\n\n[... preview truncated; the full message is sent]"
-            mins = max(1, int((q.expires_at - time.time()) / 60))
-            forms = ""
-            for action, label, cls in (("approve", "Approve and send", "ok"), ("discard", "Discard", "no")):
-                forms += (f'<form method="post" action="/outbox/act" style="display:inline"><input type="hidden" name="id" value="{html.escape(q.id)}">'
-                          f'<input type="hidden" name="action" value="{action}"><input type="hidden" name="exp" value="{exp}">'
-                          f'<input type="hidden" name="tok" value="{_tok(q.id, q.sha256, action, exp)}">'
-                          f'<button class="{cls}" type="submit">{label}</button></form>')
+            forms = _buttons(kind, q, exp, "Approve and send")
             parts.append(f"""<div class="card"><h2>{html.escape(d['subject'] or '(no subject)')}</h2><table>
 {_row('From', d['from'])}{_row('To', d['to'])}{_row('Cc', d['cc'])}{_row('Bcc', d['bcc'])}
 {_row('Will be delivered to', ', '.join(d['envelope_recipients']))}
@@ -100,7 +114,7 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
 <pre>{html.escape(body)}</pre><p class="muted">Expires in about {mins} min. Approve only if you asked your agent to send this.</p>{forms}</div>""")
         if not items:
             parts.append('<div class="card"><p>Nothing is waiting.</p></div>')
-        return _page("Outgoing mail approval", "".join(parts))
+        return _page("Outgoing message approval", "".join(parts))
 
     @mcp.custom_route("/outbox", methods=["GET"])
     async def outbox_get(_: Request) -> Response:
@@ -120,29 +134,36 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
     @mcp.custom_route("/outbox/act", methods=["POST"])
     async def outbox_act(request: Request) -> Response:
         form = await request.form()
-        item_id, action = str(form.get("id", "")), str(form.get("action", ""))
+        item_id, action, kind = str(form.get("id", "")), str(form.get("action", "")), str(form.get("kind", "mail"))
         try:
             exp = int(str(form.get("exp", "0")))
         except ValueError:
             exp = 0
         tok = str(form.get("tok", ""))
-        q = next((x for x in mail.outbox.pending() if x.id == item_id), None)
+        box = outboxes.get(kind)
+        q = next((x for x in box.pending() if x.id == item_id), None) if box is not None else None
         if action not in ("approve", "discard") or exp < time.time() or q is None:
-            return _page("Outgoing mail approval", '<div class="card"><p class="err">That request has expired or the message is no longer waiting.</p>'
+            return _page("Outgoing message approval", '<div class="card"><p class="err">That request has expired or the message is no longer waiting.</p>'
                          '<p><a href="/outbox">Back</a></p></div>', 400)
-        if not hmac.compare_digest(tok.encode(), _tok(q.id, q.sha256, action, exp).encode()):
+        if not hmac.compare_digest(tok.encode(), _tok(kind, q.id, q.sha256, action, exp).encode()):
             log.warning("Rejected /outbox/act with an invalid token")
-            return _page("Outgoing mail approval", '<div class="card"><p class="err">Invalid request. Re-enter the owner password.</p>'
+            return _page("Outgoing message approval", '<div class="card"><p class="err">Invalid request. Re-enter the owner password.</p>'
                          '<p><a href="/outbox">Back</a></p></div>', 403)
         if action == "discard":
-            mail.outbox.claim(q.id)
+            box.claim(q.id)
             log.info("Owner discarded queued message %s", q.id)
             return _queue_page('<p class="ok-note">Discarded.</p>')
         try:
-            result = await asyncio.to_thread(mail.release, q.id)
+            result = (await asyncio.to_thread(imessage.release, box, q.id) if kind == "imessage"
+                      else await asyncio.to_thread(mail.release, q.id))
         except Exception as e:  # noqa: BLE001  -- release() re-queues on any failure, so the owner can retry or discard
             log.warning("Release of %s failed: %s", q.id, e)
             return _queue_page(f'<p class="err">Not sent (still queued): {html.escape(str(e))}</p>')
-        log.info("Owner approved and sent queued message %s", q.id)
+        log.info("Owner approved queued %s %s", kind, q.id)
+        if kind == "imessage":
+            status = result.get("status")
+            word = {"sent": "Sent", "failed": "Not delivered", "unconfirmed": "Handed to Messages (not yet confirmed)"}.get(status, str(status))
+            return _queue_page(f'<p><b>{html.escape(word)}</b>: iMessage to {html.escape(result.get("to", ""))}. '
+                               f'{html.escape(result.get("note", ""))}</p>')
         extra = f" {html.escape(result['warning'])}" if result.get("warning") else ""
         return _queue_page(f'<p><b>Sent</b> to {html.escape(", ".join(result.get("recipients", [])))}.{extra}</p>')
