@@ -47,8 +47,8 @@ class QueuedMessage:
 
 
 class Outbox:
-    def __init__(self, data_dir: str, ttl: int, max_items: int):
-        self.path = Path(data_dir) / "outbox.json"
+    def __init__(self, data_dir: str, ttl: int, max_items: int, filename: str = "outbox.json"):
+        self.path = Path(data_dir) / filename
         self.ttl, self.max_items = ttl, max_items
         self._lock = threading.RLock()
         self._items: dict[str, QueuedMessage] = {}

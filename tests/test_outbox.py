@@ -207,8 +207,8 @@ def queue_one(mail, subject="Hello <script>alert(1)</script>", body="Body & more
 
 
 def buttons(page: str, action: str):
-    m = re.search(rf'name="id" value="([^"]+)"><input type="hidden" name="action" value="{action}"><input type="hidden" name="exp" value="(\d+)"><input type="hidden" name="tok" value="([0-9a-f]+)"', page)
-    return {"id": m[1], "action": action, "exp": m[2], "tok": m[3]}
+    m = re.search(rf'name="id" value="([^"]+)"><input type="hidden" name="kind" value="(\w+)"><input type="hidden" name="action" value="{action}"><input type="hidden" name="exp" value="(\d+)"><input type="hidden" name="tok" value="([0-9a-f]+)"', page)
+    return {"id": m[1], "kind": m[2], "action": action, "exp": m[3], "tok": m[4]}
 
 
 async def test_login_page_leaks_nothing(web):

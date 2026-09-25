@@ -126,6 +126,9 @@ class Settings:
     imessage_visible_chats: tuple[str, ...] = ()   # IMESSAGE_VISIBLE_CHATS: when set, only these chats
     imessage_max_age_days: int = 0                 # IMESSAGE_MAX_AGE_DAYS: 0 = the whole history (default); e.g. 365 limits it
     imessage_never_send: tuple[str, ...] = ()      # IMESSAGE_NEVER_SEND: handles or chat ids nothing is ever sent to (e.g. an assistant's own Apple ID)
+    imessage_allow_send: bool = False              # IMESSAGE_ALLOW_SEND: register imessage_send_message at all
+    imessage_send_requires_approval: bool = True   # IMESSAGE_SEND_REQUIRES_APPROVAL: every iMessage waits for the owner (independent of mail)
+    imessage_send_allowlist: tuple[str, ...] = ()  # IMESSAGE_SEND_ALLOWLIST: who may receive; empty = nobody, "*" = anyone
     warmup_on_start: bool = True  # WARMUP_ON_START: log in to mail, calendar and contacts in the background right after start
     tool_workers: int = 8         # TOOL_WORKERS: threads that run tool calls, so parallel calls do not queue behind each other
     agent_notes_file: str = ""    # AGENT_NOTES_FILE: the owner's own rules for agents, appended to the instructions (never shipped)
@@ -203,6 +206,9 @@ class Settings:
             imessage_visible_chats=tuple(_norm_handle(x) for x in _list("IMESSAGE_VISIBLE_CHATS") if x.strip()),
             imessage_max_age_days=max(0, _int("IMESSAGE_MAX_AGE_DAYS", 0)),
             imessage_never_send=tuple(_norm_handle(x) for x in _list("IMESSAGE_NEVER_SEND") if x.strip()),
+            imessage_allow_send=_bool("IMESSAGE_ALLOW_SEND", False),
+            imessage_send_requires_approval=_bool("IMESSAGE_SEND_REQUIRES_APPROVAL", True),
+            imessage_send_allowlist=tuple(x.strip() if x.strip() == "*" else _norm_handle(x) for x in _list("IMESSAGE_SEND_ALLOWLIST") if x.strip()),
             warmup_on_start=_bool("WARMUP_ON_START", True),
             tool_workers=max(2, min(_int("TOOL_WORKERS", 8), 32)),
             agent_notes_file=_str("AGENT_NOTES_FILE"),

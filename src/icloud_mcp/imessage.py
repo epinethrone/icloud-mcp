@@ -180,3 +180,102 @@ class IMessageService:
         found = warnings_for(*(m.get("text", "") for m in matches if not m.get("from_me")))
         return {"notice": NOTICE, "count": len(matches), "matches": matches, "scanned": got.get("scanned"),
                 "complete": got.get("complete", True), **({"safety_warnings": found} if found else {})}
+
+    # -- sending ------------------------------------------------------------------------------
+    def _target(self, chat_id: str | None, handle: str | None) -> dict[str, Any]:
+        """What a send would go to: the conversation's id, name and participants. Refused for hidden or unknown chats."""
+        from .config import _norm_handle
+        if bool(chat_id) == bool(handle):
+            raise IMessageError("Give exactly one of chat_id (an existing conversation) or handle (an email or +number).")
+        if handle:
+            h = _norm_handle(handle)
+            self._check_chat(h)
+            return {"chat_id": None, "handle": h, "name": "", "participants": [h], "group": False}
+        self._check_chat(chat_id)
+        chats = self.bridge.call("imessage_chats", {k: v for k, v in {"limit": 1000, "include_archived": True,
+                                                                        "exclude": self._exclude()}.items() if v is not None})
+        c = next((x for x in chats.get("chats", []) if x["chat_id"] == chat_id), None)
+        if c is None:
+            raise IMessageError(f"No conversation with chat_id '{chat_id}' (take it from imessage_list_chats).")
+        return {"chat_id": chat_id, "handle": None, "name": c.get("name", ""), "participants": c.get("participants", []),
+                "group": c.get("group", False)}
+
+    def _permit(self, t: dict[str, Any]) -> None:
+        """IMESSAGE_NEVER_SEND wins over everything; then IMESSAGE_SEND_ALLOWLIST (empty = nobody, '*' = anyone)."""
+        ids = {x for x in (t["chat_id"], t["handle"], *t["participants"]) if x}
+        never = ids & set(self.s.imessage_never_send)
+        if never:
+            raise IMessageError(f"Never sent to {', '.join(sorted(never))} (IMESSAGE_NEVER_SEND): that is the owner's own assistant "
+                                "or a blocked handle. Nothing was sent.")
+        allow = set(self.s.imessage_send_allowlist)
+        if "*" in allow:
+            return
+        if not allow:
+            raise IMessageError("Sending iMessages is on, but IMESSAGE_SEND_ALLOWLIST is empty, so nobody may receive one. Only the "
+                                "owner can add people to it. Nothing was sent.")
+        if (t["chat_id"] and t["chat_id"] in allow) or all(p in allow for p in t["participants"]):
+            return
+        missing = sorted(p for p in t["participants"] if p not in allow)
+        raise IMessageError(f"Not on IMESSAGE_SEND_ALLOWLIST: {', '.join(missing)}. Tell the owner; only they can change the list. "
+                            "Nothing was sent.")
+
+    def send(self, text: str, *, chat_id: str | None = None, handle: str | None = None, outbox: Any = None,
+             public_url: str = "") -> dict[str, Any]:
+        text = (text or "").strip()
+        if not text:
+            raise IMessageError("text is empty.")
+        if len(text) > 10000:
+            raise IMessageError("text is longer than 10,000 characters.")
+        t = self._target(chat_id, handle)
+        self._permit(t)
+        resolve = self._resolver()
+        to = {**t, "participants": self._people_of(t["participants"], resolve)}
+        if self.s.imessage_send_requires_approval:
+            if self.s.local_mode or outbox is None:
+                return {"status": "not_sent_needs_owner", "sent": False, "to": to, "text": text,
+                        "notice": "This server has no approval page here, and every iMessage needs the owner's approval: show the "
+                                  "owner the text so they can send it themselves. It was NOT sent."}
+            import json
+            raw = json.dumps({"chat_id": t["chat_id"], "handle": t["handle"], "text": text, "to": to}, ensure_ascii=False).encode()
+            q = outbox.add(raw, [x for x in (t["chat_id"], t["handle"]) if x])
+            return {"status": "queued_for_owner_approval", "sent": False, "outbox_id": q.id, "to": to,
+                    "approve_at": f"{public_url}/outbox", "notice": "Queued, NOT sent: it goes out only when the owner approves it on "
+                                                                     "the outbox page. Say so; do not send it again."}
+        got = self.bridge.call("imessage_send", {k: v for k, v in {"chat_id": t["chat_id"], "handle": t["handle"], "text": text}.items() if v})
+        return {**got, "to": to}
+
+    def describe_queued(self, q: Any) -> dict[str, Any]:
+        import json
+        d = json.loads(q.raw.decode())
+        to = d.get("to") or {}
+        people = ", ".join(f"{p.get('name')} ({p.get('handle')})" if p.get("name") else p.get("handle", "") for p in to.get("participants", []))
+        return {"to": (to.get("name") + ": " if to.get("name") else "") + people, "chat_id": d.get("chat_id") or d.get("handle"),
+                "group": to.get("group", False), "text": d.get("text", "")}
+
+    def release(self, outbox: Any, item_id: str) -> dict[str, Any]:
+        """Send a queued iMessage. Called only from the password-protected approval page, never from a tool. Both lists are
+        checked again, as they are now. Put back in the queue only when the Mac never got it (offline); a send the Mac tried is
+        never repeated from here, since that could deliver it twice."""
+        import json
+        from .bridge import BridgeError
+        q = outbox.claim(item_id)
+        if q is None:
+            raise IMessageError("That message is no longer waiting (already released, discarded or expired).")
+        d = json.loads(q.raw.decode())
+        self._permit({"chat_id": d.get("chat_id"), "handle": d.get("handle"), "participants":   # no longer allowed: dropped
+                      [p.get("handle") for p in (d.get("to") or {}).get("participants", []) if p.get("handle")]})
+        try:
+            got = self.bridge.call("imessage_send", {k: v for k, v in {"chat_id": d.get("chat_id"), "handle": d.get("handle"),
+                                                                        "text": d.get("text")}.items() if v})
+        except BridgeError as e:
+            never_reached = ("did not pick up", "has not connected", "last seen", "or newer: update the helper")
+            if any(x in str(e) for x in never_reached):
+                outbox.restore(q)                                    # the Mac never had it: safe to keep for a retry
+                raise IMessageError(f"Not sent, still queued: {e}") from e
+            raise
+        return {**got, "to": describe_label(d)}
+
+
+def describe_label(d: dict[str, Any]) -> str:
+    to = d.get("to") or {}
+    return to.get("name") or ", ".join(p.get("name") or p.get("handle", "") for p in to.get("participants", []))

@@ -11,6 +11,8 @@ Update the Mac helper before the server whenever its version changes.
 - iMessage (`ENABLE_IMESSAGE`): `imessage_list_chats`, `imessage_read_chat`, `imessage_search_messages` over your own Messages
   history (read-only; the whole history unless `IMESSAGE_MAX_AGE_DAYS` limits it; `IMESSAGE_HIDDEN_CHATS` hides chats), and a
   "Catch up on my messages" prompt.
+- iMessage sending (`imessage_send_message`), off by default: owner approval on `/outbox` by default (independent of mail),
+  an allowlist that starts empty, and a never-send list on the server and on the Mac itself. iMessage only; each send confirmed.
 
 ## 0.9.0
 

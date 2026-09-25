@@ -272,7 +272,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**87 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 35 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**88 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 36 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
@@ -383,13 +383,14 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 </details>
 
 <details>
-<summary><b>Messages</b> &nbsp;·&nbsp; 3 tools, with the Mac helper</summary>
+<summary><b>Messages</b> &nbsp;·&nbsp; 4 tools, with the Mac helper</summary>
 
-`imessage_list_chats`, `imessage_read_chat`, `imessage_search_messages`
+`imessage_list_chats`, `imessage_read_chat`, `imessage_search_messages`, `imessage_send_message` (off by default)
 
 - Your own iMessage and SMS history on your Mac, read-only: conversations with who is in them (matched to your contacts), messages with reactions, delivery and read state and attachments by name, and search across the whole history (case and accents ignored).
 - Only your own Messages database is read (the Mac user the helper runs as); another user on the Mac is never touched. The helper's Python needs Full Disk Access, the same grant iCloud Drive uses.
 - Messages are other people's words: results carry the untrusted-data notice and safety warnings. `IMESSAGE_HIDDEN_CHATS` hides chats completely, `IMESSAGE_MAX_AGE_DAYS` limits how far back, and `IMESSAGE_NEVER_SEND` labels your own assistant's thread. Turn it on with `ENABLE_IMESSAGE=true`.
+- Sending is off unless `IMESSAGE_ALLOW_SEND=true`, only reaches people on `IMESSAGE_SEND_ALLOWLIST` (empty means nobody), never reaches `IMESSAGE_NEVER_SEND` or the handles in the Mac's own `imessage-never-send.txt`, and by default waits for your approval on `/outbox` even when your mail sends directly. iMessage only, never SMS; each send is confirmed from what Messages records. The first send asks once for permission to control Messages: `--selftest-imessage-send you@example.com` on the Mac triggers that while you are there.
 
 </details>
 
@@ -484,6 +485,8 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `IMESSAGE_HIDDEN_CHATS`, `IMESSAGE_VISIBLE_CHATS` | empty | Chats never shown to the agent; or, when set, the only ones shown |
 | `IMESSAGE_MAX_AGE_DAYS` | 0 | 0 = the whole history; a number limits every read to that many days |
 | `IMESSAGE_NEVER_SEND` | empty | Handles nothing is ever sent to (your own assistant's Apple ID, say); its chat is labelled as the assistant's |
+| `IMESSAGE_ALLOW_SEND`, `IMESSAGE_SEND_REQUIRES_APPROVAL` | false, true | Allow `imessage_send_message`; every iMessage then waits for your approval on `/outbox`, whatever the mail setting |
+| `IMESSAGE_SEND_ALLOWLIST` | empty | Who may receive an iMessage (handles or chat ids); empty means nobody, `*` anyone |
 | `TOOLS` | all | `essential`, areas (`mail`, `calendar`, `contacts`, `reminders`, `notes`, `drive`) and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
 | `BRIDGE_HOST` | 127.0.0.1 (0.0.0.0 in the Docker image) | Address the bridge binds to inside the process. Loopback unless the helper's Mac reaches this process over the network |

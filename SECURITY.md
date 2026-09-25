@@ -78,6 +78,12 @@ By default the server:
 - Reads `AGENT_NOTES_FILE` fresh on every use, caps it at 8,000 characters, strips invisible characters, and never logs its
   path or contents. The owner's rules come after the security rules in the instructions and can only refine them.
 
+- Reads iMessage only from the helper user's own Messages database, read-only, and never another macOS user's. Sending an iMessage
+  is off by default (`IMESSAGE_ALLOW_SEND`); when on, it waits for the owner on `/outbox` by default whatever the mail setting
+  (`IMESSAGE_SEND_REQUIRES_APPROVAL`), reaches only `IMESSAGE_SEND_ALLOWLIST` (empty means nobody), and never reaches a handle in
+  `IMESSAGE_NEVER_SEND` or in the Mac's own `imessage-never-send.txt`. That last list exists for an owner who runs an assistant
+  on its own Apple ID: a message to it would read as the owner's command. The lists are checked again when the owner approves.
+
 To tighten a deployment further:
 
 - Set `READ_ONLY=true` if agents only need to read, or `ALLOW_SEND=false` to allow drafts only.

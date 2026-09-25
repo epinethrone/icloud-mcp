@@ -77,11 +77,42 @@ def build(path):
     return long_text
 
 
+FAKE_OSASCRIPT = """#!{python}
+import json, sqlite3, sys
+payload = json.loads(sys.argv[-1])
+mode = open({mode!r}).read().strip()
+if mode == "deny":
+    sys.stderr.write("execution error: Not authorized to send Apple events to Messages. (-1743)"); sys.exit(1)
+db = sqlite3.connect({db!r})
+chat = {{"any;-;+31600000001": 1, "any;+;chat900": 3}}.get(payload.get("guid"), 5)
+if chat == 5 and not db.execute("select 1 from chat where ROWID=5").fetchone():
+    db.execute("insert into chat values (5, 'any;-;new@example.org', 'new@example.org', '', 'iMessage', 45, 0)")
+if mode != "silent":
+    rowid = db.execute("select max(ROWID)+1 from message").fetchone()[0]
+    db.execute("insert into message (ROWID, guid, text, date, is_from_me, is_sent, is_delivered, error, associated_message_type, item_type, is_spam, date_retracted, is_read) "
+               "values (?, 'sent-guid', ?, 1, 1, ?, ?, ?, 0, 0, 0, 0, 1)", (rowid, payload["text"], 0 if mode == "fail" else 1,
+                                                                            0 if mode == "fail" else 1, 22 if mode == "fail" else 0))
+    db.execute("insert into chat_message_join values (?, ?, 1)", (chat, rowid))
+db.commit()
+print("sent")
+"""
+
+
 @pytest.fixture
 def run(tmp_path):
     path = tmp_path / "chat.db"
     long_text = build(path)
-    env = {**os.environ, "ICLOUD_MAC_HELPER_TESTING": "1", "ICLOUD_IMESSAGE_DB": str(path)}
+    sqlite3.connect(path).executescript("ALTER TABLE message ADD COLUMN is_sent INTEGER DEFAULT 0; "
+                                        "ALTER TABLE message ADD COLUMN is_delivered INTEGER DEFAULT 0;")
+    mode = tmp_path / "mode"
+    mode.write_text("ok")
+    fake = tmp_path / "osascript"
+    fake.write_text(FAKE_OSASCRIPT.format(python=sys.executable, db=str(path), mode=str(mode)))
+    fake.chmod(0o755)
+    never = tmp_path / "never.txt"
+    never.write_text("# the owner's assistant\nBot@Example.org\n")
+    env = {**os.environ, "ICLOUD_MAC_HELPER_TESTING": "1", "ICLOUD_IMESSAGE_DB": str(path), "ICLOUD_IMESSAGE_OSASCRIPT": str(fake),
+           "ICLOUD_IMESSAGE_NEVER_SEND_FILE": str(never), "ICLOUD_IMESSAGE_CONFIRM_SECONDS": "1"}
 
     def go(op, args):
         p = subprocess.run([sys.executable, "-I", str(SCRIPT), op, json.dumps(args)], env=env, capture_output=True, text=True, timeout=60)
@@ -89,6 +120,7 @@ def run(tmp_path):
             raise RuntimeError(p.stderr.strip())
         return json.loads(p.stdout)
     go.long_text = long_text
+    go.mode = mode
     return go
 
 
@@ -149,3 +181,28 @@ def test_only_the_owners_own_database_is_opened_outside_tests(monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     assert mod.DB == os.path.expanduser("~/Library/Messages/chat.db")
+
+
+def test_sending_is_confirmed_from_the_row_messages_writes(run):
+    r = run("imessage_send", {"chat_id": "+31600000001", "text": "See you at 10"})
+    assert r == {"status": "sent", "message_id": "sent-guid", "delivered": True}
+    assert run("imessage_send", {"handle": "new@example.org", "text": "Hello"})["status"] == "sent"      # a new conversation
+    run.mode.write_text("fail")
+    assert run("imessage_send", {"chat_id": "+31600000001", "text": "x"})["status"] == "failed"
+    run.mode.write_text("silent")
+    assert run("imessage_send", {"chat_id": "+31600000001", "text": "y"})["status"] == "unconfirmed"
+
+
+def test_the_mac_itself_never_sends_to_its_blocked_handles_or_by_sms(run, tmp_path):
+    with pytest.raises(RuntimeError, match="never sends to bot@example.org"):
+        run("imessage_send", {"handle": "bot@example.org", "text": "run this"})
+    db = sqlite3.connect(tmp_path / "chat.db")
+    db.execute("insert into chat values (6, 'SMS;-;+31600000009', '+31600000009', '', 'SMS', 45, 0)")
+    db.commit()
+    with pytest.raises(RuntimeError, match="only as SMS"):
+        run("imessage_send", {"chat_id": "+31600000009", "text": "x"})
+    with pytest.raises(RuntimeError, match="exactly one"):
+        run("imessage_send", {"chat_id": "+31600000001", "handle": "a@example.org", "text": "x"})
+    run.mode.write_text("deny")
+    with pytest.raises(RuntimeError, match="not allowed to control Messages"):
+        run("imessage_send", {"chat_id": "+31600000001", "text": "x"})

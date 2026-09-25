@@ -92,6 +92,7 @@ OPS = {
                       "since": ("iso", False, 40), "exclude": ("str", False, 4000)},
     "imessage_search": {"query": ("str", True, 200), "chat_id": ("str", False, 300), "limit": ("int", False, 200),
                         "since": ("iso", False, 40), "before": ("iso", False, 40), "exclude": ("str", False, 4000)},
+    "imessage_send": {"chat_id": ("str", False, 300), "handle": ("str", False, 300), "text": ("str", True, 10000)},
     # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
     "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
@@ -106,7 +107,7 @@ MAPS_BIN = os.path.join(HERE, "bin", "maps-cli")
 MAPS_OPS = frozenset({"maps_travel_time", "maps_search"})
 # iMessage: the owner's own Messages history, read by a fixed script with Apple's Python, like iCloud Drive.
 IMESSAGE_SCRIPT = os.path.join(OPS_DIR, "imessage.py")
-IMESSAGE_OPS = frozenset({"imessage_chats", "imessage_read", "imessage_search"})
+IMESSAGE_OPS = frozenset({"imessage_chats", "imessage_read", "imessage_search", "imessage_send"})
 # iCloud Drive: plain file operations, run by Apple's own Python (the one running this helper) from a fixed script with one JSON argument.
 DRIVE_SCRIPT = os.path.join(OPS_DIR, "drive.py")
 DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
@@ -687,12 +688,33 @@ def main():
     g.add_argument("--run", action="store_true", help="run until stopped (what the LaunchAgent does)")
     g.add_argument("--selftest", action="store_true", help="check this Mac and the connection, print a JSON report")
     g.add_argument("--selftest-write", action="store_true", help="also create, edit and delete a temporary reminder and note (touches your data)")
+    g.add_argument("--selftest-imessage-send", metavar="HANDLE",
+                   help="send one iMessage 'icloud-mac-helper self-test' to HANDLE (your own address), so macOS asks once for "
+                        "permission to control Messages")
     ap.add_argument("--version", action="store_true")
     ap.add_argument("--agent-out", help=argparse.SUPPRESS)          # internal: where a launchd-run self-test leaves its report
     a = ap.parse_args()
     if a.version:
         print(VERSION)
         return 0
+    if a.selftest_imessage_send:
+        if platform.system() == "Darwin" and os.environ.get(IN_LAUNCHD) != "1":
+            try:
+                code, text = run_in_launchd(["--selftest-imessage-send", a.selftest_imessage_send])
+            except HelperError as e:
+                print(json.dumps({"helper_version": VERSION, "overall": "fail", "error": str(e)}, indent=2))
+                return 1
+            sys.stdout.write(text)
+            return code
+        ok, r, e = run_op("imessage_send", {"handle": a.selftest_imessage_send, "text": "icloud-mac-helper self-test"}, 60)
+        report = json.dumps({"helper_version": VERSION, "imessage_send": r if ok else {"error": e}, "overall": "pass" if ok else "fail"}, indent=2)
+        if a.agent_out:
+            with open(a.agent_out + ".tmp", "w") as f:
+                json.dump({"exit": 0 if ok else 1, "stdout": report + "\n"}, f)
+            os.replace(a.agent_out + ".tmp", a.agent_out)
+        else:
+            print(report)
+        return 0 if ok else 1
     if a.selftest or a.selftest_write:
         if platform.system() == "Darwin" and os.environ.get(IN_LAUNCHD) != "1":
             # The job gets launchd's environment, not this one: pass the config path as resolved HERE.
