@@ -101,7 +101,7 @@ def test_the_safety_sentences_survive(mcp, tool, param, phrase):
 
 
 # ------------------------------------------------------------------------------------------------ names
-PREFIXES = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "shortcuts", "icloud")
+PREFIXES = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "shortcuts", "icloud", "maps", "imessage")
 VERBS = {"append", "check", "complete", "create", "delete", "extract", "find", "forward", "get", "list", "mark", "move", "read",
          "reply", "rsvp", "run", "search", "send", "trash", "undo", "unsubscribe", "update", "write"}
 

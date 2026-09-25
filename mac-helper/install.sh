@@ -98,6 +98,25 @@ else
   echo "$PDF_STAMP" > "$DEST/bin/.pdf-build-stamp"
 fi
 
+# Apple Maps (travel times, place search) through a tiny MapKit program, built the same way. It needs no permission of its own:
+# places are what the agent passes, never this Mac's location.
+MAPS_SRC="$HERE/maps/maps-cli.swift"
+MAPS_BIN="$DEST/bin/maps-cli"
+MAPS_STAMP="$( { shasum -a 256 "$MAPS_SRC" | cut -d' ' -f1; xcrun --sdk macosx swiftc --version 2>&1 | head -1; } | shasum -a 256 | cut -d' ' -f1)"
+if [ -x "$MAPS_BIN" ] && [ "$(cat "$DEST/bin/.maps-build-stamp" 2>/dev/null)" = "$MAPS_STAMP" ]; then
+  echo "Keeping the Maps program already built from this exact source."
+else
+  echo "Building the Maps program (MapKit)..."
+  TMP_DIR="$(mktemp -d "$DEST/bin/.build.XXXXXX")"
+  if ! xcrun --sdk macosx swiftc -O "$MAPS_SRC" -o "$TMP_DIR/maps-cli" || ! codesign --force --sign - "$TMP_DIR/maps-cli"; then
+    rm -rf "$TMP_DIR"; echo "Building the Maps program failed (see above)." >&2; exit 1
+  fi
+  chmod 755 "$TMP_DIR/maps-cli"
+  mv -f "$TMP_DIR/maps-cli" "$MAPS_BIN"
+  rm -rf "$TMP_DIR"
+  echo "$MAPS_STAMP" > "$DEST/bin/.maps-build-stamp"
+fi
+
 echo
 echo "Running the self-test. It runs through launchd exactly like the background service, so the permissions you grant now land on the"
 echo "service and not on Terminal. macOS may ask:"

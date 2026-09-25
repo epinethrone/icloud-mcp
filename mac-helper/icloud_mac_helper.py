@@ -32,7 +32,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
@@ -81,6 +81,10 @@ OPS = {
     "drive_mkdir": {"path": ("str", True, 1000)},
     "drive_move": {"path": ("str", True, 1000), "to": ("str", True, 1000)},
     "drive_trash": {"path": ("str", True, 1000)},
+    # Apple Maps (bin/maps-cli, MapKit; addresses, names or "lat,lon" given by the agent, never the Mac's own location)
+    "maps_travel_time": {"origin": ("str", True, 500), "destination": ("str", True, 500), "mode": ("str", False, 10),
+                         "depart_at": ("iso", False, 40), "arrive_at": ("iso", False, 40), "alternatives": ("bool", False, 0)},
+    "maps_search": {"query": ("str", True, 200), "near": ("str", False, 500), "limit": ("int", False, 20)},
     # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
     "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
@@ -90,6 +94,9 @@ OPS = {
 # install behind 20-second requests. The JXA Reminders scripts stay in ops/ only as reference for what EventKit cannot do (subtasks, tags,
 # sections, attachments); nothing here runs them.
 EVENTKIT_BIN = os.path.join(HERE, "bin", "reminders-eventkit")
+# Apple Maps: travel times and place search through MapKit, a small program built by install.sh like the Reminders one.
+MAPS_BIN = os.path.join(HERE, "bin", "maps-cli")
+MAPS_OPS = frozenset({"maps_travel_time", "maps_search"})
 # iCloud Drive: plain file operations, run by Apple's own Python (the one running this helper) from a fixed script with one JSON argument.
 DRIVE_SCRIPT = os.path.join(OPS_DIR, "drive.py")
 DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
@@ -192,6 +199,8 @@ def build_command(op, args):
     payload = json.dumps(args, separators=(",", ":"))
     if op in EVENTKIT_OPS:
         return [EVENTKIT_BIN, op, payload]
+    if op in MAPS_OPS:
+        return [MAPS_BIN, op, payload]
     if op in DRIVE_OPS:
         return [sys.executable, "-I", DRIVE_SCRIPT, op, payload]
     if op in SHORTCUT_OPS:
@@ -223,7 +232,8 @@ def run_op(op, args, timeout=60, extra=None):
 def run_one(op, args, timeout=60, extra=None):
     """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
     `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
-    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS and op not in SHORTCUT_OPS):
+    if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS and op not in SHORTCUT_OPS
+                         and op not in MAPS_OPS):
         return False, None, "unknown operation"
     try:
         clean = validate_args(op, args)
@@ -240,6 +250,8 @@ def run_one(op, args, timeout=60, extra=None):
     except (FileNotFoundError, PermissionError):
         if op in EVENTKIT_OPS:
             return False, None, "the Reminders program (bin/reminders-eventkit) is missing or not executable; run install.sh again on this Mac"
+        if op in MAPS_OPS:
+            return False, None, "the Maps program (bin/maps-cli) is missing or not executable; run install.sh again on this Mac"
         return False, None, "osascript was not found (this helper only runs on macOS)"
     if proc.returncode != 0:
         return False, None, _friendly(proc.stderr.decode("utf-8", "replace"))
@@ -471,6 +483,7 @@ def selftest(cfg_path=None):
     # Reminders goes through EventKit, which needs its OWN grant (Full Access to Reminders for the helper's binary), separate from the
     # Automation grant osascript uses for Notes. The binary reports every state other than "granted" as an error naming that grant.
     checks["platform"]["reminders_binary"] = os.access(EVENTKIT_BIN, os.X_OK)
+    checks["platform"]["maps_binary"] = os.access(MAPS_BIN, os.X_OK)
     t0 = time.time()
     ok, result, error = run_op("reminder_lists", {}, timeout=60)
     checks["reminders_access"] = {"ok": ok, "seconds": round(time.time() - t0, 2)}

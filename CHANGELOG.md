@@ -3,6 +3,12 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
+## 0.10.0 (in progress)
+
+- Apple Maps (`ENABLE_MAPS`, Mac helper 0.6.0): `maps_get_travel_time` (walking, cycling, driving, public transport; for a
+  departure or arrival time) and `maps_search_places`. With Maps on, calendar travel time uses a measured value first, else a
+  labelled Apple Maps estimate.
+
 ## 0.9.0
 
 - Saved drafts: `mail_send_draft` sends a draft exactly as saved (same checks and approval as `mail_send`; the draft then goes to

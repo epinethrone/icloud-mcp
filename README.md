@@ -272,7 +272,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**82 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 30 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**84 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 32 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
@@ -372,6 +372,17 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 </details>
 
 <details>
+<summary><b>Apple Maps</b> &nbsp;·&nbsp; 2 tools, with the Mac helper</summary>
+
+`maps_get_travel_time`, `maps_search_places`
+
+- Travel time and distance between two places for walking, cycling, driving or public transport, for a departure or arrival time (public transport gives a time, not a route). Places are addresses, names or `lat,lon`; the destination is looked up near the origin, and the result names both resolved places so a wrong match is visible.
+- With Maps on, calendar travel time uses a measured value when the owner has one and otherwise an Apple Maps estimate, always labelled as one; never an invented number. Repeat questions within 10 minutes are answered from a cache.
+- Runs through MapKit on the Mac (`bin/maps-cli`, built by the installer). It needs no permission and never uses the Mac's own location. Turn it on with `ENABLE_MAPS=true`.
+
+</details>
+
+<details>
 <summary><b>Status and time</b> &nbsp;·&nbsp; 3 tools</summary>
 
 `icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `icloud_get_helper_status` says whether the Mac helper is online, when it was last seen, which version it runs, how many jobs are queued and how long they take. `icloud_get_time` gives the current date, weekday and time in your timezone, so an agent never books from a guessed date.
@@ -457,7 +468,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `CARDDAV_URL`, `CARDDAV_USERNAME` | `https://contacts.icloud.com`, username | CardDAV |
 | `DEFAULT_TIMEZONE`, `DEFAULT_CALENDAR` | `UTC`, auto | Timezone for times without an offset (an IANA name such as `Europe/Amsterdam`); calendar for new events (else "Calendar" or "Home", else the first) |
 | `ENABLE_MAIL`, `ENABLE_CALENDAR`, `ENABLE_CONTACTS` | true | Switch whole areas off |
-| `ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE` | false | Areas that go through the Mac helper (need `BRIDGE_TOKEN`) |
+| `ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE`, `ENABLE_MAPS` | false | Areas that go through the Mac helper (need `BRIDGE_TOKEN`); Maps is Apple Maps travel times and place search |
 | `TOOLS` | all | `essential`, areas (`mail`, `calendar`, `contacts`, `reminders`, `notes`, `drive`) and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
 | `BRIDGE_HOST` | 127.0.0.1 (0.0.0.0 in the Docker image) | Address the bridge binds to inside the process. Loopback unless the helper's Mac reaches this process over the network |

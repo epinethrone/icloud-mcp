@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 EVERYTHING_ON = dict(
     ICLOUD_USERNAME="me@icloud.com", ICLOUD_APP_PASSWORD="aaaa-bbbb-cccc-dddd", MCP_PUBLIC_URL="https://mcp.example.com",
-    MCP_OWNER_PASSWORD="x" * 16, ENABLE_CONTACTS="true", ENABLE_REMINDERS="true", ENABLE_NOTES="true", ENABLE_DRIVE="true",
+    MCP_OWNER_PASSWORD="x" * 16, ENABLE_CONTACTS="true", ENABLE_REMINDERS="true", ENABLE_NOTES="true", ENABLE_DRIVE="true", ENABLE_MAPS="true",
     BRIDGE_TOKEN="t" * 40, SHORTCUTS_ALLOW="Example shortcut",
 )
 

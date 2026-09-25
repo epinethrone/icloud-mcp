@@ -233,10 +233,9 @@ def _apply_travel(ev: icalendar.Event, minutes: int | None, routing: str | None,
         if origin or origin_geo or routing:
             raise CalendarError(
                 "travel_origin and travel_routing do nothing without travel_minutes: Apple shows no travel time "
-                "unless a duration is set. Take the duration from the measured row for this journey in the "
-                "life/travel memory table and pass it as travel_minutes. If that table has no row for the "
-                "journey, do not estimate one: leave travel_minutes, travel_origin and travel_routing all "
-                "unset and say so."
+                "unless a duration is set. Pass travel_minutes: a measured duration the owner gave you, or an Apple "
+                "Maps estimate from maps_get_travel_time where that tool exists. Never invent one: with neither, leave "
+                "travel_minutes, travel_origin and travel_routing all unset and say so."
             )
         return
     for k in (_TRAVEL_DURATION, _TRAVEL_START):
