@@ -23,7 +23,7 @@ network path to the server's bridge port (your home network or your VPN). It onl
    ```bash
    ./install.sh
    ```
-   It asks for the bridge address, the token (hidden) and the fingerprint, builds the Reminders program and the PDF reader, runs the
+   It asks for the bridge address, the token (hidden) and the fingerprint, builds the Reminders program, the PDF reader and the Maps program, runs the
    self-test, and installs a LaunchAgent. Do this while you are at the Mac and it is unlocked: macOS cannot show its permission prompts on the lock screen.
 3. macOS asks two separate things. Click **Allow** on both:
    * **"iCloud Mac Helper (Reminders)" would like full access to your Reminders.** This is the grant Reminders needs. If you missed it:
@@ -39,6 +39,8 @@ The helper works on the Drive folder your Mac already keeps in sync (`~/Library/
 syncs to your other devices by itself. Paths can't leave that folder, and nothing is ever deleted permanently: trashing and replacing use
 Apple's own `trash` command. Files offloaded by "Optimise Mac Storage" are downloaded on demand with Apple's `brctl`. PDFs are read by a
 small PDFKit program (`bin/pdf-text`) that the installer builds, and Word, RTF, ODT and HTML files by Apple's `textutil`.
+Apple Maps travel times and place search (`ENABLE_MAPS`) run through a small MapKit program (`bin/maps-cli`), also built by the
+installer. It needs no permission and never uses this Mac's location: places are only what the agent passes.
 
 **It needs Full Disk Access.** In System Settings > Privacy & Security > Full Disk Access, press **+**, press Cmd+Shift+G and add:
 

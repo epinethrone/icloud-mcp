@@ -31,6 +31,8 @@
 !mac-helper/ops/*.py
 !mac-helper/pdftext/
 !mac-helper/pdftext/*.swift
+!mac-helper/maps/
+!mac-helper/maps/*.swift
 !mac-helper/eventkit/
 !mac-helper/eventkit/*.swift
 !mac-helper/eventkit/Info.plist

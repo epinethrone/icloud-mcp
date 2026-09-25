@@ -58,7 +58,8 @@ def test_the_real_operation_table_is_exactly_the_reminders_notes_and_drive_opera
                                    "reminder_list_create", "reminder_list_update", "reminder_list_delete",
                                    "note_folders", "notes_list", "note_read", "note_create", "note_delete",
                                    "note_folder_create", "note_move", "note_update",
-                                   "drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file", "drive_write", "drive_mkdir", "drive_move", "drive_trash", "shortcut_run"}
+                                   "drive_list", "drive_search", "drive_search_content", "drive_info", "drive_read", "drive_get_file", "drive_write", "drive_mkdir", "drive_move", "drive_trash", "shortcut_run",
+                                   "maps_travel_time", "maps_search"}
     assert validate_args("reminder_lists", None) == {} and validate_args("reminders_list", {"query": "x", "limit": 5})["limit"] == 5
 
 

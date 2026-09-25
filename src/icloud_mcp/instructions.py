@@ -57,8 +57,7 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("CALENDAR", "People go in attendees, never in the title; the place goes in location.", ("calendar_create_event",)),
     ("CALENDAR", "Read 'conflicts' and 'possible_duplicate' in the create result and tell the owner; on_conflict='refuse' creates "
                  "nothing on an overlap.", ("calendar_create_event",)),
-    ("CALENDAR", "Travel time is a number you set and Apple never works out: use a measured one or none, never a guess.",
-     ("calendar_create_event",)),
+    ("CALENDAR", "Travel time is a number you set and Apple never works out. {TRAVEL}", ("calendar_create_event",)),
     ("CALENDAR", "For free time use calendar_find_free_time (it counts travel, ignores free, cancelled and declined events).",
      ("calendar_find_free_time",)),
     ("CALENDAR", "On calendar_update_event, attendees is the complete list (people kept keep their answers); for one person in "
@@ -161,12 +160,17 @@ def build_instructions(s: Settings, tools: set[str] | frozenset[str] | None = No
     def ok(needs: tuple[str, ...]) -> bool:
         return have is None or all(t in have for t in needs)
 
+    travel = ("Use a measured one from the owner when there is one; otherwise ask maps_get_travel_time (arrive_at = the event "
+              "start, the event's location as destination) and pass its minutes and travel_routing, telling the owner it is an "
+              "Apple Maps estimate. Never invent one." if ok(("maps_get_travel_time",))
+              else "Use a measured one or none, never a guess.")
     by_card = s.enable_contacts and ok(("contacts_search",))
     by_mail = s.enable_mail and ok(("mail_find_correspondent",))
     lookup = (_LOOKUP_CONTACTS + (", then, if there is no card or no email, " + _LOOKUP_MAIL if by_mail else "") if by_card
               else ("with " + _LOOKUP_MAIL if by_mail else "by asking the owner for it"))
     areas = [a for a, on in (("Mail", s.enable_mail), ("Calendar", s.enable_calendar), ("Contacts", s.enable_contacts),
-                             ("Reminders", s.enable_reminders), ("Notes", s.enable_notes), ("iCloud Drive", s.enable_drive)) if on]
+                             ("Reminders", s.enable_reminders), ("Notes", s.enable_notes), ("iCloud Drive", s.enable_drive),
+                             ("Apple Maps", s.enable_maps)) if on]
     off = [a for a, on in (("Reminders", s.enable_reminders), ("Notes", s.enable_notes), ("iCloud Drive", s.enable_drive)) if not on]
     helper = (f" {', '.join(off)}: not enabled here (they need the owner's Mac helper); if asked, say so." if off else "")
     out = [_owner_block(s) + f"Tools for the owner's iCloud: {', '.join(areas) or 'none enabled'}.{helper} Results leave empty fields out.\n"]
@@ -179,7 +183,7 @@ def build_instructions(s: Settings, tools: set[str] | frozenset[str] | None = No
         if name != section:
             out.append(f"\n{name}:")
             section = name
-        out.append("- " + text.replace("{LOOKUP}", lookup))
+        out.append("- " + text.replace("{LOOKUP}", lookup).replace("{TRAVEL}", travel))
     if s.allow_send and s.enable_mail and ok(("mail_send",)):
         senders = " / ".join(t for t in ("mail_send", "mail_reply", "mail_forward") if ok((t,)))
         out.append("\n" + ((_SEND_LOCAL_DRAFTS if s.local_mode else _SEND_APPROVAL) if s.require_approval else _SEND_DIRECT)

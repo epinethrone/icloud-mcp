@@ -109,6 +109,7 @@ class Settings:
     imap_idle_seconds: int = 600  # IMAP_IDLE_SECONDS: a pooled connection unused for longer is closed instead of reused
     caldav_pool_size: int = 4     # CALDAV_POOL_SIZE: CalDAV connections kept for reuse (calendars are read in parallel)
     caldav_keepalive_seconds: int = 600   # CALDAV_KEEPALIVE_SECONDS: keep pooled CalDAV connections warm this long after the last call (0 = off)
+    enable_maps: bool = False     # ENABLE_MAPS: Apple Maps travel times and place search via the Mac helper (needs BRIDGE_TOKEN)
     warmup_on_start: bool = True  # WARMUP_ON_START: log in to mail, calendar and contacts in the background right after start
     tool_workers: int = 8         # TOOL_WORKERS: threads that run tool calls, so parallel calls do not queue behind each other
     agent_notes_file: str = ""    # AGENT_NOTES_FILE: the owner's own rules for agents, appended to the instructions (never shipped)
@@ -180,6 +181,7 @@ class Settings:
             imap_idle_seconds=max(30, _int("IMAP_IDLE_SECONDS", 600)),
             caldav_pool_size=max(1, min(_int("CALDAV_POOL_SIZE", 4), 8)),
             caldav_keepalive_seconds=max(0, _int("CALDAV_KEEPALIVE_SECONDS", 600)),
+            enable_maps=_bool("ENABLE_MAPS", False),
             warmup_on_start=_bool("WARMUP_ON_START", True),
             tool_workers=max(2, min(_int("TOOL_WORKERS", 8), 32)),
             agent_notes_file=_str("AGENT_NOTES_FILE"),
@@ -196,7 +198,7 @@ class Settings:
 
     @property
     def bridge_enabled(self) -> bool:
-        return self.enable_reminders or self.enable_notes or self.enable_drive or bool(self.shortcuts_allow)
+        return self.enable_reminders or self.enable_notes or self.enable_drive or self.enable_maps or bool(self.shortcuts_allow)
 
     @property
     def public_host(self) -> str:
@@ -215,7 +217,7 @@ class Settings:
     def _validate_bridge_and_areas(self) -> None:
         if self.bridge_enabled:
             if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
-                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
+                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / ENABLE_MAPS / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
                                  "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
             if self.owner_password and self.bridge_token == self.owner_password:
                 raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")
