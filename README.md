@@ -249,6 +249,10 @@ A connector that can read your mail and act for you is a prompt-injection target
 |---|---|---|
 | Agent sends mail on injected instructions | Sending only **queues** the message for your approval at `/outbox` (locally: saves it to Drafts) | `SEND_REQUIRES_APPROVAL=true` |
 | Agent emails invitations to strangers | Attendee changes are **blocked** | `ALLOW_CALENDAR_INVITES=false` |
+| Agent invites the wrong people once invites are on | Any address, at most 10 guests | `INVITE_ALLOWLIST`, `MAX_ATTENDEES` |
+| Agent puts a stranger's address on a real contact so a later reply goes there | Allowed, but the address is marked as agent-added in results and on the approval page | `CONTACTS_ALLOW_EMAIL_CHANGES=false` to block it |
+| Agent reads years of archive for a task about today | Whole mailbox | `MAIL_MAX_AGE_DAYS` |
+| Hostile text is not spotted | Built-in patterns (English and Dutch) plus removal of text hidden in HTML mail | `SAFETY_SCREEN=command:<path>` adds your own classifier |
 | Agent mails arbitrary addresses | Any address, at most 25 per message | `SEND_ALLOWLIST`, `MAX_RECIPIENTS` |
 | Agent destroys mail | Delete moves mail to Trash; deleting from Trash is off | `ALLOW_PERMANENT_DELETE=false` |
 | Agent destroys notes or files | Notes go to Recently Deleted, Drive files to the Trash. Reminders have no trash, so a deleted reminder is gone (it is one line, easily recreated); moving one between lists never deletes it | always |

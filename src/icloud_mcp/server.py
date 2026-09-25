@@ -34,7 +34,7 @@ from .outbox import Outbox
 from .config import Settings
 from .contacts import ContactsError, ContactsService
 from .instructions import build_instructions, read_agent_notes
-from .safety import clean_deep, confirm_problem, warnings_for
+from .safety import clean_deep, configure_screen, confirm_problem, stats as safety_stats, warnings_for
 from .safety import confirm_token as make_confirm_token
 from . import mailbulk
 from .mail import UNTRUSTED_NOTICE, MailError, MailService
@@ -268,6 +268,29 @@ def _register_prompts(mcp: MCPServer, s: Settings) -> None:
         def birthdays_coming_up(days: str = "14") -> str:
             return (f"Use contacts_list_birthdays for the next {days} days. List each person with the date and the age they "
                     "turn if known, and suggest a short personal message for each that I can send myself." + ask)
+
+
+def notes_file_drive_path(s: Settings) -> str | None:
+    """AGENT_NOTES_FILE's path relative to the iCloud Drive root when it lives inside the Drive, else None. Drive tools refuse to
+    write, move or trash that path: an agent must never be able to rewrite its own instructions."""
+    if not s.agent_notes_file:
+        return None
+    full = str(Path(s.agent_notes_file).expanduser().resolve()).replace("\\", "/")
+    marker = "/Mobile Documents/com~apple~CloudDocs/"
+    if marker not in full:
+        return None
+    return full.split(marker, 1)[1].strip("/").casefold()
+
+
+def _protects_notes(s: Settings, *paths: str | None) -> None:
+    protected = notes_file_drive_path(s)
+    if protected is None:
+        return
+    for p in paths:
+        rel = (p or "").replace("\\", "/").strip("/").casefold()
+        if rel == protected or protected.startswith(rel + "/") and rel:
+            raise BridgeError("Refused: that path holds or contains the owner's rules file for agents (AGENT_NOTES_FILE), which agents "
+                              "never change. Ask the owner to edit it themselves.")
 
 
 def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
@@ -1161,7 +1184,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                                                             completed_since=completed_since, completed_before=completed_before))
                 if isinstance(data, list):                    # an older helper answers with a bare list
                     data = {"reminders": data}
-                return {"notice": _MAC_NOTICE, "count": len(data["reminders"]), **data, "complete": True}
+                found = warnings_for(*(f"{r.get('title') or ''} {r.get('notes') or ''}" for r in data["reminders"] if isinstance(r, dict)))
+                return {"notice": _MAC_NOTICE, "count": len(data["reminders"]), **data, "complete": True,
+                        **({"safety_warnings": found} if found else {})}
 
             if writable:
 
@@ -1286,7 +1311,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 """List or search the user's notes, most recently modified first. Returns id, title, folder, created and modified (no text):
                 read one with notes_read. Notes live on the user's Mac, which must be online."""
                 data = bridge.call("notes_list", _given(folder=folder, query=query, search_body=search_body or None, limit=max(1, limit)))
-                return {"notice": _MAC_NOTICE, "count": len(data), "notes": data}
+                found = warnings_for(*(f"{n.get('title') or ''} {n.get('snippet') or ''}" for n in data if isinstance(n, dict)))
+                return {"notice": _MAC_NOTICE, "count": len(data), "notes": data, **({"safety_warnings": found} if found else {})}
 
             @mcp.tool(annotations=_READ)
             @_guard
@@ -1508,7 +1534,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             ) -> dict[str, Any]:
                 """List a folder in the user's iCloud Drive: folders first, then files, with size, modified time and whether a file is
                 offloaded to iCloud (reading it then downloads it first). App documents such as Pages files show as type 'package'."""
-                return {"notice": _DRIVE_NOTICE, **bridge.call("drive_list", _given(path=path, include_hidden=include_hidden or None, limit=max(1, limit)))}
+                got = bridge.call("drive_list", _given(path=path, include_hidden=include_hidden or None, limit=max(1, limit)))
+                found = warnings_for(*(str(i.get("name") or "") for i in got.get("items", []))) if isinstance(got, dict) else []
+                return {"notice": _DRIVE_NOTICE, **got, **({"safety_warnings": found} if found else {})}
 
             @mcp.tool(annotations=_READ)
             @_guard
@@ -1576,6 +1604,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 ) -> dict[str, Any]:
                     """Create a plain text file in iCloud Drive (.txt, .md, .csv, .json and similar). Refuses to replace an existing
                     file unless overwrite is true, and then moves the old version to the Trash first."""
+                    _protects_notes(s, path)
                     return {"written": bridge.call("drive_write", _given(path=path, content=content, overwrite=overwrite or None))}
 
                 @mcp.tool(annotations=_IDEMPOTENT_WRITE)
@@ -1591,6 +1620,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                     to: Annotated[str, _d("New path, or an existing folder to move it into.")],
                 ) -> dict[str, Any]:
                     """Move or rename a file or folder in iCloud Drive. Never overwrites: if the destination exists, nothing moves."""
+                    _protects_notes(s, path, to)
                     return {"moved": bridge.call("drive_move", {"path": path, "to": to})}
 
                 @mcp.tool(annotations=_DESTRUCTIVE)
@@ -1598,6 +1628,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 def drive_trash(path: Annotated[str, _d("File or folder to move to the Trash. " + _DRIVE_PATH)]) -> dict[str, Any]:
                     """Move a file or folder in iCloud Drive to the Trash, where the user can recover it. Use only for exactly what the
                     user asked to remove. Never deletes permanently."""
+                    _protects_notes(s, path)
                     return {"trashed": bridge.call("drive_trash", {"path": path})}
 
 
@@ -1624,7 +1655,8 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
             if area in results:
                 results[area]["connections"] = view
         return {"ok": all(r["ok"] for r in results.values()), "since_start_seconds": round(time.monotonic() - _STARTED),
-                "areas": results}
+                "areas": results,
+                "safety_warnings_since_start": safety_stats()}   # counts per pattern id: how often third-party text looked hostile
 
     if (approval["mail"] or approval["imessage_outbox"]) and provider is not None:
         register_outbox_routes(mcp, provider, s, approval["mail"], approval["imessage"], approval["imessage_outbox"])
@@ -1741,6 +1773,7 @@ def main_local(s: Settings) -> None:
         changes["bridge_host"] = "127.0.0.1"         # helper and server share this computer
     s = dataclasses.replace(s, **changes)
     s.validate_for_local()
+    configure_screen(s.safety_screen)
     _ensure_data_dir(s)
     mcp, _ = create_server(s)
     bridge = getattr(mcp, "_icloud_bridge", None)
@@ -1790,6 +1823,7 @@ def main(argv: list[str] | None = None) -> None:
         main_local(s)
         return
     s.validate_for_server()
+    configure_screen(s.safety_screen)
     _ensure_data_dir(s)
     mcp, _ = create_server(s)
     app = build_app(s, mcp)

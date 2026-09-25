@@ -78,14 +78,39 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
     def _tok(kind: str, item_id: str, sha: str, action: str, exp: int) -> str:
         return hmac.new(key, f"{kind}|{item_id}|{sha}|{action}|{exp}".encode(), hashlib.sha256).hexdigest()
 
-    def _buttons(kind: str, q: Any, exp: int, send_label: str) -> str:
+    def _context_rows(d: dict[str, Any]) -> str:
+        """Where the queued message came from: the original it answers or forwards, and recipients an agent put on a contact."""
+        rows = ""
+        if orig := d.get("original"):
+            if orig.get("unavailable"):
+                rows += _row("In reply to", "(the original message could not be read)")
+            else:
+                frm = ", ".join(f"{a.get('name', '')} <{a.get('email', '')}>".strip() for a in orig.get("from") or [] if isinstance(a, dict))
+                rows += _row("In reply to", f"{orig.get('subject') or '(no subject)'} from {frm or '?'}" + (", bulk mail" if orig.get("bulk") else ""))
+        if added := d.get("agent_added_recipients"):
+            rows += _row("Agent-added address", ", ".join(added) + " (an agent put this address on a contact card recently)")
+        return rows
+
+    def _flagged(d: dict[str, Any]) -> str:
+        """The warnings the original message carried: a reply to a message that tried to steer an agent needs a deliberate yes."""
+        found = list((d.get("original") or {}).get("safety_warnings") or [])
+        if d.get("agent_added_recipients"):
+            found.append("A recipient's address was added to a contact by an agent, not by you.")
+        if not found:
+            return ""
+        return ('<p class="warn">The message this answers looked like an attempt to steer the agent:</p><ul>'
+                + "".join(f"<li>{html.escape(w)}</li>" for w in found) + "</ul>")
+
+    def _buttons(kind: str, q: Any, exp: int, send_label: str, override: bool = False) -> str:
         forms = ""
         for action, label, cls in (("approve", send_label, "ok"), ("discard", "Discard", "no")):
             forms += (f'<form method="post" action="/outbox/act" style="display:inline"><input type="hidden" name="id" value="{html.escape(q.id)}">'
                       f'<input type="hidden" name="kind" value="{kind}">'
                       f'<input type="hidden" name="action" value="{action}"><input type="hidden" name="exp" value="{exp}">'
                       f'<input type="hidden" name="tok" value="{_tok(kind, q.id, q.sha256, action, exp)}">'
-                      f'<button class="{cls}" type="submit">{label}</button></form>')
+                      + (f'<label class="muted"><input type="checkbox" name="override" value="1"> I read the warning and still want this sent</label> '
+                         if override and action == "approve" else "")
+                      + f'<button class="{cls}" type="submit">{label}</button></form>')
         return forms
 
     def _all_tok(kind: str, qs: list[Any], exp: int) -> str:
@@ -104,8 +129,10 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
     def _queue_page(note: str = "") -> Response:
         items = [(k, q) for k, o in outboxes.items() for q in o.pending()]
         exp = int(time.time()) + _TOKEN_TTL
+        recent = sum(1 for _, q in items if time.time() - q.created_at < 3600)
         parts = [f'<div class="card"><h1>Outgoing messages waiting for your approval</h1>{note}'
                  f'<p class="muted">{len(items)} waiting. Review the exact recipients and text below; this is what will be sent.</p>'
+                 + (f'<p class="warn">An agent queued {recent} of these in the last hour. Approve only what you asked for.</p>' if recent else '')
                  + "".join(_discard_all_button(k, qs, exp) for k in outboxes
                            if len(qs := [q for kk, q in items if kk == k]) > 1)
                  + '</div>']
@@ -122,11 +149,13 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
             atts = "".join(f"<li>{html.escape(str(a.get('filename')))} ({html.escape(str(a.get('content_type')))}, {a.get('size')} bytes)</li>"
                            for a in d["attachments"]) or ""
             body = d["body"] if len(d["body"]) <= _BODY_PREVIEW else d["body"][:_BODY_PREVIEW] + "\n\n[... preview truncated; the full message is sent]"
-            forms = _buttons(kind, q, exp, "Approve and send")
+            flagged = _flagged(d)
+            forms = _buttons(kind, q, exp, "Approve and send", override=bool(flagged))
+            context = _context_rows(d)
             parts.append(f"""<div class="card"><h2>{html.escape(d['subject'] or '(no subject)')}</h2><table>
 {_row('From', d['from'])}{_row('To', d['to'])}{_row('Cc', d['cc'])}{_row('Bcc', d['bcc'])}
-{_row('Will be delivered to', ', '.join(d['envelope_recipients']))}
-</table>{('<p class=warn>Attachments:</p><ul>' + atts + '</ul>') if atts else ''}
+{_row('Will be delivered to', ', '.join(d['envelope_recipients']))}{context}
+</table>{('<p class=warn>Attachments:</p><ul>' + atts + '</ul>') if atts else ''}{flagged}
 <pre>{html.escape(body)}</pre><p class="muted">Expires in about {mins} min. Approve only if you asked your agent to send this.</p>{forms}</div>""")
         if not items:
             parts.append('<div class="card"><p>Nothing is waiting.</p></div>')
@@ -183,6 +212,12 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
             box.claim(q.id)
             log.info("Owner discarded queued message %s", q.id)
             return _queue_page('<p class="ok-note">Discarded.</p>')
+        if kind == "mail" and str(form.get("override", "")) != "1":
+            d = await asyncio.to_thread(mail.describe_queued, q)
+            if _flagged(d):
+                log.info("Approval of %s refused without the override: the original carried safety warnings", q.id)
+                return _queue_page('<p class="err">Not sent: this message answers one that looked like an attempt to steer the agent. '
+                                   'Tick the box under it if you still want it sent.</p>')
         try:
             result = (await asyncio.to_thread(imessage.release, box, q.id) if kind == "imessage"
                       else await asyncio.to_thread(mail.release, q.id))

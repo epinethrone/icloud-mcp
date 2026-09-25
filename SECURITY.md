@@ -56,6 +56,21 @@ Never include a real app-specific password, owner password or token in a report.
 - **A fix and coordinated disclosure** usually within 90 days, sooner for severe issues.
 - **Credit** in the advisory and release notes, unless you prefer to stay anonymous.
 
+## Outbound channels and the gate on each
+
+An agent that obeys every instruction it reads can only get data out through these paths. Each one is listed with what stops it.
+
+| Channel | Gate |
+|---|---|
+| Mail (`mail_send`, `mail_reply`, `mail_forward`, `mail_unsubscribe` by mail) | Queued for the owner on `/outbox` (`SEND_REQUIRES_APPROVAL`), `SEND_ALLOWLIST`, `MAX_RECIPIENTS`; re-checked at release |
+| iMessage (`imessage_send_message`) | Off by default; queued for the owner; `IMESSAGE_SEND_ALLOWLIST` (empty = nobody), `IMESSAGE_NEVER_SEND` |
+| Calendar invitations, updates, cancellations and RSVPs | Off by default (`ALLOW_CALENDAR_INVITES`); when on, `INVITE_ALLOWLIST` and `MAX_ATTENDEES`. No approval page yet: an allowed guest receives the event's text |
+| One-click unsubscribe (`mail_unsubscribe`) | A POST with a fixed body to the URL in the sender's own header, public HTTPS only; it tells the sender the mail was processed and reveals the server's address, nothing else |
+| Shortcuts (`shortcuts_run`) | Off by default; a double allowlist of names; the agent's `input` text reaches whatever the Shortcut does, so allow only Shortcuts that send nothing anywhere |
+| Apple Maps (`maps_*`) | Query text goes to Apple only |
+| Contact cards (`contacts_update`) | Not an exit by itself, but a poisoned address routes a later reply; results and the approval page mark agent-added addresses; `CONTACTS_ALLOW_EMAIL_CHANGES=false` blocks address changes |
+| Notes, Reminders lists and iCloud Drive folders shared with other people | Not detected: a write into a shared container reaches its members. Keep shared lists and folders out of agents' hands, or run read-only |
+
 ## Hardening notes for operators
 
 By default the server:
@@ -76,7 +91,17 @@ By default the server:
   (`~/Library/Application Support/icloud-mac-helper/drive-text-cache.sqlite`, mode 600), so searches stay fast and still
   work after macOS offloads a file.
 - Reads `AGENT_NOTES_FILE` fresh on every use, caps it at 8,000 characters, strips invisible characters, and never logs its
-  path or contents. The owner's rules come after the security rules in the instructions and can only refine them.
+  path or contents. The owner's rules come after the security rules in the instructions and can only refine them; a closing
+  line repeats that the security rules win. If the file lives inside iCloud Drive, the Drive tools refuse to write, move or
+  trash it (keep it outside the Drive anyway).
+- Removes text a reader cannot see from HTML mail before converting it (hidden elements, zero-size fonts, comments) and says so
+  in `safety_warnings`; screens subjects and display names in search results, contact cards, and note, reminder and file
+  listings, not only message bodies; counts every warning by pattern id (never text) for `icloud_check_health`; and runs the
+  owner's own classifier on every piece of third-party text when `SAFETY_SCREEN=command:<path>` is set. A hosted model is
+  deliberately not offered here: mail must not leave the owner's server because of a safety feature.
+- On the approval page, shows which message a reply answers and the warnings that message carried, marks recipients whose
+  address an agent added to a contact, refuses to send such a reply until the owner ticks an explicit override, and says how
+  many items an agent queued in the last hour.
 
 - Reads iMessage only from the helper user's own Messages database, read-only, and never another macOS user's. Sending an iMessage
   is off by default (`IMESSAGE_ALLOW_SEND`); when on, it waits for the owner on `/outbox` by default whatever the mail setting
