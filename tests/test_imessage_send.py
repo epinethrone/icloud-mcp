@@ -141,3 +141,28 @@ async def test_the_outbox_page_shows_and_sends_a_queued_imessage(s, monkeypatch)
             assert forged.status_code == 400 and not sent                                         # a token for one queue fits no other
             done = await c.post("/outbox/act", data={"id": m[1], "kind": "imessage", "action": "approve", "exp": m[2], "tok": m[3]})
             assert "Sent" in done.text and sent == [("imessage_send", {"handle": "anna@example.org", "text": "Lunch <b>tomorrow</b>?"})]
+
+
+def test_never_send_and_hidden_match_the_data_however_it_is_written(s, tmp_path):
+    odd = {"chats": [{"chat_id": "Bot@Example.ORG", "participants": ["Bot@Example.ORG"], "name": ""},
+                     {"chat_id": "chat901", "participants": ["anna@example.org", "+31 6 1234 5678"], "name": "", "group": True}]}
+    for never in (("bot@example.org",), ("0612345678",)):
+        m, b, box = svc(dataclasses.replace(s, imessage_never_send=never, imessage_send_allowlist=("*",)), tmp_path)
+        b.call = lambda op, a=None, b=b: b.calls.append((op, a)) or odd
+        chat = "Bot@Example.ORG" if "@" in never[0] else "chat901"
+        with pytest.raises(IMessageError, match="IMESSAGE_NEVER_SEND"):
+            m.send("x", chat_id=chat, outbox=box)
+    m, _, _ = svc(dataclasses.replace(s, imessage_hidden_chats=("0612345678",)), tmp_path)
+    assert not m._shown("+31612345678") and not m._shown("+31 6 12345678") and m._shown("+31612345679")
+
+
+def test_release_checks_who_is_in_the_group_now(s, tmp_path):
+    m, b, box = svc(dataclasses.replace(s, imessage_send_allowlist=("anna@example.org", "+31600000002")), tmp_path)
+    q = m.send("Hi all", chat_id="chat900", outbox=box)["outbox_id"]
+    CHATS["chats"][1]["participants"].append("bot@example.org")                 # the assistant was added to the group meanwhile
+    try:
+        with pytest.raises(IMessageError, match="IMESSAGE_NEVER_SEND"):
+            m.release(box, q)
+    finally:
+        CHATS["chats"][1]["participants"].remove("bot@example.org")
+    assert not box.pending() and not [op for op, _ in b.calls if op == "imessage_send"]

@@ -125,6 +125,7 @@ class Settings:
     imessage_hidden_chats: tuple[str, ...] = ()    # IMESSAGE_HIDDEN_CHATS: chat ids (handles) never listed, read or searched
     imessage_visible_chats: tuple[str, ...] = ()   # IMESSAGE_VISIBLE_CHATS: when set, only these chats
     imessage_max_age_days: int = 0                 # IMESSAGE_MAX_AGE_DAYS: 0 = the whole history (default); e.g. 365 limits it
+    imessage_hide_short_codes: bool = True         # IMESSAGE_HIDE_SHORT_CODES: hide service senders (banks, one-time codes): not email, not a full number
     imessage_never_send: tuple[str, ...] = ()      # IMESSAGE_NEVER_SEND: handles or chat ids nothing is ever sent to (e.g. an assistant's own Apple ID)
     imessage_allow_send: bool = False              # IMESSAGE_ALLOW_SEND: register imessage_send_message at all
     imessage_send_requires_approval: bool = True   # IMESSAGE_SEND_REQUIRES_APPROVAL: every iMessage waits for the owner (independent of mail)
@@ -205,6 +206,7 @@ class Settings:
             imessage_hidden_chats=tuple(_norm_handle(x) for x in _list("IMESSAGE_HIDDEN_CHATS") if x.strip()),
             imessage_visible_chats=tuple(_norm_handle(x) for x in _list("IMESSAGE_VISIBLE_CHATS") if x.strip()),
             imessage_max_age_days=max(0, _int("IMESSAGE_MAX_AGE_DAYS", 0)),
+            imessage_hide_short_codes=_bool("IMESSAGE_HIDE_SHORT_CODES", True),
             imessage_never_send=tuple(_norm_handle(x) for x in _list("IMESSAGE_NEVER_SEND") if x.strip()),
             imessage_allow_send=_bool("IMESSAGE_ALLOW_SEND", False),
             imessage_send_requires_approval=_bool("IMESSAGE_SEND_REQUIRES_APPROVAL", True),

@@ -100,6 +100,18 @@ def split_list(value):
     return [x.strip() for x in (value or "").split(",") if x.strip()]
 
 
+def key(handle):
+    """Handles compared in one form: emails lower-case, phone numbers by their last nine digits (+31 6..., 06... and 0031 6...
+    are the same number), anything else lower-case."""
+    h = (handle or "").strip()
+    if "@" in h:
+        return h.lower()
+    digits = "".join(ch for ch in h if ch.isdigit())
+    if len(digits) >= 9 and all(ch.isdigit() or ch in " +().-" for ch in h):
+        return digits[-9:]
+    return h.lower()
+
+
 # ---------------------------------------------------------------------------------------------------- the database
 def connect():
     if not os.path.exists(DB):
@@ -122,9 +134,10 @@ def connect():
 def chat_groups(db, exclude):
     """Conversations by chat_identifier: the SMS and iMessage rows of one person are one conversation."""
     groups = {}
+    exclude = {key(x) for x in exclude}
     for rowid, guid, ident, name, service, style, archived in db.execute(
             "SELECT ROWID, guid, chat_identifier, display_name, service_name, style, is_archived FROM chat"):
-        if not ident or ident in exclude:
+        if not ident or key(ident) in exclude:
             continue
         g = groups.setdefault(ident, {"chat_id": ident, "rowids": [], "guids": {}, "row_service": {}, "name": "", "group": False, "services": set(),
                                       "participants": set(), "archived": True, "last": 0, "unread": 0})
@@ -333,7 +346,7 @@ def never_send_here():
     settings do not, so the Mac never messages, say, the owner's own assistant, whatever the server asks."""
     try:
         with open(NEVER_SEND_FILE) as f:
-            return {line.split("#", 1)[0].strip().lower() for line in f if line.split("#", 1)[0].strip()}
+            return {key(line.split("#", 1)[0]) for line in f if line.split("#", 1)[0].strip()}
     except OSError:
         return set()
 
@@ -351,9 +364,10 @@ def op_send(a):
     target = chat_id or handle
     blocked = never_send_here()
     g = groups.get(target)
-    people = set(p.lower() for p in (g["participants"] if g else [])) | {target.lower()}
-    if people & blocked:
-        fail("this Mac never sends to %s (imessage-never-send.txt). Nothing was sent." % ", ".join(sorted(people & blocked)))
+    people = set(g["participants"] if g else []) | {target}
+    hit = sorted(p for p in people if key(p) in blocked)
+    if hit:
+        fail("this Mac never sends to %s (imessage-never-send.txt). Nothing was sent." % ", ".join(hit))
     if chat_id and g is None:
         fail("no conversation with chat_id '%s'. Nothing was sent." % chat_id)
     payload = {"text": text}

@@ -206,3 +206,13 @@ def test_the_mac_itself_never_sends_to_its_blocked_handles_or_by_sms(run, tmp_pa
     run.mode.write_text("deny")
     with pytest.raises(RuntimeError, match="not allowed to control Messages"):
         run("imessage_send", {"chat_id": "+31600000001", "text": "x"})
+
+
+def test_the_mac_matches_handles_however_they_are_written(run, tmp_path):
+    # national form in the setting, international in chat.db; mixed case in chat.db, lower case in the file
+    assert [c["chat_id"] for c in run("imessage_chats", {"exclude": "06 00000001"})["chats"]] == ["chat900"]
+    (tmp_path / "never.txt").write_text("bot@example.org\n0600000001\n")
+    with pytest.raises(RuntimeError, match="never sends to"):
+        run("imessage_send", {"chat_id": "+31600000001", "text": "x"})
+    with pytest.raises(RuntimeError, match="never sends to"):
+        run("imessage_send", {"handle": "BOT@Example.ORG", "text": "x"})

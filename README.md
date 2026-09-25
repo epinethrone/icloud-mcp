@@ -389,7 +389,7 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 
 - Your own iMessage and SMS history on your Mac, read-only: conversations with who is in them (matched to your contacts), messages with reactions, delivery and read state and attachments by name, and search across the whole history (case and accents ignored).
 - Only your own Messages database is read (the Mac user the helper runs as); another user on the Mac is never touched. The helper's Python needs Full Disk Access, the same grant iCloud Drive uses.
-- Messages are other people's words: results carry the untrusted-data notice and safety warnings. `IMESSAGE_HIDDEN_CHATS` hides chats completely, `IMESSAGE_MAX_AGE_DAYS` limits how far back, and `IMESSAGE_NEVER_SEND` labels your own assistant's thread. Turn it on with `ENABLE_IMESSAGE=true`.
+- Messages are other people's words: results carry the untrusted-data notice and safety warnings. `IMESSAGE_HIDDEN_CHATS` hides chats completely, service senders such as banks and one-time codes are hidden by default, `IMESSAGE_MAX_AGE_DAYS` limits how far back, and `IMESSAGE_NEVER_SEND` labels your own assistant's thread. Turn it on with `ENABLE_IMESSAGE=true`.
 - Sending is off unless `IMESSAGE_ALLOW_SEND=true`, only reaches people on `IMESSAGE_SEND_ALLOWLIST` (empty means nobody), never reaches `IMESSAGE_NEVER_SEND` or the handles in the Mac's own `imessage-never-send.txt`, and by default waits for your approval on `/outbox` even when your mail sends directly. iMessage only, never SMS; each send is confirmed from what Messages records. The first send asks once for permission to control Messages: `--selftest-imessage-send you@example.com` on the Mac triggers that while you are there.
 
 </details>
@@ -484,6 +484,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `ENABLE_IMESSAGE` | false | Read and search your own iMessage and SMS history through the Mac helper |
 | `IMESSAGE_HIDDEN_CHATS`, `IMESSAGE_VISIBLE_CHATS` | empty | Chats never shown to the agent; or, when set, the only ones shown |
 | `IMESSAGE_MAX_AGE_DAYS` | 0 | 0 = the whole history; a number limits every read to that many days |
+| `IMESSAGE_HIDE_SHORT_CODES` | true | Hides service senders (banks, delivery, one-time codes): any sender that is not an email or a full phone number |
 | `IMESSAGE_NEVER_SEND` | empty | Handles nothing is ever sent to (your own assistant's Apple ID, say); its chat is labelled as the assistant's |
 | `IMESSAGE_ALLOW_SEND`, `IMESSAGE_SEND_REQUIRES_APPROVAL` | false, true | Allow `imessage_send_message`; every iMessage then waits for your approval on `/outbox`, whatever the mail setting |
 | `IMESSAGE_SEND_ALLOWLIST` | empty | Who may receive an iMessage (handles or chat ids); empty means nobody, `*` anyone |

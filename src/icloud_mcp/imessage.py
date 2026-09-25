@@ -34,6 +34,22 @@ def _digits(s: str) -> str:
     return re.sub(r"\D", "", s or "")
 
 
+def _key(handle: str) -> str:
+    """One form for comparing handles from settings and from chat.db: emails lower-case, phone numbers as their last nine digits
+    (so +31 6..., 06... and 0031 6... match), anything else (a group chat id, a short code) lower-case as given."""
+    h = (handle or "").strip()
+    if "@" in h:
+        return h.lower()
+    d = _digits(h)
+    return d[-9:] if len(d) >= 9 and re.fullmatch(r"[\s+().\d-]+", h) else h.lower()
+
+
+def _short_code(chat_id: str) -> bool:
+    """A service sender: neither an email nor a full phone number (banks, delivery and one-time-code senders use these)."""
+    h = (chat_id or "").strip()
+    return "@" not in h and not h.lower().startswith("chat") and len(_digits(h)) < 9
+
+
 class IMessageService:
     def __init__(self, settings: Any, bridge: Any, contacts: Any | None = None):
         self.s, self.bridge, self.contacts = settings, bridge, contacts
@@ -82,14 +98,19 @@ class IMessageService:
 
     # -- which chats exist ---------------------------------------------------------------------
     def _check_chat(self, chat_id: str) -> None:
-        if chat_id in self.s.imessage_hidden_chats or (self.s.imessage_visible_chats and chat_id not in self.s.imessage_visible_chats):
+        if not self._shown(chat_id):
             raise IMessageError(f"No conversation with chat_id '{chat_id}' (take it from imessage_list_chats).")
 
     def _shown(self, chat_id: str) -> bool:
-        return chat_id not in self.s.imessage_hidden_chats and (not self.s.imessage_visible_chats or chat_id in self.s.imessage_visible_chats)
+        k = _key(chat_id)
+        if k in {_key(h) for h in self.s.imessage_hidden_chats}:
+            return False
+        if self.s.imessage_hide_short_codes and _short_code(chat_id):
+            return False
+        return not self.s.imessage_visible_chats or k in {_key(h) for h in self.s.imessage_visible_chats}
 
     def _exclude(self) -> str | None:
-        return ",".join(self.s.imessage_hidden_chats) or None
+        return ",".join(self.s.imessage_hidden_chats) or None           # the helper compares by the same last-nine-digits rule
 
     def _since(self, since: str | None) -> str | None:
         """The later of the caller's 'since' and the IMESSAGE_MAX_AGE_DAYS limit."""
@@ -106,8 +127,8 @@ class IMessageService:
         return since if given_naive > floor else floor.isoformat()
 
     def _is_assistant(self, chat_id: str, participants: list[str]) -> bool:
-        never = set(self.s.imessage_never_send)
-        return bool(never) and (chat_id in never or any(p in never for p in participants))
+        never = {_key(h) for h in self.s.imessage_never_send}
+        return bool(never) and bool({_key(x) for x in (chat_id, *participants) if x} & never)
 
     def _people_of(self, participants: list[str], resolve) -> list[dict[str, Any]]:
         return [resolve(p) for p in participants]
@@ -202,20 +223,21 @@ class IMessageService:
 
     def _permit(self, t: dict[str, Any]) -> None:
         """IMESSAGE_NEVER_SEND wins over everything; then IMESSAGE_SEND_ALLOWLIST (empty = nobody, '*' = anyone)."""
-        ids = {x for x in (t["chat_id"], t["handle"], *t["participants"]) if x}
-        never = ids & set(self.s.imessage_never_send)
+        ids = [x for x in (t["chat_id"], t["handle"], *t["participants"]) if x]
+        never_keys = {_key(h) for h in self.s.imessage_never_send}
+        never = sorted(x for x in ids if _key(x) in never_keys)
         if never:
-            raise IMessageError(f"Never sent to {', '.join(sorted(never))} (IMESSAGE_NEVER_SEND): that is the owner's own assistant "
+            raise IMessageError(f"Never sent to {', '.join(never)} (IMESSAGE_NEVER_SEND): that is the owner's own assistant "
                                 "or a blocked handle. Nothing was sent.")
-        allow = set(self.s.imessage_send_allowlist)
-        if "*" in allow:
+        allow = {_key(h) for h in self.s.imessage_send_allowlist if h != "*"}
+        if "*" in self.s.imessage_send_allowlist:
             return
         if not allow:
             raise IMessageError("Sending iMessages is on, but IMESSAGE_SEND_ALLOWLIST is empty, so nobody may receive one. Only the "
                                 "owner can add people to it. Nothing was sent.")
-        if (t["chat_id"] and t["chat_id"] in allow) or all(p in allow for p in t["participants"]):
+        if (t["chat_id"] and _key(t["chat_id"]) in allow) or all(_key(p) in allow for p in t["participants"]):
             return
-        missing = sorted(p for p in t["participants"] if p not in allow)
+        missing = sorted(p for p in t["participants"] if _key(p) not in allow)
         raise IMessageError(f"Not on IMESSAGE_SEND_ALLOWLIST: {', '.join(missing)}. Tell the owner; only they can change the list. "
                             "Nothing was sent.")
 
@@ -262,8 +284,9 @@ class IMessageService:
         if q is None:
             raise IMessageError("That message is no longer waiting (already released, discarded or expired).")
         d = json.loads(q.raw.decode())
-        self._permit({"chat_id": d.get("chat_id"), "handle": d.get("handle"), "participants":   # no longer allowed: dropped
-                      [p.get("handle") for p in (d.get("to") or {}).get("participants", []) if p.get("handle")]})
+        # Who is in the conversation NOW (someone may have been added to a group since it was queued), against the lists as
+        # they are now. Anything no longer allowed is dropped, not put back.
+        self._permit(self._target(d.get("chat_id"), d.get("handle")))
         try:
             got = self.bridge.call("imessage_send", {k: v for k, v in {"chat_id": d.get("chat_id"), "handle": d.get("handle"),
                                                                         "text": d.get("text")}.items() if v})

@@ -82,7 +82,10 @@ By default the server:
   is off by default (`IMESSAGE_ALLOW_SEND`); when on, it waits for the owner on `/outbox` by default whatever the mail setting
   (`IMESSAGE_SEND_REQUIRES_APPROVAL`), reaches only `IMESSAGE_SEND_ALLOWLIST` (empty means nobody), and never reaches a handle in
   `IMESSAGE_NEVER_SEND` or in the Mac's own `imessage-never-send.txt`. That last list exists for an owner who runs an assistant
-  on its own Apple ID: a message to it would read as the owner's command. The lists are checked again when the owner approves.
+  on its own Apple ID: a message to it would read as the owner's command. The lists are checked again when the owner approves, against the conversation's participants as they are then. Handles are
+  compared in one form on both sides (emails ignore case; phone numbers match on their last nine digits, so `06...` and `+316...`
+  are the same). Service senders (short codes: banks, one-time passcodes) are hidden from reading by default, so a message that
+  tricks the agent cannot search them for codes.
 
 To tighten a deployment further:
 
