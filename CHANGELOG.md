@@ -3,8 +3,18 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
-## Unreleased
+## 0.11.0
 
+- **Injection hardening** (#71): an invitation allowlist and attendee cap (`INVITE_ALLOWLIST`, `MAX_ATTENDEES`); text hidden
+  in HTML mail removed with a warning; subjects, display names and listings screened, not only bodies; an optional
+  classifier of your own (`SAFETY_SCREEN=command:<path>`); agent-added contact addresses journaled and marked
+  (`CONTACTS_ALLOW_EMAIL_CHANGES`); `MAIL_MAX_AGE_DAYS`; the agent cannot rewrite its own notes file in iCloud Drive.
+- **iCloud MCP Control**, a menu bar app for the Mac (`menubar/`): status, health, pause, restart and stop, owner passcode,
+  iCloud app-specific password, and the connected apps (which ones, when each was last used, sign out one or all).
+- Admin API for it, off unless `ADMIN_PORT` is set: loopback only, on its own port, token in `DATA_DIR/admin-token`.
+- Pause: while `DATA_DIR/paused` exists every tool except the diagnostics answers that the server is paused.
+- A passcode or app-specific password changed through the admin API is stored in `DATA_DIR/overrides.json` and takes
+  precedence over the environment.
 - The approval page has a "Discard all" button per queue. It clears only the messages shown on the page, so one queued later
   stays. An exact repeat of a waiting message is queued once, and a full queue tells the agent not to retry.
 - Safety warnings on a stranger's text in more places: unsubscribe results, the sample in a bulk-action preview, and the

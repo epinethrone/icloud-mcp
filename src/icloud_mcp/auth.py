@@ -73,6 +73,7 @@ class OwnerOAuthProvider:
         self.failures: list[float] = []
         # Diagnostics only, never persisted: fingerprints (hashes) of tokens that were rotated, and log rate limiting.
         self._rotated: dict[str, float] = {}
+        self._last_used: dict[str, float] = {}         # client_id -> last accepted access token (memory only)
         self._last_logged: dict[str, tuple[float, int]] = {}
         self._load()
 
@@ -102,6 +103,64 @@ class OwnerOAuthProvider:
             finally:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
+
+    def connected_clients(self) -> int:
+        """Apps currently signed in: distinct clients holding a live access or refresh token."""
+        with self._lock:
+            self._prune()
+            return len({v["client_id"] for v in (*self.access.values(), *self.refresh.values())})
+
+    def connected_apps(self) -> list[dict[str, Any]]:
+        """Every app that is signed in now: its name, the host it connects from, when it first connected and when it was
+        last used. Only metadata; no token or secret leaves this method."""
+        from urllib.parse import urlparse
+        with self._lock:
+            self._prune()
+            used: dict[str, float] = {}
+            # When a token was issued: recorded since 0.11, and for older tokens its expiry minus its lifetime. A client
+            # gets new tokens whenever it refreshes, so the newest issue time is about when it was last used.
+            for recs, ttl in ((self.access, self.s.access_token_ttl), (self.refresh, self.s.refresh_token_ttl)):
+                for rec in recs.values():
+                    cid = rec["client_id"]
+                    issued = rec.get("issued_at") or rec["expires_at"] - ttl
+                    used[cid] = max(used.get(cid, 0), issued, self._last_used.get(cid, 0))
+            out = []
+            for cid, last in used.items():
+                info = self.clients.get(cid, {})
+                hosts = sorted({urlparse(u).hostname or "" for u in info.get("redirect_uris") or []} - {""})
+                out.append({"id": cid, "name": info.get("client_name") or "Unnamed app", "host": hosts[0] if hosts else "",
+                            "connected_at": info.get("client_id_issued_at"), "last_used": int(last) or None})
+            return sorted(out, key=lambda a: (a["name"].lower(), -(a["last_used"] or 0)))
+
+    def sign_out(self, client_id: str) -> bool:
+        """Sign one app out: its tokens are revoked and its registration forgotten, so it has to connect again with the owner
+        passcode. False if no such app was signed in."""
+        with self._lock:
+            known = client_id in self.clients or any(r["client_id"] == client_id for r in (*self.access.values(), *self.refresh.values()))
+            self.access = {k: v for k, v in self.access.items() if v["client_id"] != client_id}
+            self.refresh = {k: v for k, v in self.refresh.items() if v["client_id"] != client_id}
+            self.clients.pop(client_id, None)
+            self._last_used.pop(client_id, None)
+            if known:
+                self._save()
+        if known:
+            log.warning("Owner signed out client %s", self._cid(client_id))
+        return known
+
+    def sign_out_all(self) -> int:
+        """Revoke every sign-in and forget every registered client, in the running server and on disk. Every app (Claude,
+        scheduled agents) has to connect again with the owner passcode. Returns how many apps were signed in."""
+        with self._lock:
+            n = self.connected_clients()
+            self.access.clear()
+            self.refresh.clear()
+            self.codes.clear()
+            self.pending.clear()
+            self.clients.clear()
+            self._last_used.clear()
+            self._save()
+        log.warning("Owner signed out all apps (%d were signed in)", n)
+        return n
 
     def _prune(self) -> None:
         now = time.time()
@@ -236,9 +295,9 @@ class OwnerOAuthProvider:
         now = int(time.time())
         access, refresh, pair = secrets.token_urlsafe(48), secrets.token_urlsafe(48), secrets.token_hex(8)
         self.access[_h(access)] = {"client_id": client_id, "scopes": scopes, "resource": resource, "pair": pair,
-                                   "expires_at": now + self.s.access_token_ttl}
+                                   "issued_at": now, "expires_at": now + self.s.access_token_ttl}
         self.refresh[_h(refresh)] = {"client_id": client_id, "scopes": scopes, "resource": resource, "pair": pair,
-                                     "expires_at": now + self.s.refresh_token_ttl}
+                                     "issued_at": now, "expires_at": now + self.s.refresh_token_ttl}
         self._prune()
         self._save()
         log.info("oauth: issued tokens to client %s via %s (%d refresh tokens stored)", self._cid(client_id), grant, len(self.refresh))
@@ -292,6 +351,7 @@ class OwnerOAuthProvider:
                 self._log_limited("access-unknown", logging.INFO, "oauth: access token not recognised (never issued here, expired and cleaned up, "
                                   "revoked, or from before the last restart)")
             return None
+        self._last_used[rec["client_id"]] = time.time()
         return AccessToken(token=token, client_id=rec["client_id"], scopes=rec["scopes"], expires_at=int(rec["expires_at"]),
                            resource=rec.get("resource"), subject="owner")
 

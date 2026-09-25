@@ -36,6 +36,16 @@
 !mac-helper/eventkit/
 !mac-helper/eventkit/*.swift
 !mac-helper/eventkit/Info.plist
+!menubar/
+!menubar/README.md
+!menubar/Package.swift
+!menubar/build.sh
+!menubar/Resources/
+!menubar/Resources/Info.plist
+!menubar/Resources/AppIcon.icns
+!menubar/Sources/
+!menubar/Sources/ICloudMCPControl/
+!menubar/Sources/ICloudMCPControl/*.swift
 !src/
 !src/icloud_mcp/
 !src/icloud_mcp/*.py

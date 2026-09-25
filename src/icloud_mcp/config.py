@@ -19,6 +19,33 @@ def _bool(name: str, default: bool) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "on")
 
 
+OVERRIDES_FILE = "overrides.json"      # in DATA_DIR: credentials changed from the admin API (the menu bar app)
+OVERRIDABLE = {"icloud_app_password": "ICLOUD_APP_PASSWORD", "owner_password": "MCP_OWNER_PASSWORD"}
+
+
+def read_overrides(data_dir: str) -> dict[str, str]:
+    """Credentials the owner changed through the admin API. They take precedence over the environment, so a changed passcode
+    or app-specific password works the same whether the server runs under launchd, Docker or uvx. Unreadable = none."""
+    import json
+    try:
+        with open(os.path.join(data_dir, OVERRIDES_FILE)) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return {k: v.strip() for k, v in data.items() if k in OVERRIDABLE and isinstance(v, str) and v.strip()} if isinstance(data, dict) else {}
+
+
+def owner_password_problem(value: str, bridge_token: str = "") -> str | None:
+    """Why a passcode cannot be used, or None. The same rules for the environment and the admin API."""
+    if len(value) < 12:
+        return "The owner passcode must be at least 12 characters long."
+    if "change-me" in value.lower():
+        return "The owner passcode still has the placeholder value."
+    if bridge_token and value == bridge_token:
+        return "The owner passcode must differ from BRIDGE_TOKEN."
+    return None
+
+
 def _norm_handle(value: str) -> str:
     """A Messages handle in the form chat.db uses: emails lower-case, phone numbers as +digits (spaces, dashes, dots and brackets
     dropped); anything else (a group chat id) as given."""
@@ -140,14 +167,18 @@ class Settings:
     safety_screen: str = ""                 # SAFETY_SCREEN: "" (built-in patterns) or "command:<path>" (the owner's own classifier)
     owner_addresses: tuple[str, ...] = ()   # OWNER_ADDRESSES: more addresses that are the owner's (aliases), e.g. on invitations
     shortcuts_allow: tuple[str, ...] = ()   # SHORTCUTS_ALLOW: exact Shortcut names the assistant may run (the Mac keeps its own list too)
+    admin_port: int = 0           # ADMIN_PORT: loopback-only admin API for the menu bar app (0 = off); never the tunnelled port
+    overrides_active: tuple[str, ...] = ()  # which OVERRIDABLE settings come from DATA_DIR/overrides.json (names only)
 
     @classmethod
     def from_env(cls) -> "Settings":
         username = _str("ICLOUD_USERNAME")
         read_only = _bool("READ_ONLY", False)
+        overrides = read_overrides(_str("DATA_DIR", "./data"))
         return cls(
             username=username,
-            app_password=(_str("ICLOUD_APP_PASSWORD") or keychain_password(username, _str("ICLOUD_KEYCHAIN_SERVICE", "icloud-mcp"))).replace(" ", ""),
+            app_password=(overrides.get("icloud_app_password") or _str("ICLOUD_APP_PASSWORD")
+                          or keychain_password(username, _str("ICLOUD_KEYCHAIN_SERVICE", "icloud-mcp"))).replace(" ", ""),
             email_address=_str("ICLOUD_EMAIL_ADDRESS", username),
             display_name=_str("ICLOUD_DISPLAY_NAME"),
             signature=_str("EMAIL_SIGNATURE").replace("\\n", "\n"),
@@ -189,7 +220,7 @@ class Settings:
             outbox_max=_int("OUTBOX_MAX", 20),
             allow_calendar_invites=_bool("ALLOW_CALENDAR_INVITES", False),
             public_url=_str("MCP_PUBLIC_URL").rstrip("/"),
-            owner_password=_str("MCP_OWNER_PASSWORD"),
+            owner_password=overrides.get("owner_password") or _str("MCP_OWNER_PASSWORD"),
             data_dir=_str("DATA_DIR", "./data"),
             host=_str("MCP_HOST", "127.0.0.1"),
             port=_int("MCP_PORT", 8000),
@@ -226,6 +257,8 @@ class Settings:
             safety_screen=_str("SAFETY_SCREEN"),
             owner_addresses=tuple(a.strip().lower() for a in _list("OWNER_ADDRESSES") if a.strip()),
             shortcuts_allow=tuple(n.strip() for n in _str("SHORTCUTS_ALLOW").split(";" if ";" in _str("SHORTCUTS_ALLOW") else ",") if n.strip()),
+            admin_port=max(0, _int("ADMIN_PORT", 0)),
+            overrides_active=tuple(OVERRIDABLE[k] for k in sorted(overrides)),
         )
 
     # ------------------------------------------------------------------
@@ -287,4 +320,6 @@ class Settings:
             raise SystemExit("MCP_PUBLIC_URL must be the public https:// URL of this server (no trailing path).")
         if len(self.owner_password) < 12:
             raise SystemExit("MCP_OWNER_PASSWORD must be set and at least 12 characters long.")
+        if self.admin_port and self.admin_port in (self.port, self.bridge_port):
+            raise SystemExit("ADMIN_PORT must differ from MCP_PORT and BRIDGE_PORT: the admin API is never served on another port.")
         self._validate_bridge_and_areas()

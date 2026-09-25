@@ -54,9 +54,9 @@ def hero(t: dict) -> str:
 {logo(572, 64, 136)}
 <text x="640" y="296" text-anchor="middle" font-size="30" font-weight="600" fill="{t['soft']}" letter-spacing="0.5">iCloud MCP</text>
 <text x="640" y="392" text-anchor="middle" font-size="84" font-weight="700" fill="{t['ink']}" letter-spacing="-2.5">Your iCloud. <tspan fill="url(#word)">In Claude.</tspan></text>
-<text x="640" y="456" text-anchor="middle" font-size="27" fill="{t['soft']}">Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive.</text>
+<text x="640" y="456" text-anchor="middle" font-size="27" fill="{t['soft']}">Mail, Calendar, Contacts, Reminders, Notes, iCloud Drive, Maps and Messages.</text>
 <text x="640" y="494" text-anchor="middle" font-size="27" fill="{t['soft']}">Private by design. It asks before anything leaves.</text>
-<text x="640" y="556" text-anchor="middle" font-size="19" fill="{t['faint']}" letter-spacing="1.5">67 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
+<text x="640" y="556" text-anchor="middle" font-size="19" fill="{t['faint']}" letter-spacing="1.5">88 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
 """)
 
 
@@ -74,6 +74,9 @@ def glyph(kind: str, cx: float, cy: float) -> str:
                      f'<path d="M18 11 H40 M18 22 H40 M18 33 H34"/></g>',
         "notes": f'<g {s}><rect x="6" y="3" width="32" height="38" rx="6"/><path d="M13 14 H31 M13 22 H31 M13 30 H24"/></g>',
         "drive": f'<g {s}><path d="M3 13 C3 10 5 8 8 8 H17 L21 12 H36 C39 12 41 14 41 17 V33 C41 36 39 38 36 38 H8 C5 38 3 36 3 33 Z"/></g>',
+        "maps": f'<g {s}><path d="M22 41 C22 41 8 27 8 17 A14 14 0 0 1 36 17 C36 27 22 41 22 41 Z"/><circle cx="22" cy="17" r="5"/></g>',
+        "messages": f'<g {s}><path d="M22 6 C33 6 41 12.5 41 20.5 C41 28.5 33 35 22 35 C19.5 35 17 34.6 14.8 33.9 L6 38 L8.5 30.5 C5 27.8 3 24.3 3 20.5 C3 12.5 11 6 22 6 Z"/></g>',
+        "shortcuts": f'<g {s}><rect x="4" y="12" width="28" height="28" rx="7"/><path d="M12 4 H34 C37.3 4 40 6.7 40 10 V32"/></g>',
     }[kind]
 
 
@@ -81,14 +84,17 @@ APPS = [
     ("mail", "Mail", 25, "#0a84ff", "#5ac8fa", ["Search every folder, read whole", "threads, reply and file away."]),
     ("calendar", "Calendar", 12, "#ff3b30", "#ff6961", ["Find free time, plan, move", "and answer invitations."]),
     ("contacts", "Contacts", 11, "#8e8e93", "#aeaeb2", ["Find anyone, even misspelled.", "Addresses, phones, emails."]),
-    ("reminders", "Reminders", 10, "#ff9500", "#ffb340", ["Create, move and complete,", "live through EventKit."]),
+    ("reminders", "Reminders", 10, "#ff9500", "#ffb340", ["Repeating, with alerts,", "live through EventKit."]),
     ("notes", "Notes", 9, "#ffcc00", "#ffd60a", ["Read, edit and organise", "into folders."]),
     ("drive", "iCloud Drive", 10, "#32ade6", "#64d2ff", ["Search inside documents,", "send, write and tidy files."]),
+    ("maps", "Maps", 2, "#00a89d", "#40d3c9", ["Travel times by bike, car,", "foot or transit. Find places."]),
+    ("messages", "Messages", 4, "#28b44b", "#5de07a", ["Read and search your chats.", "Sending waits for your OK."]),
+    ("shortcuts", "Shortcuts", 2, "#7d4ce0", "#c56cf0", ["Run only the shortcuts", "you allow, listed twice."]),
 ]
 
 
 def apps(t: dict) -> str:
-    w, h = 1280, 740
+    w, h = 1280, 1036
     cw, ch, gap, x0, y0 = 392, 272, 24, 28, 132
     tiles = []
     for i, (kind, name, count, c1, c2, lines) in enumerate(APPS):
@@ -107,21 +113,24 @@ def apps(t: dict) -> str:
   <text x="{x + 32}" y="{y + 224}" font-size="20" fill="{t['soft']}">{lines[1]}</text>
   {f'<text x="{x + 32}" y="{y + 254}" font-size="14" font-weight="600" fill="{t["faint"]}" letter-spacing="1.2">WITH THE MAC HELPER</text>' if mac else ''}
 </g>""")
-    return svg(w, h, "Six apps, one connector: Mail 25 tools, Calendar 12, Contacts 11, Reminders 10, Notes 9, iCloud Drive 10.", f"""
+    return svg(w, h, "Nine apps, one connector: Mail 25 tools, Calendar 12, Contacts 11, Reminders 10, Notes 9, iCloud Drive 10, "
+                     "Maps 2, Messages 4, Shortcuts 2.", f"""
 <rect width="{w}" height="{h}" rx="36" fill="{t['bg']}"/>
-<text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="{t['ink']}" letter-spacing="-1.2">Six apps. One connector.</text>
+<text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="{t['ink']}" letter-spacing="-1.2">Nine apps. One connector.</text>
 <text x="640" y="108" text-anchor="middle" font-size="21" fill="{t['soft']}">Plus a health check that tests every service in one call.</text>
 {''.join(tiles)}
 """)
 
 
 # ------------------------------------------------------------------ how it works
-def node(t: dict, x: float, y: float, w: float, h: float, title: str, sub: str, accent: str | None = None) -> str:
+def node(t: dict, x: float, y: float, w: float, h: float, title: str, sub: str, accent: str | None = None, sub2: str = "") -> str:
     stroke = accent or t["line"]
     width = 2.5 if accent else 1
+    top = h / 2 - (14 if sub2 else 4)
     return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="22" fill="{t["card"]}" stroke="{stroke}" stroke-width="{width}"/>'
-            f'<text x="{x + w / 2}" y="{y + h / 2 - 4}" text-anchor="middle" font-size="24" font-weight="700" fill="{t["ink"]}">{title}</text>'
-            f'<text x="{x + w / 2}" y="{y + h / 2 + 24}" text-anchor="middle" font-size="18" fill="{t["soft"]}">{sub}</text>')
+            f'<text x="{x + w / 2}" y="{y + top}" text-anchor="middle" font-size="24" font-weight="700" fill="{t["ink"]}">{title}</text>'
+            f'<text x="{x + w / 2}" y="{y + top + 28}" text-anchor="middle" font-size="18" fill="{t["soft"]}">{sub}</text>'
+            + (f'<text x="{x + w / 2}" y="{y + top + 52}" text-anchor="middle" font-size="18" fill="{t["soft"]}">{sub2}</text>' if sub2 else ""))
 
 
 def arrow(t: dict, x1, y1, x2, y2, label: str, lx: float, ly: float, anchor: str = "middle") -> str:
@@ -132,7 +141,8 @@ def arrow(t: dict, x1, y1, x2, y2, label: str, lx: float, ly: float, anchor: str
 def how(t: dict) -> str:
     w, h = 1280, 520
     return svg(w, h, "How it works: Claude connects to your server over OAuth and MCP; the server talks to iCloud Mail, Calendar and "
-                     "Contacts; an optional Mac helper connects out to the server for Reminders, Notes and iCloud Drive.", f"""
+                     "Contacts; an optional Mac helper connects out to the server for Reminders, Notes, iCloud Drive, Maps and "
+                     "Messages; an optional menu bar app controls the server through a private admin port.", f"""
 <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
   <path d="M0 0 L10 5 L0 10 z" fill="{t['faint']}"/></marker></defs>
 <rect width="{w}" height="{h}" rx="36" fill="{t['bg']}"/>
@@ -141,11 +151,13 @@ def how(t: dict) -> str:
 {node(t, 500, 150, 280, 110, "icloud-mcp", "on your server or your Mac", "#6366f1")}
 {node(t, 940, 150, 280, 110, "iCloud", "Mail · Calendar · Contacts")}
 {node(t, 500, 360, 280, 110, "Mac helper", "optional, connects out")}
-{node(t, 940, 360, 280, 110, "On your Mac", "Reminders · Notes · Drive")}
+{node(t, 940, 360, 280, 110, "On your Mac", "Reminders · Notes · Drive", sub2="Maps · Messages")}
+{node(t, 60, 360, 280, 110, "Menu bar app", "optional, on the same Mac")}
 {arrow(t, 342, 205, 496, 205, "OAuth + MCP", 420, 190)}
 {arrow(t, 782, 205, 936, 205, "IMAP · SMTP · DAV", 860, 190)}
 {arrow(t, 640, 358, 640, 264, "pinned TLS, outbound only", 656, 316, "start")}
-{arrow(t, 782, 415, 936, 415, "EventKit · files", 860, 400)}
+{arrow(t, 782, 415, 936, 415, "EventKit · MapKit", 860, 400)}
+{arrow(t, 342, 390, 540, 266, "admin, this Mac only", 462, 300, "end")}
 """)
 
 

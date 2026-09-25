@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/hero-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/hero-light.svg" alt="iCloud MCP. Your iCloud, in Claude. Mail, Calendar, Contacts, Reminders, Notes and iCloud Drive." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/hero-light.svg" alt="iCloud MCP. Your iCloud, in Claude. Mail, Calendar, Contacts, Reminders, Notes, iCloud Drive, Maps and Messages." width="100%">
 </picture>
 
 <br>
@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Six apps, one connector: Mail (25 tools), Calendar (12), Contacts (11), Reminders (10), Notes (9) and iCloud Drive (10), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Nine apps, one connector: Mail (25 tools), Calendar (12), Contacts (11), Reminders (10), Notes (9), iCloud Drive (10), Maps (2), Messages (4) and Shortcuts (2), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -50,6 +50,10 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 *"Find my tax return PDF in iCloud Drive and tell me what I paid last year."*
 
+*"How long does it take me to cycle to the station, if I need to be there at nine?"*
+
+*"Catch me up on my messages from this weekend."*
+
 <br>
 
 ## Private by design.
@@ -67,43 +71,43 @@ Everything Claude reads is marked as someone else's words, not instructions.<br>
 Hidden characters are stripped, and phishing tricks are called out.
 
 **Tested where it counts.**<br>
-385 offline tests on every change, integration tests against real mail and calendar servers,<br>
+Over 600 offline tests on every change, including fuzzing of every parser that reads other people's data, integration tests against real mail and calendar servers,<br>
 and hands-on runs against a live iCloud account for the quirks only Apple's servers have.
 
 <br>
 
-## New in 0.6.
+## New since 0.9.
 
 </div>
 
 <table>
 <tr>
-<td width="33%" valign="top"><b>About three times faster calendars</b><br>Warm connections and all calendars read at once (measured on a local test stack).</td>
-<td width="33%" valign="top"><b>Lighter mail</b><br>Reading messages fetches only the text; attachments come down only when asked for (465 KB became 55 KB).</td>
-<td width="33%" valign="top"><b>Instant first call</b><br>The server signs in to mail, calendar and contacts in the background as it starts.</td>
+<td width="33%" valign="top"><b>Apple Maps</b><br>Travel time by bike, car, foot or transit for a departure or arrival time, and place search. Calendar travel time can use it.</td>
+<td width="33%" valign="top"><b>Messages</b><br>Read and search your iMessage and SMS history. Sending is off by default, and then waits for your approval and an allowlist.</td>
+<td width="33%" valign="top"><b>A menu bar app</b><br>See health at a glance, pause the server, restart it, change credentials and sign out any connected app.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Your own rules</b><br><code>AGENT_NOTES_FILE</code>: which calendar for what, how to sign mail, what never to touch.</td>
-<td width="33%" valign="top"><b>Replies owed</b><br><code>mail_list_awaiting_reply</code> and an unanswered-only, people-only search.</td>
-<td width="33%" valign="top"><b>Clash checks</b><br>New events report overlaps and likely duplicates, and can be refused on either.</td>
+<td width="33%" valign="top"><b>Drafts and folders</b><br>Send a saved draft as it is, update one, rename or delete mail folders (mail goes to Trash first).</td>
+<td width="33%" valign="top"><b>Calendars and groups</b><br>Create, rename and delete calendars; contact groups the way the Contacts app keeps them.</td>
+<td width="33%" valign="top"><b>Richer Reminders</b><br>Repeating reminders, extra alerts, completed ones with when they were done, and list management.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Invitations to answer</b><br><code>needs_reply</code> and "starting soon" filters on the calendar.</td>
-<td width="33%" valign="top"><b>Sturdier</b><br>One safe retry on a dropped connection, never after a write; a timeout names the slow step.</td>
-<td width="33%" valign="top"><b>Leaner for agents</b><br>A third less schema text to load, and instructions that only name tools you enabled.</td>
+<td width="33%" valign="top"><b>Pause</b><br>One switch and every tool answers that the server is paused, without disconnecting anyone.</td>
+<td width="33%" valign="top"><b>Sturdier</b><br>A malformed invitation can no longer break a calendar listing, found by fuzzing every parser.</td>
+<td width="33%" valign="top"><b>Safer</b><br>More safety warnings on a stranger's text, and a way to clear the approval queue at once.</td>
 </tr>
 </table>
 
-<p align="center"><sub>Also since 0.4: reused mail connections, <code>mail_list_changes</code>, newsletter radar, safe bulk clean-up with undo, safe unsubscribe, exact bookings, note editing, search inside Drive files, birthdays and Shortcuts. In 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP and scam warnings.</sub></p>
+<p align="center"><sub>In 0.6 to 0.8: about three times faster calendars, lighter mail, an instant first call, your own rules file, replies owed, clash checks and a hardened recurrence guard. Since 0.4: bulk clean-up with undo, safe unsubscribe, exact bookings, note editing, search inside Drive files, birthdays and Shortcuts. In 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP and scam warnings.</sub></p>
 
 <br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/how-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/how-light.svg" alt="How it works: Claude connects to icloud-mcp over OAuth and MCP. icloud-mcp talks to iCloud Mail, Calendar and Contacts over IMAP, SMTP, CalDAV and CardDAV. An optional Mac helper connects out to the server over pinned TLS and handles Reminders, Notes and iCloud Drive on your Mac." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/how-light.svg" alt="How it works: Claude connects to icloud-mcp over OAuth and MCP. icloud-mcp talks to iCloud Mail, Calendar and Contacts over IMAP, SMTP, CalDAV and CardDAV. An optional Mac helper connects out to the server over pinned TLS and handles Reminders, Notes, iCloud Drive, Maps and Messages on your Mac. An optional menu bar app controls the server through a private admin port on the same Mac." width="100%">
 </picture>
 
-<p align="center">Mail, Calendar and Contacts use Apple's standard protocols.<br>Reminders, Notes and iCloud Drive go through an optional helper on your Mac.<br>It connects out, so your Mac never opens a port.</p>
+<p align="center">Mail, Calendar and Contacts use Apple's standard protocols.<br>Reminders, Notes, iCloud Drive, Maps and Messages go through an optional helper on your Mac.<br>It connects out, so your Mac never opens a port.</p>
 
 <br>
 
@@ -256,6 +260,8 @@ A connector that can read your mail and act for you is a prompt-injection target
 | Agent mails arbitrary addresses | Any address, at most 25 per message | `SEND_ALLOWLIST`, `MAX_RECIPIENTS` |
 | Agent destroys mail | Delete moves mail to Trash; deleting from Trash is off | `ALLOW_PERMANENT_DELETE=false` |
 | Agent destroys notes or files | Notes go to Recently Deleted, Drive files to the Trash. Reminders have no trash, so a deleted reminder is gone (it is one line, easily recreated); moving one between lists never deletes it | always |
+| Agent texts people on injected instructions | iMessage sending is **off**; when on, every message waits for your approval, only people on an allowlist (empty = nobody) can receive one, and a never-send list blocks handles outright | `IMESSAGE_ALLOW_SEND=false`, `IMESSAGE_SEND_ALLOWLIST`, `IMESSAGE_NEVER_SEND` |
+| Agent reads your codes from Messages | Messages is **off**; when on, bank and one-time-code senders are hidden, and you can hide or allow chats | `ENABLE_IMESSAGE=false`, `IMESSAGE_HIDE_SHORT_CODES=true`, `IMESSAGE_HIDDEN_CHATS` |
 | Agent changes anything at all | Everything writable | `READ_ONLY=true` for a read-only connector |
 
 In Claude you can also set the send, reply, forward and delete tools to "ask before use". Anyone who obtains the app-specific password has **full access to mail, calendar and contacts** (Apple offers no narrower scope), so protect the server and its `.env` accordingly.
@@ -270,6 +276,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 - Every tool error is scrubbed before it reaches the agent: passwords and tokens masked, URLs cut to their host (iCloud DAV paths carry the account id), invisible characters removed. Health-check and unexpected errors, which may quote a server response, also drop account addresses and long numbers.
 - The MCP endpoint validates `Host` and `Origin`. Tool results carry an untrusted-content notice. HTTP-client request logging is disabled so account identifiers do not reach the logs.
 - The Mac bridge runs on its own private TLS port with a self-signed certificate the helper pins by fingerprint, plus a bearer token. It is never served on the public address or through the tunnel. The server sends only an operation name and validated arguments from a fixed list, never script text.
+- The admin API for the menu bar app is off unless `ADMIN_PORT` is set. It listens on 127.0.0.1 only, on its own port (never the public one or the tunnel), and every request needs the token in `DATA_DIR/admin-token` (mode 600); browser requests and non-loopback `Host` headers are refused.
 - Single-owner by design: one deployment serves one iCloud account. It is not multi-tenant, and storing other people's app-specific passwords is deliberately out of scope.
 
 </details>
@@ -448,21 +455,25 @@ Measured on a local test stack with 40 ms added to every round trip, comparing 0
 Connections stay signed in for 10 minutes after the last call (`IMAP_IDLE_SECONDS`, `CALDAV_KEEPALIVE_SECONDS`), and
 `WARMUP_ON_START` signs in as the server starts. `dev/bench.py` repeats the measurements against your own account.
 
-## Reminders, Notes and iCloud Drive through your Mac
+## Control it from the menu bar
 
-Apple only exposes Reminders, Notes and iCloud Drive on its own devices, so a small helper ([`mac-helper/`](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md)) runs on your Mac and does the work when the server asks.
+[`menubar/`](https://github.com/epinethrone/icloud-mcp/blob/main/menubar/README.md) holds **iCloud MCP Control**, a native macOS app for a server that runs on your Mac. Its menu is a standard macOS menu, like Time Machine's: it shows whether the server is up, how many tools and connected apps it has and any problem in plain words, and lets you pause the server (tools answer that it is paused, nobody is disconnected), restart or stop it, the Mac helper and a tunnel. Its Settings change the owner passcode, replace the iCloud app-specific password (tested with iCloud before it is saved) and list every connected app with when it was last used, so you can sign out one, a group or all of them. Turn on its admin API with `ADMIN_PORT`: it listens on 127.0.0.1 only, on its own port, and every request needs the token the server writes to `admin-token` in its data folder.
+
+## Reminders, Notes, iCloud Drive, Maps and Messages through your Mac
+
+Apple only exposes Reminders, Notes, iCloud Drive, Apple Maps and your Messages history on its own devices, so a small helper ([`mac-helper/`](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md)) runs on your Mac and does the work when the server asks.
 
 - **Nothing listens on your Mac.** The helper connects *out* to a private HTTPS port of the server (never the public address, never the tunnel) and long-polls for jobs.
-- **No code is ever sent.** The server sends an operation name and validated arguments from a fixed list. Reminders run a small EventKit program the installer builds on your Mac. Notes run static scripts. iCloud Drive runs one fixed Python script under Apple's own Python. In every case the arguments arrive as one JSON value, never as code.
+- **No code is ever sent.** The server sends an operation name and validated arguments from a fixed list. Reminders run a small EventKit program the installer builds on your Mac, and Maps a small MapKit program. Notes run static scripts. Messages are read from your own Messages database, read-only. iCloud Drive runs one fixed Python script under Apple's own Python. In every case the arguments arrive as one JSON value, never as code.
 - **Pinned and authenticated.** TLS with a self-signed certificate the helper pins by fingerprint, plus a bearer token.
 - **Honest when it's off.** It works while your Mac is on and reachable (home network or VPN). When it isn't, the tools say so.
 
-Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true` and `ENABLE_DRIVE=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
+Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true`, `ENABLE_DRIVE=true`, `ENABLE_MAPS=true` and `ENABLE_IMESSAGE=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
 
 **Shortcuts, allowlisted twice.** To let the assistant run some of your Shortcuts (`shortcuts_list`, `shortcuts_run`), list their exact names in `SHORTCUTS_ALLOW` on the server **and**, one per line, in `~/Library/Application Support/icloud-mac-helper/shortcuts-allow.txt` on the Mac. A name must be on both lists, so a compromised server can never run a shortcut you did not allow at the Mac itself. Apple's `shortcuts` command runs it, with optional text input, and its text output comes back. The tools do not exist without an allowlist or on a read-only server.
 
 > [!IMPORTANT]
-> **iCloud Drive needs Full Disk Access** for the helper's Python. On macOS 27 the grant only takes effect when the helper runs as the Command Line Tools `Python.app` executable, which is what the installer sets up. Details in the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md#icloud-drive).
+> **iCloud Drive and Messages need Full Disk Access** for the helper's Python. On macOS 27 the grant only takes effect when the helper runs as the Command Line Tools `Python.app` executable, which is what the installer sets up. Details in the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md#icloud-drive).
 
 ## Configuration
 
@@ -518,6 +529,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `OWNER_ADDRESSES` | (none) | More addresses that are yours (aliases), so invitations to them count as yours |
 | `AGENT_NOTES_FILE` | (none) | Your own rules for agents, added to the instructions and served as `icloud://agent-notes` (see `docs/agent-notes.example.md`) |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
+| `ADMIN_PORT` | off | Loopback-only admin API for the menu bar app (its token is `admin-token` in `DATA_DIR`) |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
 | `LOG_LEVEL` | INFO | |
