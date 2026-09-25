@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PopoverView: View {
     @Environment(Controller.self) private var controller
+    @State private var confirmStop = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -36,6 +37,14 @@ struct PopoverView: View {
                 .padding(12)
         }
         .frame(width: 320)
+        .confirmationDialog("Stop the server, Mac helper and tunnel?", isPresented: $confirmStop) {
+            Button("Stop All", role: .destructive) { controller.stopAll() }
+            if controller.status?.paused == false {
+                Button("Pause Instead") { controller.setPaused(true) }
+            }
+        } message: {
+            Text("Claude, scheduled agents and every other connected app lose the connector until you start it again. Pausing keeps everything connected but refuses requests.")
+        }
         .onAppear { controller.popoverVisible = true }
         .onDisappear { controller.popoverVisible = false }
     }
@@ -257,7 +266,7 @@ struct PopoverView: View {
                     if controller.overall == .stopped {
                         Button("Start All") { controller.startAll() }
                     } else {
-                        Button("Stop All") { controller.stopAll() }
+                        Button("Stop All…") { confirmStop = true }
                     }
                 }
                 Divider()

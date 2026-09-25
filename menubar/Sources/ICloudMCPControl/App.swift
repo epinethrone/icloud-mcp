@@ -21,6 +21,7 @@ struct ICloudMCPControlApp: App {
         }
         .windowResizability(.contentSize)
 
+        #if DEBUG
         // Design review only: `--preview` shows the popover's content in an ordinary window, so it can be screenshotted.
         WindowGroup("Preview", id: "preview") {
             if CommandLine.arguments.contains("--preview") {
@@ -31,6 +32,7 @@ struct ICloudMCPControlApp: App {
         }
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(CommandLine.arguments.contains("--preview") ? .presented : .suppressed)
+        #endif
     }
 }
 

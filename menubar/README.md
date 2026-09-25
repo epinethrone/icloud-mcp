@@ -11,7 +11,10 @@ credentials.
   anything is saved), or sign out every connected app.
 - **Health:** each iCloud service is checked when you open the menu, and problems are explained in plain words.
 
-It needs macOS 26 or later and a server installed with launchd (as the repository's Mac setup does).
+It needs macOS 26 or later and a server on the same Mac with the admin API turned on (below). Restart, stop and start
+appear for the launch agents it finds in `~/Library/LaunchAgents` (the Mac helper's installer creates one; the server and a
+tunnel have them if you run those with launchd). Without a launch agent for the server, Restart asks the server to restart
+itself, which works when something (launchd, a Docker restart policy) starts it again.
 
 ## Turn on the admin API
 

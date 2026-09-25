@@ -309,6 +309,10 @@ final class Controller {
             guard opensAtLogin != (SMAppService.mainApp.status == .enabled) else { return }
             do {
                 if opensAtLogin { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                if SMAppService.mainApp.status == .requiresApproval {
+                    lastError = "Approve iCloud MCP Control in System Settings, General, Login Items."
+                    SMAppService.openSystemSettingsLoginItems()
+                }
             } catch {
                 lastError = "Could not change Open at Login: \(error.localizedDescription)"
                 opensAtLogin = SMAppService.mainApp.status == .enabled
