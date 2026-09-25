@@ -286,9 +286,14 @@ def _protects_notes(s: Settings, *paths: str | None) -> None:
     protected = notes_file_drive_path(s)
     if protected is None:
         return
+    import posixpath
+
     for p in paths:
-        rel = (p or "").replace("\\", "/").strip("/").casefold()
-        if rel == protected or protected.startswith(rel + "/") and rel:
+        # Normalise before comparing: 'rules/../rules/x.md', './rules/x.md' and 'rules//x.md' all name the same file. A path
+        # that still climbs out of the root after normalising is refused too (the helper refuses it as well).
+        rel = posixpath.normpath((p or "").replace("\\", "/").strip("/") or ".").casefold()
+        rel = "" if rel == "." else rel
+        if rel.startswith("..") or rel == protected or protected.startswith(rel + "/") and rel:
             raise BridgeError("Refused: that path holds or contains the owner's rules file for agents (AGENT_NOTES_FILE), which agents "
                               "never change. Ask the owner to edit it themselves.")
 

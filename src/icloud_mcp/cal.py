@@ -1390,7 +1390,7 @@ class CalendarService:
         like mail: an invitation carries the event's text to every guest)."""
         from .mail import recipient_allowed
 
-        own = {a.lower() for a in self.s.own_addresses}
+        own = {a.lower() for a in self.s.own_addresses}   # the account address, the Apple ID, the mail logins and OWNER_ADDRESSES
         guests = [a for a in dict.fromkeys(x.lower() for x in addresses) if a not in own]
         if len(guests) > self.s.max_attendees:
             raise CalendarError(f"Too many attendees ({len(guests)}); this server allows at most MAX_ATTENDEES={self.s.max_attendees}.")

@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib as _hashlib
 import hmac as _hmac
 import json as _json
+from html.parser import HTMLParser as _HTMLParser
 import logging
 import re
 import secrets as _secrets
@@ -64,21 +65,97 @@ def clean(value: str) -> str:
 # HTML mail can carry text that never renders: hidden elements, zero-size fonts, HTML comments. A reader does not see it, a model
 # converting the HTML to text does, which is exactly where instructions get hidden. Those parts are removed before conversion;
 # colour tricks (white on white) cannot be judged without rendering and are left in place.
-_HIDDEN_STYLE = r"(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:\.0+)?(?:px|pt|em|rem|%)?\s*[;\"'])"
-_HIDDEN_ELEMENT = re.compile(
-    r"<(?P<tag>[a-zA-Z][\w-]*)(?=[^>]*(?:\bhidden\b(?=[\s>/=])|style\s*=\s*[\"'][^\"']*" + _HIDDEN_STYLE + r"))[^>]*>.*?</(?P=tag)\s*>",
-    re.I | re.S)
-_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+_HIDDEN_STYLE = re.compile(r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:\.0+)?(?:px|pt|em|rem|%)?)\s*(?:;|$)", re.I)
+_VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+
+def _is_hidden(attrs: list[tuple[str, str | None]]) -> bool:
+    for name, value in attrs:
+        if name.lower() == "hidden":
+            return True
+        if name.lower() == "style" and value and _HIDDEN_STYLE.search(value.replace("\n", " ")):
+            return True
+    return False
+
+
+class _HiddenStripper(_HTMLParser):
+    """Rebuilds the document without hidden subtrees and comments. A real parser, not a regex: a hidden <div> that contains
+    another <div> stays hidden to its own closing tag, so nested markup cannot end the hidden region early."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.out: list[str] = []
+        self.hidden: list[str] = []       # open hidden elements, innermost last; while non-empty, everything is dropped
+        self.depth: list[str] = []        # open elements inside the outermost hidden one, to find its closing tag
+        self.removed = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.hidden:
+            if tag not in _VOID:
+                self.depth.append(tag)
+            return
+        if _is_hidden(attrs) and tag not in _VOID:
+            self.hidden.append(tag)
+            self.removed = True
+            return
+        self.out.append(self.get_starttag_text() or "")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.hidden:
+            return
+        if _is_hidden(attrs):
+            self.removed = True
+            return
+        self.out.append(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.hidden:
+            if self.depth and self.depth[-1] == tag:
+                self.depth.pop()
+            elif not self.depth and self.hidden[-1] == tag:
+                self.hidden.pop()
+            elif tag in self.depth:                        # a mis-nested close: unwind to it
+                while self.depth and self.depth.pop() != tag:
+                    pass
+            return
+        self.out.append(f"</{tag}>")
+
+    def _keep(self, text: str) -> None:
+        if not self.hidden:
+            self.out.append(text)
+
+    def handle_data(self, data: str) -> None:
+        self._keep(data)
+
+    def handle_entityref(self, name: str) -> None:
+        self._keep(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self._keep(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        self.removed = True                            # comments never render; dropped everywhere
+
+    def handle_decl(self, decl: str) -> None:
+        self._keep(f"<!{decl}>")
+
+    def handle_pi(self, data: str) -> None:
+        self._keep(f"<?{data}>")
 
 
 def strip_hidden_html(html: str) -> tuple[str, bool]:
-    """(html without elements a reader cannot see, whether anything was removed). Bounded: a document over 2 MB is left as is,
-    because the regexes scan it whole."""
+    """(html without the parts a reader cannot see, whether anything was removed): hidden elements with everything inside
+    them, and comments. Bounded: a document over 2 MB is left as is. If the parser fails, the original is returned unchanged
+    and flagged, so a broken document is never silently trusted more than a clean one."""
     if not html or len(html) > 2_000_000:
         return html, False
-    out, n1 = _HTML_COMMENT.subn("", html)
-    out, n2 = _HIDDEN_ELEMENT.subn("", out)
-    return out, bool(n1 or n2)
+    p = _HiddenStripper()
+    try:
+        p.feed(html)
+        p.close()
+    except Exception:  # noqa: BLE001 - html.parser is lenient, but a pathological document must not take the mail down
+        return html, True
+    return "".join(p.out), p.removed
 
 
 HIDDEN_TEXT_WARNING = "It contained text hidden from a human reader (removed before conversion); that is how instructions are smuggled past the person."
