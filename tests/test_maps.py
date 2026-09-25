@@ -56,6 +56,18 @@ def test_exactly_the_given_arguments_go_to_the_mac_and_repeats_come_from_the_cac
     assert seen[1][1] == {"query": "bike repair", "near": "Utrecht", "limit": 20}      # limit capped at 20
 
 
+def test_a_different_time_is_never_answered_from_the_cache(s):
+    seen = []
+
+    async def go():
+        mcp, _ = create_server(s)
+        mcp._icloud_bridge.call = lambda op, a=None: seen.append(a) or TRIP
+        for t in ("2026-09-26T10:00", "2026-09-26T10:05"):
+            await mcp.call_tool("maps_get_travel_time", {"origin": "A", "destination": "B", "arrive_at": t})
+    asyncio.run(go())
+    assert [a["arrive_at"] for a in seen] == ["2026-09-26T10:00", "2026-09-26T10:05"]
+
+
 def test_depart_and_arrive_together_are_refused(s):
     from mcp.server.mcpserver.exceptions import ToolError
 

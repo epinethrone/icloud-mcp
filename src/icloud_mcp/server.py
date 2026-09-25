@@ -1406,7 +1406,7 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 and destination (name, address) are the places meant."""
                 if depart_at and arrive_at:
                     raise ToolError("Give depart_at or arrive_at, not both.")
-                key = (origin.strip().lower(), destination.strip().lower(), mode, (depart_at or "")[:15], (arrive_at or "")[:15], alternatives)
+                key = (origin.strip().lower(), destination.strip().lower(), mode, depart_at or "", arrive_at or "", alternatives)
                 hit = _maps_cache.get(key)
                 if hit and time.monotonic() - hit[0] < 600:                 # the same question within 10 minutes: Maps is not asked again
                     return {**hit[1], "cached": True}
