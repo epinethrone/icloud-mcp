@@ -46,6 +46,7 @@ _MAX_FAILURES, _FAILURE_WINDOW = 20, 900
 # helper itself can still refuse an operation it does not know.
 OP_MIN_HELPER: dict[str, str] = {
     "maps_travel_time": "0.6.0", "maps_search": "0.6.0",
+    "imessage_chats": "0.6.0", "imessage_read": "0.6.0", "imessage_search": "0.6.0",
     **{op: "0.5.0" for op in ("reminder_list_create", "reminder_list_update", "reminder_list_delete")},
     # "op.argument": an argument an older helper would reject as unknown
     **{f"{op}.{arg}": "0.5.0" for op, args in (("reminders_list", ("completed", "completed_since", "completed_before")),
@@ -112,6 +113,13 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "maps_travel_time": {"origin": ("str", True, 500), "destination": ("str", True, 500), "mode": ("str", False, 10),
                          "depart_at": ("iso", False, 40), "arrive_at": ("iso", False, 40), "alternatives": ("bool", False, 0)},
     "maps_search": {"query": ("str", True, 200), "near": ("str", False, 500), "limit": ("int", False, 20)},
+    # iMessage (ops/imessage.py; the owner's own ~/Library/Messages/chat.db, read-only)
+    "imessage_chats": {"limit": ("int", False, 1000), "since": ("iso", False, 40), "include_archived": ("bool", False, 0),
+                       "exclude": ("str", False, 4000)},
+    "imessage_read": {"chat_id": ("str", True, 300), "limit": ("int", False, 500), "before_id": ("int", False, 9007199254740991),
+                      "since": ("iso", False, 40), "exclude": ("str", False, 4000)},
+    "imessage_search": {"query": ("str", True, 200), "chat_id": ("str", False, 300), "limit": ("int", False, 200),
+                        "since": ("iso", False, 40), "before": ("iso", False, 40), "exclude": ("str", False, 4000)},
     # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
     "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }

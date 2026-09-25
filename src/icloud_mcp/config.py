@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -16,6 +17,16 @@ def _bool(name: str, default: bool) -> bool:
     if v is None or v.strip() == "":
         return default
     return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _norm_handle(value: str) -> str:
+    """A Messages handle in the form chat.db uses: emails lower-case, phone numbers as +digits (spaces, dashes, dots and brackets
+    dropped); anything else (a group chat id) as given."""
+    v = value.strip()
+    if "@" in v:
+        return v.lower()
+    digits = re.sub(r"[\s().-]", "", v)
+    return digits if re.fullmatch(r"\+?\d{5,}", digits) else v
 
 
 def _int(name: str, default: int) -> int:
@@ -110,6 +121,11 @@ class Settings:
     caldav_pool_size: int = 4     # CALDAV_POOL_SIZE: CalDAV connections kept for reuse (calendars are read in parallel)
     caldav_keepalive_seconds: int = 600   # CALDAV_KEEPALIVE_SECONDS: keep pooled CalDAV connections warm this long after the last call (0 = off)
     enable_maps: bool = False     # ENABLE_MAPS: Apple Maps travel times and place search via the Mac helper (needs BRIDGE_TOKEN)
+    enable_imessage: bool = False  # ENABLE_IMESSAGE: read and search the owner's own iMessage history via the Mac helper
+    imessage_hidden_chats: tuple[str, ...] = ()    # IMESSAGE_HIDDEN_CHATS: chat ids (handles) never listed, read or searched
+    imessage_visible_chats: tuple[str, ...] = ()   # IMESSAGE_VISIBLE_CHATS: when set, only these chats
+    imessage_max_age_days: int = 0                 # IMESSAGE_MAX_AGE_DAYS: 0 = the whole history (default); e.g. 365 limits it
+    imessage_never_send: tuple[str, ...] = ()      # IMESSAGE_NEVER_SEND: handles or chat ids nothing is ever sent to (e.g. an assistant's own Apple ID)
     warmup_on_start: bool = True  # WARMUP_ON_START: log in to mail, calendar and contacts in the background right after start
     tool_workers: int = 8         # TOOL_WORKERS: threads that run tool calls, so parallel calls do not queue behind each other
     agent_notes_file: str = ""    # AGENT_NOTES_FILE: the owner's own rules for agents, appended to the instructions (never shipped)
@@ -182,6 +198,11 @@ class Settings:
             caldav_pool_size=max(1, min(_int("CALDAV_POOL_SIZE", 4), 8)),
             caldav_keepalive_seconds=max(0, _int("CALDAV_KEEPALIVE_SECONDS", 600)),
             enable_maps=_bool("ENABLE_MAPS", False),
+            enable_imessage=_bool("ENABLE_IMESSAGE", False),
+            imessage_hidden_chats=tuple(_norm_handle(x) for x in _list("IMESSAGE_HIDDEN_CHATS") if x.strip()),
+            imessage_visible_chats=tuple(_norm_handle(x) for x in _list("IMESSAGE_VISIBLE_CHATS") if x.strip()),
+            imessage_max_age_days=max(0, _int("IMESSAGE_MAX_AGE_DAYS", 0)),
+            imessage_never_send=tuple(_norm_handle(x) for x in _list("IMESSAGE_NEVER_SEND") if x.strip()),
             warmup_on_start=_bool("WARMUP_ON_START", True),
             tool_workers=max(2, min(_int("TOOL_WORKERS", 8), 32)),
             agent_notes_file=_str("AGENT_NOTES_FILE"),
@@ -198,7 +219,8 @@ class Settings:
 
     @property
     def bridge_enabled(self) -> bool:
-        return self.enable_reminders or self.enable_notes or self.enable_drive or self.enable_maps or bool(self.shortcuts_allow)
+        return (self.enable_reminders or self.enable_notes or self.enable_drive or self.enable_maps or self.enable_imessage
+                or bool(self.shortcuts_allow))
 
     @property
     def public_host(self) -> str:
@@ -217,7 +239,7 @@ class Settings:
     def _validate_bridge_and_areas(self) -> None:
         if self.bridge_enabled:
             if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
-                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / ENABLE_MAPS / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
+                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / ENABLE_MAPS / ENABLE_IMESSAGE / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
                                  "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
             if self.owner_password and self.bridge_token == self.owner_password:
                 raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")

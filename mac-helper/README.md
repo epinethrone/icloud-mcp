@@ -41,6 +41,8 @@ Apple's own `trash` command. Files offloaded by "Optimise Mac Storage" are downl
 small PDFKit program (`bin/pdf-text`) that the installer builds, and Word, RTF, ODT and HTML files by Apple's `textutil`.
 Apple Maps travel times and place search (`ENABLE_MAPS`) run through a small MapKit program (`bin/maps-cli`), also built by the
 installer. It needs no permission and never uses this Mac's location: places are only what the agent passes.
+Messages (`ENABLE_IMESSAGE`) are read from this Mac user's own `~/Library/Messages/chat.db`, read-only, by `ops/imessage.py`
+with the same Python and its Full Disk Access; no other user's Messages are ever opened.
 
 **It needs Full Disk Access.** In System Settings > Privacy & Security > Full Disk Access, press **+**, press Cmd+Shift+G and add:
 

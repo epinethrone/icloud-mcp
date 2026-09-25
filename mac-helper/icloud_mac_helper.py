@@ -85,6 +85,13 @@ OPS = {
     "maps_travel_time": {"origin": ("str", True, 500), "destination": ("str", True, 500), "mode": ("str", False, 10),
                          "depart_at": ("iso", False, 40), "arrive_at": ("iso", False, 40), "alternatives": ("bool", False, 0)},
     "maps_search": {"query": ("str", True, 200), "near": ("str", False, 500), "limit": ("int", False, 20)},
+    # iMessage (ops/imessage.py; the owner's own ~/Library/Messages/chat.db, read-only)
+    "imessage_chats": {"limit": ("int", False, 1000), "since": ("iso", False, 40), "include_archived": ("bool", False, 0),
+                       "exclude": ("str", False, 4000)},
+    "imessage_read": {"chat_id": ("str", True, 300), "limit": ("int", False, 500), "before_id": ("int", False, 9007199254740991),
+                      "since": ("iso", False, 40), "exclude": ("str", False, 4000)},
+    "imessage_search": {"query": ("str", True, 200), "chat_id": ("str", False, 300), "limit": ("int", False, 200),
+                        "since": ("iso", False, 40), "before": ("iso", False, 40), "exclude": ("str", False, 4000)},
     # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
     "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
 }
@@ -97,6 +104,9 @@ EVENTKIT_BIN = os.path.join(HERE, "bin", "reminders-eventkit")
 # Apple Maps: travel times and place search through MapKit, a small program built by install.sh like the Reminders one.
 MAPS_BIN = os.path.join(HERE, "bin", "maps-cli")
 MAPS_OPS = frozenset({"maps_travel_time", "maps_search"})
+# iMessage: the owner's own Messages history, read by a fixed script with Apple's Python, like iCloud Drive.
+IMESSAGE_SCRIPT = os.path.join(OPS_DIR, "imessage.py")
+IMESSAGE_OPS = frozenset({"imessage_chats", "imessage_read", "imessage_search"})
 # iCloud Drive: plain file operations, run by Apple's own Python (the one running this helper) from a fixed script with one JSON argument.
 DRIVE_SCRIPT = os.path.join(OPS_DIR, "drive.py")
 DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
@@ -203,6 +213,8 @@ def build_command(op, args):
         return [MAPS_BIN, op, payload]
     if op in DRIVE_OPS:
         return [sys.executable, "-I", DRIVE_SCRIPT, op, payload]
+    if op in IMESSAGE_OPS:
+        return [sys.executable, "-I", IMESSAGE_SCRIPT, op, payload]
     if op in SHORTCUT_OPS:
         return [sys.executable, "-I", SHORTCUT_SCRIPT, op, payload]
     return [OSASCRIPT, "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
@@ -233,13 +245,13 @@ def run_one(op, args, timeout=60, extra=None):
     """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
     `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
     if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS and op not in SHORTCUT_OPS
-                         and op not in MAPS_OPS):
+                         and op not in MAPS_OPS and op not in IMESSAGE_OPS):
         return False, None, "unknown operation"
     try:
         clean = validate_args(op, args)
     except HelperError as e:
         return False, None, str(e)
-    if op in DRIVE_OPS or op in SHORTCUT_OPS:                             # how long the script may take within the job
+    if op in DRIVE_OPS or op in SHORTCUT_OPS or op in IMESSAGE_OPS:        # how long the script may take within the job
         clean = dict(clean, budget=max(1, timeout - 10))
     if extra:
         clean = dict(clean, **extra)

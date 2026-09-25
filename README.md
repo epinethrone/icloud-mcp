@@ -272,7 +272,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**84 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 32 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**87 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 35 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
@@ -383,6 +383,17 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 </details>
 
 <details>
+<summary><b>Messages</b> &nbsp;·&nbsp; 3 tools, with the Mac helper</summary>
+
+`imessage_list_chats`, `imessage_read_chat`, `imessage_search_messages`
+
+- Your own iMessage and SMS history on your Mac, read-only: conversations with who is in them (matched to your contacts), messages with reactions, delivery and read state and attachments by name, and search across the whole history (case and accents ignored).
+- Only your own Messages database is read (the Mac user the helper runs as); another user on the Mac is never touched. The helper's Python needs Full Disk Access, the same grant iCloud Drive uses.
+- Messages are other people's words: results carry the untrusted-data notice and safety warnings. `IMESSAGE_HIDDEN_CHATS` hides chats completely, `IMESSAGE_MAX_AGE_DAYS` limits how far back, and `IMESSAGE_NEVER_SEND` labels your own assistant's thread. Turn it on with `ENABLE_IMESSAGE=true`.
+
+</details>
+
+<details>
 <summary><b>Status and time</b> &nbsp;·&nbsp; 3 tools</summary>
 
 `icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `icloud_get_helper_status` says whether the Mac helper is online, when it was last seen, which version it runs, how many jobs are queued and how long they take. `icloud_get_time` gives the current date, weekday and time in your timezone, so an agent never books from a guessed date.
@@ -469,6 +480,10 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `DEFAULT_TIMEZONE`, `DEFAULT_CALENDAR` | `UTC`, auto | Timezone for times without an offset (an IANA name such as `Europe/Amsterdam`); calendar for new events (else "Calendar" or "Home", else the first) |
 | `ENABLE_MAIL`, `ENABLE_CALENDAR`, `ENABLE_CONTACTS` | true | Switch whole areas off |
 | `ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE`, `ENABLE_MAPS` | false | Areas that go through the Mac helper (need `BRIDGE_TOKEN`); Maps is Apple Maps travel times and place search |
+| `ENABLE_IMESSAGE` | false | Read and search your own iMessage and SMS history through the Mac helper |
+| `IMESSAGE_HIDDEN_CHATS`, `IMESSAGE_VISIBLE_CHATS` | empty | Chats never shown to the agent; or, when set, the only ones shown |
+| `IMESSAGE_MAX_AGE_DAYS` | 0 | 0 = the whole history; a number limits every read to that many days |
+| `IMESSAGE_NEVER_SEND` | empty | Handles nothing is ever sent to (your own assistant's Apple ID, say); its chat is labelled as the assistant's |
 | `TOOLS` | all | `essential`, areas (`mail`, `calendar`, `contacts`, `reminders`, `notes`, `drive`) and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
 | `BRIDGE_HOST` | 127.0.0.1 (0.0.0.0 in the Docker image) | Address the bridge binds to inside the process. Loopback unless the helper's Mac reaches this process over the network |
