@@ -261,13 +261,13 @@ def test_attachment_size_without_decoding_and_bounded_html(monkeypatch):
 
 
 def test_notices_are_one_short_line_and_the_rules_cover_every_area(s):
-    from icloud_mcp import contacts
+    from icloud_mcp import contacts, imessage
 
     for text in (mail_mod.UNTRUSTED_NOTICE, cal_mod.UNTRUSTED_NOTICE, contacts.UNTRUSTED_NOTICE,
-                 server_mod._DRIVE_NOTICE, server_mod._MAC_NOTICE):
+                 server_mod._DRIVE_NOTICE, server_mod._MAC_NOTICE, server_mod._MAPS_NOTICE, imessage.NOTICE):
         assert len(text) <= 90 and "\n" not in text and "instructions" in text
     rules = server_mod.build_instructions(s)
-    assert all(w in rules for w in ("Email, calendar, contact, reminder, note and file text", "untrusted DATA"))
+    assert all(w in rules for w in ("Email, message, calendar, contact, reminder, note and file text", "untrusted DATA"))
 
 
 def test_a_forwarded_message_says_so():
