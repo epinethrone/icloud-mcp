@@ -3,6 +3,17 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
+## Unreleased
+
+- The approval page has a "Discard all" button per queue. It clears only the messages shown on the page, so one queued later
+  stays. An exact repeat of a waiting message is queued once, and a full queue tells the agent not to retry.
+- Safety warnings on a stranger's text in more places: unsubscribe results, the sample in a bulk-action preview, and the
+  subjects shown before deleting a mail folder.
+- A calendar event with an unreadable date (a malformed invitation) is left out of listings instead of failing them. The booking
+  extractor keeps the other events of an attachment when one is broken.
+- Fuzz tests for the parsers that read other people's data: contact cards, invitations and repeat rules, booking data,
+  List-Unsubscribe headers and the Messages decoder.
+
 ## 0.10.0
 
 - Apple Maps (`ENABLE_MAPS`, Mac helper 0.6.0): `maps_get_travel_time` (walking, cycling, driving, public transport; for a

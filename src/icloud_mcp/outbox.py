@@ -90,10 +90,16 @@ class Outbox:
     def add(self, raw: bytes, recipients: list[str], followup: dict[str, Any] | None = None) -> QueuedMessage:
         with self._lock:
             self._prune()
+            sha = hashlib.sha256(raw).hexdigest()
+            same = next((q for q in self._items.values() if q.sha256 == sha), None)
+            if same is not None:                 # the exact same message is already waiting: one entry, not two
+                return same
             if len(self._items) >= self.max_items:
-                raise OutboxFull(f"{len(self._items)} messages are already waiting for owner approval (OUTBOX_MAX={self.max_items}).")
+                raise OutboxFull(f"{len(self._items)} messages are already waiting for owner approval (OUTBOX_MAX={self.max_items}). "
+                                 "Nothing was queued. Do not retry: tell the owner to review the queue on the /outbox page, "
+                                 "where they can send or discard what is waiting.")
             now = time.time()
-            q = QueuedMessage(secrets.token_urlsafe(12), now, now + self.ttl, raw, recipients, followup, hashlib.sha256(raw).hexdigest())
+            q = QueuedMessage(secrets.token_urlsafe(12), now, now + self.ttl, raw, recipients, followup, sha)
             self._items[q.id] = q
             self._save()
             return q

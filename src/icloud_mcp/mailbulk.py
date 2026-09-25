@@ -31,6 +31,8 @@ from email import policy
 from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from .safety import warnings_for
+
 if TYPE_CHECKING:
     from .mail import MailService
 
@@ -133,6 +135,15 @@ def _post_one_click(url: str) -> dict[str, Any]:
 
 def unsubscribe(mail: MailService, folder: str, uid: int, *, uidvalidity: int | None = None,
                 post: Callable[[str], dict[str, Any]] | None = None, check_url: Callable[[str], str | None] | None = None) -> dict[str, Any]:
+    """Unsubscribe from the list that sent one message. The sender's name, its addresses and whatever its server answered are a
+    stranger's text, so the result carries safety_warnings when any of it looks like instructions."""
+    out = _unsubscribe(mail, folder, uid, uidvalidity=uidvalidity, post=post, check_url=check_url)
+    found = warnings_for(json.dumps(out, ensure_ascii=False))
+    return {**out, "safety_warnings": found} if found else out
+
+
+def _unsubscribe(mail: MailService, folder: str, uid: int, *, uidvalidity: int | None = None,
+                 post: Callable[[str], dict[str, Any]] | None = None, check_url: Callable[[str], str | None] | None = None) -> dict[str, Any]:
     post, check_url = post or _post_one_click, check_url or _public_https
     with mail.imap() as c:
         folder = mail.resolve_folder(c, folder)
@@ -276,7 +287,9 @@ def bulk_action(mail: MailService, folder: str, action: str, *, destination: str
                    **({"left_alone_without_message_id": len(picked) - len(uids)} if len(picked) > len(uids) else {})}
         if dry_run:
             sample = mail._summaries(c, src, uids[:10])
+            found = warnings_for(*(m.get("subject") for m in sample), *((m.get("from") or [{}])[0].get("name") for m in sample))
             return {**preview, "dry_run": True, "confirm_token": token if uids else None,
+                    **({"safety_warnings": found} if found else {}),
                     "sample": [{"from": (m.get("from") or [{}])[0].get("email"), "subject": m.get("subject"), "date": m.get("date")}
                                for m in sample],
                     **({"note": f"Only the newest {limit} of {len(matched)} would be handled; narrow the search or run again."}
