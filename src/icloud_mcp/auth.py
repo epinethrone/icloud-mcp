@@ -103,6 +103,26 @@ class OwnerOAuthProvider:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
 
+    def connected_clients(self) -> int:
+        """Apps currently signed in: distinct clients holding a live access or refresh token."""
+        with self._lock:
+            self._prune()
+            return len({v["client_id"] for v in (*self.access.values(), *self.refresh.values())})
+
+    def sign_out_all(self) -> int:
+        """Revoke every sign-in and forget every registered client, in the running server and on disk. Every app (Claude,
+        scheduled agents) has to connect again with the owner passcode. Returns how many apps were signed in."""
+        with self._lock:
+            n = self.connected_clients()
+            self.access.clear()
+            self.refresh.clear()
+            self.codes.clear()
+            self.pending.clear()
+            self.clients.clear()
+            self._save()
+        log.warning("Owner signed out all apps (%d were signed in)", n)
+        return n
+
     def _prune(self) -> None:
         now = time.time()
         self.access = {k: v for k, v in self.access.items() if v["expires_at"] > now}

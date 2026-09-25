@@ -79,6 +79,9 @@ By default the server:
 - Stores OAuth tokens only as SHA-256 hashes (file mode 600), rotates refresh tokens, caps open client registrations, and locks the approval and outbox pages after 10 wrong passwords in 15 minutes. The bridge port locks out an address after 20 wrong tokens, never the correct token.
 - Masks passwords and tokens in every tool error and cuts URLs to their host; refuses IMAP search strings that contain control characters; refuses repeat rules finer than hourly and never expands one it finds in a stranger's invitation; binds to loopback unless told otherwise (the Docker image binds all interfaces inside the container).
 - Validates `Host` and `Origin` on the MCP endpoint, labels every piece of iCloud content as untrusted, and keeps account identifiers out of HTTP client logs.
+- Serves the admin API (for the menu bar app) only when `ADMIN_PORT` is set, on 127.0.0.1 and its own port, never on the
+  public app. Every request needs the token in `DATA_DIR/admin-token` (mode 600); requests from a browser or with a
+  non-loopback `Host` are refused. Credentials changed there are stored in `DATA_DIR/overrides.json` (mode 600).
 - Serves the Mac bridge only on its own private port, pinned by certificate fingerprint and protected by a bearer token, never on the public address. The server sends the Mac only an operation name and validated arguments from a fixed list, never script text.
 - Confines iCloud Drive access to the Drive folder, and never deletes notes or files permanently through the Mac helper: notes go to Recently Deleted and files to the Trash. Reminders have no trash: `reminders_delete` is final, which is accepted because a reminder is one line and easily recreated; `reminders_move` changes a reminder's list without deleting it.
 - Keeps what the server caches for speed in memory only, never on disk, and loses it on restart: logged-in IMAP and

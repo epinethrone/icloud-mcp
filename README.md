@@ -448,6 +448,10 @@ Measured on a local test stack with 40 ms added to every round trip, comparing 0
 Connections stay signed in for 10 minutes after the last call (`IMAP_IDLE_SECONDS`, `CALDAV_KEEPALIVE_SECONDS`), and
 `WARMUP_ON_START` signs in as the server starts. `dev/bench.py` repeats the measurements against your own account.
 
+## Control it from the menu bar
+
+[`menubar/`](https://github.com/epinethrone/icloud-mcp/blob/main/menubar/README.md) holds **iCloud MCP Control**, a native macOS app for a server that runs on your Mac. From the menu bar you see whether the server is up and whether any iCloud service has a problem, and you can pause the server (tools answer that it is paused, nobody is disconnected), restart or stop it and the Mac helper, change the owner passcode, replace the iCloud app-specific password (tested with iCloud before it is saved) and sign out every connected app. Turn on its admin API with `ADMIN_PORT`: it listens on 127.0.0.1 only, on its own port, and every request needs the token the server writes to `admin-token` in its data folder.
+
 ## Reminders, Notes and iCloud Drive through your Mac
 
 Apple only exposes Reminders, Notes and iCloud Drive on its own devices, so a small helper ([`mac-helper/`](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md)) runs on your Mac and does the work when the server asks.
@@ -518,6 +522,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `OWNER_ADDRESSES` | (none) | More addresses that are yours (aliases), so invitations to them count as yours |
 | `AGENT_NOTES_FILE` | (none) | Your own rules for agents, added to the instructions and served as `icloud://agent-notes` (see `docs/agent-notes.example.md`) |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
+| `ADMIN_PORT` | off | Loopback-only admin API for the menu bar app (its token is `admin-token` in `DATA_DIR`) |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
 | `LOG_LEVEL` | INFO | |

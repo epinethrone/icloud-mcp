@@ -5,6 +5,12 @@ Update the Mac helper before the server whenever its version changes.
 
 ## Unreleased
 
+- **iCloud MCP Control**, a menu bar app for the Mac (`menubar/`): status, health, pause, restart and stop, owner passcode,
+  iCloud app-specific password and sign out all apps.
+- Admin API for it, off unless `ADMIN_PORT` is set: loopback only, on its own port, token in `DATA_DIR/admin-token`.
+- Pause: while `DATA_DIR/paused` exists every tool except the diagnostics answers that the server is paused.
+- A passcode or app-specific password changed through the admin API is stored in `DATA_DIR/overrides.json` and takes
+  precedence over the environment.
 - The approval page has a "Discard all" button per queue. It clears only the messages shown on the page, so one queued later
   stays. An exact repeat of a waiting message is queued once, and a full queue tells the agent not to retry.
 - Safety warnings on a stranger's text in more places: unsubscribe results, the sample in a bulk-action preview, and the
