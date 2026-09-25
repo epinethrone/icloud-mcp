@@ -180,7 +180,10 @@ def from_json_ld(html: str) -> list[dict[str, Any]]:
 def _ics_value(v: Any) -> str | None:
     if v is None:
         return None
-    dt = getattr(v, "dt", v)
+    try:
+        dt = getattr(v, "dt", v)
+    except Exception:  # noqa: BLE001 - a malformed date is kept by icalendar as a placeholder that raises on access
+        return None
     if isinstance(dt, (datetime, date)):
         return dt.isoformat()
     return _text(str(v))
@@ -194,9 +197,18 @@ def from_ics(data: bytes) -> list[dict[str, Any]]:
     method = _text(cal.get("method"))
     items = []
     for ev in cal.walk("VEVENT"):
+        try:
+            items.append(_ics_item(ev, method))
+        except Exception:  # noqa: BLE001 - one broken event must not hide the others
+            continue
+    return [i for i in items if i]
+
+
+def _ics_item(ev: Any, method: str | None) -> dict[str, Any] | None:
+    if True:
         start, end = _ics_value(ev.get("dtstart")), _ics_value(ev.get("dtend"))
         if not start:
-            continue
+            return None
         summary, location = _text(str(ev.get("summary") or "")) or "Appointment", _text(str(ev.get("location") or ""))
         organizer = str(ev.get("organizer") or "").removeprefix("mailto:").removeprefix("MAILTO:") or None
         cancelled = method == "CANCEL" or str(ev.get("status") or "").upper() == "CANCELLED"
@@ -206,8 +218,7 @@ def from_ics(data: bytes) -> list[dict[str, Any]]:
                 "start": start, "end": end, "location": location,
                 **({} if cancelled else {"calendar_event": _event(summary, start, end, location,
                                                                   [f"Organizer: {organizer}" if organizer else ""])})}
-        items.append({k: v for k, v in item.items() if v not in (None, "")})
-    return items
+        return {k: v for k, v in item.items() if v not in (None, "")}
 
 
 def extract(raw: bytes) -> dict[str, Any]:

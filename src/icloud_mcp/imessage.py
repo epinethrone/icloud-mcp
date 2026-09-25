@@ -259,7 +259,11 @@ class IMessageService:
                                   "owner the text so they can send it themselves. It was NOT sent."}
             import json
             raw = json.dumps({"chat_id": t["chat_id"], "handle": t["handle"], "text": text, "to": to}, ensure_ascii=False).encode()
-            q = outbox.add(raw, [x for x in (t["chat_id"], t["handle"]) if x])
+            from .outbox import OutboxFull
+            try:
+                q = outbox.add(raw, [x for x in (t["chat_id"], t["handle"]) if x])
+            except OutboxFull as e:
+                raise IMessageError(str(e)) from e
             return {"status": "queued_for_owner_approval", "sent": False, "outbox_id": q.id, "to": to,
                     "approve_at": f"{public_url}/outbox", "notice": "Queued, NOT sent: it goes out only when the owner approves it on "
                                                                      "the outbox page. Say so; do not send it again."}

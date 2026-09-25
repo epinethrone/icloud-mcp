@@ -283,3 +283,30 @@ def test_instructions_match_the_active_mode(env):
     assert "blocked on this server" in direct                                                       # invites off by default
     assert "blocked on this server" not in build_instructions(dataclasses.replace(s, allow_calendar_invites=True))
     assert "SENDING" not in build_instructions(dataclasses.replace(s, allow_send=False))
+
+
+# ------------------------------------------------------------------ crowding the queue
+def test_a_full_queue_tells_the_agent_to_stop_and_the_same_message_is_queued_once(tmp_path):
+    ob = Outbox(str(tmp_path), ttl=3600, max_items=2)
+    a = ob.add(b"same", ["a@b.co"])
+    assert ob.add(b"same", ["a@b.co"]).id == a.id and len(ob.pending()) == 1         # an exact repeat is one entry
+    ob.add(b"other", ["a@b.co"])
+    from icloud_mcp.outbox import OutboxFull
+    with pytest.raises(OutboxFull, match="Do not retry.*/outbox"):
+        ob.add(b"third", ["a@b.co"])
+
+
+async def test_discard_all_clears_only_what_the_owner_saw(web):
+    app, provider, mail, fake, sent = web
+    for i in range(3):
+        send(mail, subject=f"junk {i}")
+    async with client(app) as c:
+        page = (await c.post("/outbox", data={"password": PASSWORD})).text
+        m = re.search(r'name="kind" value="mail"><input type="hidden" name="action" value="discard_all"><input type="hidden" name="exp" '
+                      r'value="(\d+)"><input type="hidden" name="ids" value="([^"]+)"><input type="hidden" name="tok" value="([0-9a-f]+)"', page)
+        assert m and "Discard all 3 emails" in page
+        late = send(mail, subject="the one the owner asked for")["outbox_id"]            # arrives after the page was drawn
+        bad = await c.post("/outbox/act", data={"kind": "mail", "action": "discard_all", "exp": m[1], "ids": m[2], "tok": "0" * 64})
+        assert bad.status_code == 403 and len(mail.outbox.pending()) == 4
+        done = await c.post("/outbox/act", data={"kind": "mail", "action": "discard_all", "exp": m[1], "ids": m[2], "tok": m[3]})
+        assert "Discarded 3" in done.text and [q.id for q in mail.outbox.pending()] == [late] and sent == []

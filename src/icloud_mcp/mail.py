@@ -1864,7 +1864,9 @@ class MailService:
                     fetched = c.fetch(uids, ["BODY.PEEK[HEADER.FIELDS (SUBJECT)]"]) if uids else {}
                     sample = [_hdr(email.message_from_bytes(next((v for k, v in d.items() if isinstance(k, bytes) and k.startswith(b"BODY")), b""),
                                                             policy=policy.default), "Subject") or "(no subject)" for d in fetched.values()]
+                    found = warnings_for(*sample)
                     return {"deleted": False, "folder": exact, "messages": count, "sample": sample,
+                            **({"safety_warnings": found} if found else {}),
                             "confirm_token": make_confirm_token("mail-folder", exact, uv, count),
                             "next": "Show the owner the count. To go ahead, call again with this confirm_token: the messages move to "
                                     "Trash first (recoverable there), then the folder is removed."}

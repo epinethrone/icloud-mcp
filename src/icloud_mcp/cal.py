@@ -356,20 +356,35 @@ def _text(comp: icalendar.Component, key: str) -> str | None:
     return None if v is None else str(v)
 
 
+def _dt(comp: icalendar.Component, key: str) -> Any:
+    """A date property's value, or None when it is missing or unreadable. icalendar keeps a malformed date (a stranger's
+    invitation can carry one) as a placeholder that raises on access."""
+    try:
+        v = comp.get(key)
+        return None if v is None else v.dt
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def readable_event(comp: icalendar.Component) -> bool:
+    """False for an event whose start, end or recurrence id cannot be read: it is left out of listings instead of failing them."""
+    return _dt(comp, "dtstart") is not None and all(comp.get(k) is None or _dt(comp, k) is not None for k in ("dtend", "recurrence-id"))
+
+
 def event_to_dict(comp: icalendar.Component, calendar_name: str | None) -> dict[str, Any]:
-    dtstart = comp.get("dtstart").dt if comp.get("dtstart") is not None else None
+    dtstart = _dt(comp, "dtstart")
     end = None
     with contextlib.suppress(Exception):
         end = comp.end
-    if end is None and comp.get("dtend") is not None:
-        end = comp.get("dtend").dt
+    if end is None:
+        end = _dt(comp, "dtend")
     alarms = []
     for sub in comp.subcomponents:
-        if sub.name == "VALARM" and sub.get("trigger") is not None:
-            trig = sub.get("trigger").dt
-            if isinstance(trig, timedelta):
-                alarms.append(int(-trig.total_seconds() // 60))
-    rrule = comp.get("rrule")
+        if sub.name == "VALARM" and isinstance(trig := _dt(sub, "trigger"), timedelta):
+            alarms.append(int(-trig.total_seconds() // 60))
+    rrule = None
+    with contextlib.suppress(Exception):
+        rrule = comp.get("rrule").to_ical().decode() if comp.get("rrule") is not None else None
     return {
         "uid": _text(comp, "uid"),
         "calendar": calendar_name,
@@ -384,8 +399,8 @@ def event_to_dict(comp: icalendar.Component, calendar_name: str | None) -> dict[
         "attendees": [_addr(a) for a in _as_list(comp.get("attendee"))],
         "travel": travel_view(comp),
         "location_detail": location_view(comp),
-        "rrule": rrule.to_ical().decode() if rrule is not None else None,
-        "recurrence_id": _iso(comp.get("recurrence-id").dt) if comp.get("recurrence-id") is not None else None,
+        "rrule": rrule,
+        "recurrence_id": _iso(_dt(comp, "recurrence-id")),
         "alarms_minutes_before": alarms,
         "url": _text(comp, "url"),
         **({"safety_warnings": w} if (w := warnings_for(_text(comp, "summary"), _text(comp, "description"),
@@ -1184,8 +1199,12 @@ class CalendarService:
                  else self._each_calendar(principal, cals, search))
         for name, datas in zip(names, found):
             for data in datas or []:
-                for comp in icalendar.Calendar.from_ical(data).walk("VEVENT"):
-                    if comp.get("dtstart") is not None:
+                try:
+                    comps = icalendar.Calendar.from_ical(data).walk("VEVENT")
+                except Exception:  # noqa: BLE001 - one unreadable object (a stranger's invitation) must not fail the listing
+                    continue
+                for comp in comps:
+                    if readable_event(comp):
                         yield name, comp
 
     @_reconnecting

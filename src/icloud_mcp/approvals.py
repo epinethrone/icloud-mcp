@@ -88,11 +88,27 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
                       f'<button class="{cls}" type="submit">{label}</button></form>')
         return forms
 
+    def _all_tok(kind: str, qs: list[Any], exp: int) -> str:
+        """Stands for exactly the messages shown: anything queued after the page was drawn is not covered."""
+        ids = ",".join(f"{q.id}:{q.sha256}" for q in sorted(qs, key=lambda q: q.id))
+        return _tok(kind, "*all*", hashlib.sha256(ids.encode()).hexdigest(), "discard_all", exp)
+
+    def _discard_all_button(kind: str, qs: list[Any], exp: int) -> str:
+        label = "iMessages" if kind == "imessage" else "emails"
+        return (f'<form method="post" action="/outbox/act" style="display:inline"><input type="hidden" name="kind" value="{kind}">'
+                f'<input type="hidden" name="action" value="discard_all"><input type="hidden" name="exp" value="{exp}">'
+                f'<input type="hidden" name="ids" value="{html.escape(",".join(q.id for q in qs))}">'
+                f'<input type="hidden" name="tok" value="{_all_tok(kind, qs, exp)}">'
+                f'<button class="no" type="submit">Discard all {len(qs)} {label}</button></form>')
+
     def _queue_page(note: str = "") -> Response:
         items = [(k, q) for k, o in outboxes.items() for q in o.pending()]
         exp = int(time.time()) + _TOKEN_TTL
         parts = [f'<div class="card"><h1>Outgoing messages waiting for your approval</h1>{note}'
-                 f'<p class="muted">{len(items)} waiting. Review the exact recipients and text below; this is what will be sent.</p></div>']
+                 f'<p class="muted">{len(items)} waiting. Review the exact recipients and text below; this is what will be sent.</p>'
+                 + "".join(_discard_all_button(k, qs, exp) for k in outboxes
+                           if len(qs := [q for kk, q in items if kk == k]) > 1)
+                 + '</div>']
         for kind, q in items:
             mins = max(1, int((q.expires_at - time.time()) / 60))
             if kind == "imessage":
@@ -141,6 +157,20 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
             exp = 0
         tok = str(form.get("tok", ""))
         box = outboxes.get(kind)
+        if action == "discard_all":
+            wanted = [x for x in str(form.get("ids", "")).split(",") if x]
+            shown = [x for x in (box.pending() if box is not None else []) if x.id in wanted]
+            if box is None or exp < time.time() or len(shown) != len(wanted) or not wanted:
+                return _page("Outgoing message approval", '<div class="card"><p class="err">The queue changed or this request has expired. '
+                             'Re-enter the owner password to see it as it is now.</p><p><a href="/outbox">Back</a></p></div>', 400)
+            if not hmac.compare_digest(tok.encode(), _all_tok(kind, shown, exp).encode()):
+                log.warning("Rejected /outbox/act discard_all with an invalid token")
+                return _page("Outgoing message approval", '<div class="card"><p class="err">Invalid request. Re-enter the owner password.</p>'
+                             '<p><a href="/outbox">Back</a></p></div>', 403)
+            for x in shown:
+                box.claim(x.id)
+            log.info("Owner discarded all %d queued %s messages", len(shown), kind)
+            return _queue_page(f'<p class="ok-note">Discarded {len(shown)}.</p>')
         q = next((x for x in box.pending() if x.id == item_id), None) if box is not None else None
         if action not in ("approve", "discard") or exp < time.time() or q is None:
             return _page("Outgoing message approval", '<div class="card"><p class="err">That request has expired or the message is no longer waiting.</p>'
