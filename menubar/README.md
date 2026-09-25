@@ -1,15 +1,16 @@
 # iCloud MCP Control
 
-A small menu bar app for the Mac that runs your icloud-mcp server. One click shows whether the server is up, how many
-tools it offers and whether anything needs attention. It is also where you pause the server, restart it and change its
-credentials.
+A small menu bar app for the Mac that runs your icloud-mcp server. Its menu is a standard macOS menu, like Time
+Machine's: it shows whether the server is up, how many tools it offers and how many apps are connected, and lists any
+problem in plain words. It is also where you pause the server, restart it and change its credentials.
 
 - **At a glance:** the menu bar icon changes shape when the server is paused, stopped or has a problem.
-- **Pause:** one switch stops every tool from answering, without disconnecting any app. Diagnostics keep working.
-- **Restart and stop:** the server, the Mac helper and your tunnel, one at a time or all together.
+- **Pause Server:** every tool answers that the server is paused, without disconnecting any app. Diagnostics keep working.
+- **Restart and Stop:** the server, the Mac helper and your tunnel, one at a time or all together. Stop asks first.
 - **Credentials:** change the owner passcode, replace the iCloud app-specific password (it is tested with iCloud before
   anything is saved), or sign out every connected app.
-- **Health:** each iCloud service is checked when you open the menu, and problems are explained in plain words.
+- **Health:** each iCloud service is checked when you open the menu (at most every few minutes); click a problem to check
+  again.
 
 It needs macOS 26 or later and a server on the same Mac with the admin API turned on (below). Restart, stop and start
 appear for the launch agents it finds in `~/Library/LaunchAgents` (the Mac helper's installer creates one; the server and a

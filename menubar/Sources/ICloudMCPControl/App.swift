@@ -7,44 +7,18 @@ struct ICloudMCPControlApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PopoverView()
+            MenuContent()
                 .environment(controller)
         } label: {
             Image(systemName: controller.overall.symbol)
                 .accessibilityLabel("iCloud MCP, \(controller.overall.title)")
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
 
         Settings {
             SettingsView()
                 .environment(controller)
         }
         .windowResizability(.contentSize)
-
-        #if DEBUG
-        // Design review only: `--preview` shows the popover's content in an ordinary window, so it can be screenshotted.
-        WindowGroup("Preview", id: "preview") {
-            if CommandLine.arguments.contains("--preview") {
-                PopoverView()
-                    .environment(controller)
-                    .onAppear { NSApp.setActivationPolicy(.regular) }
-            }
-        }
-        .windowResizability(.contentSize)
-        .defaultLaunchBehavior(CommandLine.arguments.contains("--preview") ? .presented : .suppressed)
-        #endif
-    }
-}
-
-/// Settings opened from a menu bar app (no Dock icon) can appear behind other apps; this brings the app forward first.
-struct OpenSettingsButton: View {
-    @Environment(\.openSettings) private var openSettings
-    var title = "Settings…"
-
-    var body: some View {
-        Button(title) {
-            NSApp.activate()
-            openSettings()
-        }
     }
 }

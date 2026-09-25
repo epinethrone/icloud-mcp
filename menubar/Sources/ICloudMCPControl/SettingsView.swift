@@ -24,6 +24,13 @@ private struct GeneralPane: View {
             Section {
                 Toggle("Open at Login", isOn: $controller.opensAtLogin)
             }
+            if !controller.roles.isEmpty {
+                Section("Services") {
+                    ForEach(controller.roles, id: \.self) { role in
+                        LabeledContent(role.title, value: serviceValue(role))
+                    }
+                }
+            }
             Section("Server") {
                 if let status = controller.status {
                     if status.version != "unknown" { LabeledContent("Version", value: status.version) }
@@ -56,6 +63,14 @@ private struct GeneralPane: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func serviceValue(_ role: ServiceJob.Role) -> String {
+        let state = controller.states[role] ?? .unknown
+        if role == .helper, let helper = controller.status?.helper {
+            return (helper.online ? "Online" : "Offline") + (helper.helper?.version.map { ", version \($0)" } ?? "")
+        }
+        return state.title
     }
 }
 

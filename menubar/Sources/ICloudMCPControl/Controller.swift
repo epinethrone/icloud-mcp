@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import ServiceManagement
@@ -55,7 +56,6 @@ final class Controller {
     private(set) var healthCheckedAt: Date?
     private(set) var busy: String?
     var lastError: String?
-    var popoverVisible = false { didSet { if popoverVisible { refreshSoon(withHealth: true) } } }
 
     private let defaults = UserDefaults.standard
     private var loop: Task<Void, Never>?
@@ -69,6 +69,11 @@ final class Controller {
         rediscover()
         if dataFolder.isEmpty, let guess = Services.guessDataFolders(server: job(.server)).first { dataFolder = guess }
         loop = Task { [weak self] in await self?.run() }
+        // Opening the menu refreshes it (with a health check at most every 3 minutes). This app has no other menus that
+        // track, apart from standard ones in the Settings window, where a refresh is harmless.
+        NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSoon(withHealth: true) }
+        }
     }
 
     // MARK: - Jobs
@@ -118,17 +123,6 @@ final class Controller {
         return n > 0 ? .issues(n) : .running
     }
 
-    var summaryLine: String {
-        switch overall {
-        case .running, .issues, .paused:
-            guard let status else { return overall.title }
-            let tools = status.tools.total == 1 ? "1 tool" : "\(status.tools.total) tools"
-            return "\(overall.title) · \(tools)"
-        default:
-            return overall.title
-        }
-    }
-
     /// The server's health messages are written for agents; this turns them into one plain sentence for a person.
     static func explain(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
@@ -161,18 +155,24 @@ final class Controller {
     private var wakeRequested = false
     private var wantHealth = true
 
+    /// Runs the health check now, whatever its age (clicking a problem in the menu).
+    func checkAgain() {
+        healthCheckedAt = nil
+        refreshSoon(withHealth: true)
+    }
+
     private func refreshSoon(withHealth: Bool = false) {
         if withHealth { wantHealth = true }
         wakeRequested = true
     }
 
-    /// Polls every 5 seconds while the popover is open and every minute otherwise; a change of settings or opening the
-    /// popover wakes it at once.
+    /// Polls every 30 seconds (the admin API is on this Mac, so it costs nothing); opening the menu or changing a setting
+    /// wakes it at once.
     private func run() async {
         while !Task.isCancelled {
             wakeRequested = false
             await refresh()
-            let until = Date().addingTimeInterval(popoverVisible ? 5 : 60)
+            let until = Date().addingTimeInterval(30)
             while Date() < until && !wakeRequested && !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
             }
@@ -193,7 +193,7 @@ final class Controller {
             status = nil
             statusError = .unreachable
         }
-        // The health check signs in to iCloud, so it runs when the popover opens (at most every 3 minutes) and otherwise
+        // The health check signs in to iCloud, so it runs when the menu opens (at most every 3 minutes) and otherwise
         // every 15 minutes, never on every poll.
         let age = healthCheckedAt.map { Date().timeIntervalSince($0) } ?? .infinity
         if status != nil, (wantHealth && age > 180) || age > 900 {
