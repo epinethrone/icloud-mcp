@@ -3,7 +3,7 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
-## Unreleased (0.12.0)
+## 0.12.0
 
 - **Breaking: tool names.** Every tool is now `<area>_<verb>_<noun>`. The 36 names that had a verb alone are renamed below.
   `TOOLS` still accepts the old names (with a warning). Clients see the new names after reconnecting; update any prompt,
