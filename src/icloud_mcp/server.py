@@ -357,7 +357,7 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
                  + ('<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">' if "icon-180.png" in have else ""))
         return HTMLResponse(
             f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>iCloud</title>{links}</head>'
-            f"<body><p>iCloud connector (MCP server). Add <code>{s.public_url}/mcp</code> in Claude as a custom connector.</p></body></html>",
+            f"<body><p>iCloud connector (MCP server). Add <code>{s.public_url}/mcp</code> to your MCP client (Claude, ChatGPT, Codex and others) as a remote server.</p></body></html>",
             headers={"Cache-Control": "public, max-age=3600"})
 
     @mcp.custom_route("/healthz", methods=["GET"])
@@ -1746,7 +1746,7 @@ def build_app(s: Settings, mcp: MCPServer):
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=[s.public_host, "localhost:*", "127.0.0.1:*", *extra_hosts],
-            allowed_origins=[s.public_url, "https://claude.ai", "https://claude.com"],
+            allowed_origins=[s.public_url, "https://claude.ai", "https://claude.com", "https://chatgpt.com", "https://chat.openai.com"],
         ),
     )
 
@@ -1805,7 +1805,7 @@ def _parse_args(argv: list[str] | None):
 
     p = argparse.ArgumentParser(prog="icloud-mcp", description="iCloud Mail, Calendar, Contacts, Reminders, Notes and Drive for MCP clients.")
     p.add_argument("--local", "--stdio", dest="local", action="store_true",
-                   help="run for a desktop client on this computer (Claude Desktop, Claude Code): stdio, no OAuth, no public URL")
+                   help="run for a client on this computer (Claude Desktop, Claude Code, Codex, Cursor...): stdio, no OAuth, no public URL")
     p.add_argument("--env-file", metavar="PATH", help="read settings from this .env file (variables already set take precedence)")
     p.add_argument("--store-password", action="store_true",
                    help="macOS: save the app-specific password in the login Keychain (prompted, never on the command line), then exit")

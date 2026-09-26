@@ -34,6 +34,9 @@ Update the Mac helper before the server whenever its version changes.
 - **Apple Health** (`ENABLE_HEALTH`, off by default; Mac helper 0.7.0): daily figures, one day in detail, and freshness from
   exports the owner's iPhone writes with a Shortcut, kept in a private store on the Mac, plus a one-off import of the Health
   app's full export. Overlapping exports never count twice; a day without data is reported as missing, not as zero.
+- **ChatGPT can sign in by default:** `OAUTH_ALLOWED_REDIRECT_HOSTS` now also lists `chatgpt.com` and `chat.openai.com`, and
+  their origins are accepted, next to Claude and local clients such as Codex. Every sign-in still needs the owner password;
+  a deployment that sets the variable itself keeps its own list.
 - **Hidden text in mail:** Outlook's styling no longer sets off the warning; it appears only when the hidden part reads like
   instructions to an assistant. `mail_get_message(show_hidden=true)` shows what was hidden, marked as untrusted.
 

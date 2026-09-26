@@ -1,12 +1,12 @@
 # icloud-mac-helper
 
-Lets the icloud-mcp server use **Reminders**, **Notes** and **iCloud Drive** on your Mac. Apple only exposes those on its own devices,
+Lets the icloud-mcp server use **Reminders**, **Notes**, **iCloud Drive**, **Apple Maps**, your **Messages** history and **Apple Health** on your Mac. Apple only exposes those on its own devices,
 so this small helper runs on your Mac and does the work when the server asks.
 
 **How it works.** The helper connects *out* to a private HTTPS port of your server and asks "any work?". It opens no listening port.
 The server never sends script text: only an operation name and validated arguments from a fixed list. Reminders operations run a
 small EventKit program (`bin/reminders-eventkit`, built from `eventkit/` on your Mac by the installer); Notes operations run a static
-script in `ops/`; iCloud Drive runs the fixed script `ops/drive.py`. All of them receive their arguments as one JSON value in `argv`, so text
+script in `ops/`; iCloud Drive and Health run the fixed scripts `ops/drive.py` and `ops/health.py`. All of them receive their arguments as one JSON value in `argv`, so text
 from a reminder, a note, a file or an AI can never become code.
 The connection uses a self-signed certificate that the helper pins by fingerprint, plus a bearer token.
 
@@ -59,6 +59,31 @@ is why the installer uses it rather than `/usr/bin/python3`: that is a launcher 
 every read of iCloud Drive (and even of folders Full Disk Access always covers) is refused. A side benefit is that the helper no longer
 depends on Xcode, which can move its own Python on an update. If `pdf-text` asks for access to iCloud Drive, allow that too.
 
+## Apple Health
+
+A Mac cannot read HealthKit, so Health data (`ENABLE_HEALTH`) comes from your iPhone. The Shortcut built by
+`health/build_shortcut.py` saves the last two days of Health data to iCloud Drive, in the Shortcuts app's own folder
+(`~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/Health`, which the Drive operations cannot reach).
+`ops/health.py` reads new or changed exports into a private store, `health.sqlite` (mode 600) next to the helper, and answers with
+daily figures.
+
+```bash
+python3 health/build_shortcut.py health.shortcut          # the Shortcut, unsigned
+shortcuts sign --mode anyone --input health.shortcut --output "Health Export.shortcut"
+```
+
+Open the signed file on your iPhone (AirDrop works), run it once by hand to grant Health access, then add an automation that runs it,
+such as **App → Messages → Is Opened**. A locked iPhone cannot read Health, so a run while it is locked saves an empty file, which
+is ignored; the next run fills the gap, because each export covers two days. The Shortcut runs at most once an hour
+(`Health/last-hour.txt`).
+
+For your whole history, export it from the Health app (profile picture → Export All Health Data), put `export.zip` on the Mac, and
+run `python3 ops/health.py import export.zip` in the helper's folder. It is read as a stream, even when it is gigabytes.
+
+`health_refresh_data` asks the iPhone for a new export only if you set up a command for that yourself, in
+`~/Library/Application Support/icloud-mac-helper/health-refresh.json` (`{"command": [...], "min_minutes": 10}`); the server can never
+supply one.
+
 ## Check it
 
 ```bash
@@ -67,7 +92,7 @@ python3 "$HOME/Library/Application Support/icloud-mac-helper/icloud_mac_helper.p
 prints one JSON report with pass/fail, counts and timings, never any reminder or note content. If Reminders access is missing, `reminders_access`
 says which state macOS reports (`notDetermined`, `denied`, `restricted` or `writeOnly`) and names the grant it needs. Notes access is reported but is optional: it only fails the
 install if you enable Notes on the server and macOS has not granted access. It also proves that hostile strings
-(quotes, backslashes, newlines, script-looking text) reach the scripts as plain data. In Claude, the `icloud_get_helper_status` tool says
+(quotes, backslashes, newlines, script-looking text) reach the scripts as plain data. From any MCP client, the `icloud_get_helper_status` tool says
 whether the helper is online.
 
 To also prove the write operations on this Mac, run it with `--selftest-write`. It creates, edits (including through an old-style

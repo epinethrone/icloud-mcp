@@ -1,6 +1,6 @@
 """Single-owner OAuth 2.1 authorization server for the MCP endpoint.
 
-claude.ai custom connectors speak OAuth (with dynamic client registration + PKCE). This
+Remote MCP clients (Claude custom connectors, ChatGPT, Codex) speak OAuth (with dynamic client registration + PKCE). This
 provider lets exactly one person -- whoever knows MCP_OWNER_PASSWORD -- authorize a client.
 The iCloud app-specific password never leaves the server; clients only ever hold
 short-lived bearer tokens for *this* server, which you can revoke by deleting

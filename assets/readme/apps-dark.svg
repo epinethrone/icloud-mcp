@@ -1,117 +1,129 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1036" width="1280" height="1036" role="img" aria-labelledby="t"><title id="t">Nine apps, one connector: Mail 25 tools, Calendar 12, Contacts 11, Reminders 10, Notes 9, iCloud Drive 10, Maps 2, Messages 4, Shortcuts 2.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1328" width="1280" height="1328" role="img" aria-labelledby="t"><title id="t">Ten apps, one connector: Mail 25 tools, Calendar 12, Contacts 11, Reminders 10, Notes 9, iCloud Drive 10, Maps 2, Messages 4, Health 4, Shortcuts 2.</title>
 <style>text{font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif}</style>
 
-<rect width="1280" height="1036" rx="36" fill="#000000"/>
-<text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="#f5f5f7" letter-spacing="-1.2">Nine apps. One connector.</text>
+<rect width="1280" height="1328" rx="36" fill="#000000"/>
+<text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="#f5f5f7" letter-spacing="-1.2">Ten apps. One connector.</text>
 <text x="640" y="108" text-anchor="middle" font-size="21" fill="#a1a1a6">Plus a health check that tests every service in one call.</text>
 
 <g>
-  <rect x="28" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="28.0" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ac8fa"/><stop offset="1" stop-color="#0a84ff"/></linearGradient></defs>
-  <rect x="60" y="164" width="72" height="72" rx="18" fill="url(#g0)"/>
-  <g transform="translate(74,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="8" width="40" height="28" rx="5"/><path d="M4 11 L22 25 L40 11"/></g>
-  <text x="388" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">25</text>
-  <text x="388" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="60" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Mail</text>
-  <text x="60" y="328" font-size="20" fill="#a1a1a6">Search every folder, read whole</text>
-  <text x="60" y="356" font-size="20" fill="#a1a1a6">threads, reply and file away.</text>
+  <rect x="60.0" y="164" width="72" height="72" rx="18" fill="url(#g0)"/>
+  <g transform="translate(74.0,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="8" width="40" height="28" rx="5"/><path d="M4 11 L22 25 L40 11"/></g>
+  <text x="388.0" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">25</text>
+  <text x="388.0" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="60.0" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Mail</text>
+  <text x="60.0" y="328" font-size="20" fill="#a1a1a6">Search every folder, read whole</text>
+  <text x="60.0" y="356" font-size="20" fill="#a1a1a6">threads, reply and file away.</text>
   
 </g>
 <g>
-  <rect x="444" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="444.0" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6961"/><stop offset="1" stop-color="#ff3b30"/></linearGradient></defs>
-  <rect x="476" y="164" width="72" height="72" rx="18" fill="url(#g1)"/>
-  <g transform="translate(490,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="36" height="32" rx="6"/><path d="M4 16 H40 M14 3 V10 M30 3 V10"/><circle cx="15" cy="25" r="1.6" fill="#fff"/><circle cx="22" cy="25" r="1.6" fill="#fff"/><circle cx="29" cy="25" r="1.6" fill="#fff"/><circle cx="15" cy="32" r="1.6" fill="#fff"/></g>
-  <text x="804" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">12</text>
-  <text x="804" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="476" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Calendar</text>
-  <text x="476" y="328" font-size="20" fill="#a1a1a6">Find free time, plan, move</text>
-  <text x="476" y="356" font-size="20" fill="#a1a1a6">and answer invitations.</text>
+  <rect x="476.0" y="164" width="72" height="72" rx="18" fill="url(#g1)"/>
+  <g transform="translate(490.0,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="36" height="32" rx="6"/><path d="M4 16 H40 M14 3 V10 M30 3 V10"/><circle cx="15" cy="25" r="1.6" fill="#fff"/><circle cx="22" cy="25" r="1.6" fill="#fff"/><circle cx="29" cy="25" r="1.6" fill="#fff"/><circle cx="15" cy="32" r="1.6" fill="#fff"/></g>
+  <text x="804.0" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">12</text>
+  <text x="804.0" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="476.0" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Calendar</text>
+  <text x="476.0" y="328" font-size="20" fill="#a1a1a6">Find free time, plan, move</text>
+  <text x="476.0" y="356" font-size="20" fill="#a1a1a6">and answer invitations.</text>
   
 </g>
 <g>
-  <rect x="860" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="860.0" y="132" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#aeaeb2"/><stop offset="1" stop-color="#8e8e93"/></linearGradient></defs>
-  <rect x="892" y="164" width="72" height="72" rx="18" fill="url(#g2)"/>
-  <g transform="translate(906,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="22" cy="15" r="8"/><path d="M7 39 C8 29 15 25 22 25 C29 25 36 29 37 39"/></g>
-  <text x="1220" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">11</text>
-  <text x="1220" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="892" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Contacts</text>
-  <text x="892" y="328" font-size="20" fill="#a1a1a6">Find anyone, even misspelled.</text>
-  <text x="892" y="356" font-size="20" fill="#a1a1a6">Addresses, phones, emails.</text>
+  <rect x="892.0" y="164" width="72" height="72" rx="18" fill="url(#g2)"/>
+  <g transform="translate(906.0,178)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="22" cy="15" r="8"/><path d="M7 39 C8 29 15 25 22 25 C29 25 36 29 37 39"/></g>
+  <text x="1220.0" y="196" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">11</text>
+  <text x="1220.0" y="224" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="892.0" y="290" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Contacts</text>
+  <text x="892.0" y="328" font-size="20" fill="#a1a1a6">Find anyone, even misspelled.</text>
+  <text x="892.0" y="356" font-size="20" fill="#a1a1a6">Addresses, phones, emails.</text>
   
 </g>
 <g>
-  <rect x="28" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="28.0" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb340"/><stop offset="1" stop-color="#ff9500"/></linearGradient></defs>
-  <rect x="60" y="460" width="72" height="72" rx="18" fill="url(#g3)"/>
-  <g transform="translate(74,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="11" r="3.5"/><circle cx="9" cy="22" r="3.5"/><circle cx="9" cy="33" r="3.5"/><path d="M18 11 H40 M18 22 H40 M18 33 H34"/></g>
-  <text x="388" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">10</text>
-  <text x="388" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="60" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Reminders</text>
-  <text x="60" y="624" font-size="20" fill="#a1a1a6">Repeating, with alerts,</text>
-  <text x="60" y="652" font-size="20" fill="#a1a1a6">live through EventKit.</text>
-  <text x="60" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+  <rect x="60.0" y="460" width="72" height="72" rx="18" fill="url(#g3)"/>
+  <g transform="translate(74.0,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="11" r="3.5"/><circle cx="9" cy="22" r="3.5"/><circle cx="9" cy="33" r="3.5"/><path d="M18 11 H40 M18 22 H40 M18 33 H34"/></g>
+  <text x="388.0" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">10</text>
+  <text x="388.0" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="60.0" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Reminders</text>
+  <text x="60.0" y="624" font-size="20" fill="#a1a1a6">Repeating, with alerts,</text>
+  <text x="60.0" y="652" font-size="20" fill="#a1a1a6">live through EventKit.</text>
+  <text x="60.0" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
 </g>
 <g>
-  <rect x="444" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="444.0" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd60a"/><stop offset="1" stop-color="#ffcc00"/></linearGradient></defs>
-  <rect x="476" y="460" width="72" height="72" rx="18" fill="url(#g4)"/>
-  <g transform="translate(490,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="32" height="38" rx="6"/><path d="M13 14 H31 M13 22 H31 M13 30 H24"/></g>
-  <text x="804" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">9</text>
-  <text x="804" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="476" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Notes</text>
-  <text x="476" y="624" font-size="20" fill="#a1a1a6">Read, edit and organise</text>
-  <text x="476" y="652" font-size="20" fill="#a1a1a6">into folders.</text>
-  <text x="476" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+  <rect x="476.0" y="460" width="72" height="72" rx="18" fill="url(#g4)"/>
+  <g transform="translate(490.0,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="32" height="38" rx="6"/><path d="M13 14 H31 M13 22 H31 M13 30 H24"/></g>
+  <text x="804.0" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">9</text>
+  <text x="804.0" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="476.0" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Notes</text>
+  <text x="476.0" y="624" font-size="20" fill="#a1a1a6">Read, edit and organise</text>
+  <text x="476.0" y="652" font-size="20" fill="#a1a1a6">into folders.</text>
+  <text x="476.0" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
 </g>
 <g>
-  <rect x="860" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="860.0" y="428" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#64d2ff"/><stop offset="1" stop-color="#32ade6"/></linearGradient></defs>
-  <rect x="892" y="460" width="72" height="72" rx="18" fill="url(#g5)"/>
-  <g transform="translate(906,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13 C3 10 5 8 8 8 H17 L21 12 H36 C39 12 41 14 41 17 V33 C41 36 39 38 36 38 H8 C5 38 3 36 3 33 Z"/></g>
-  <text x="1220" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">10</text>
-  <text x="1220" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="892" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">iCloud Drive</text>
-  <text x="892" y="624" font-size="20" fill="#a1a1a6">Search inside documents,</text>
-  <text x="892" y="652" font-size="20" fill="#a1a1a6">send, write and tidy files.</text>
-  <text x="892" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+  <rect x="892.0" y="460" width="72" height="72" rx="18" fill="url(#g5)"/>
+  <g transform="translate(906.0,474)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13 C3 10 5 8 8 8 H17 L21 12 H36 C39 12 41 14 41 17 V33 C41 36 39 38 36 38 H8 C5 38 3 36 3 33 Z"/></g>
+  <text x="1220.0" y="492" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">10</text>
+  <text x="1220.0" y="520" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="892.0" y="586" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">iCloud Drive</text>
+  <text x="892.0" y="624" font-size="20" fill="#a1a1a6">Search inside documents,</text>
+  <text x="892.0" y="652" font-size="20" fill="#a1a1a6">send, write and tidy files.</text>
+  <text x="892.0" y="682" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
 </g>
 <g>
-  <rect x="28" y="724" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="28.0" y="724" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g6" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#40d3c9"/><stop offset="1" stop-color="#00a89d"/></linearGradient></defs>
-  <rect x="60" y="756" width="72" height="72" rx="18" fill="url(#g6)"/>
-  <g transform="translate(74,770)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 41 C22 41 8 27 8 17 A14 14 0 0 1 36 17 C36 27 22 41 22 41 Z"/><circle cx="22" cy="17" r="5"/></g>
-  <text x="388" y="788" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">2</text>
-  <text x="388" y="816" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="60" y="882" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Maps</text>
-  <text x="60" y="920" font-size="20" fill="#a1a1a6">Travel times by bike, car,</text>
-  <text x="60" y="948" font-size="20" fill="#a1a1a6">foot or transit. Find places.</text>
-  <text x="60" y="978" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+  <rect x="60.0" y="756" width="72" height="72" rx="18" fill="url(#g6)"/>
+  <g transform="translate(74.0,770)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 41 C22 41 8 27 8 17 A14 14 0 0 1 36 17 C36 27 22 41 22 41 Z"/><circle cx="22" cy="17" r="5"/></g>
+  <text x="388.0" y="788" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">2</text>
+  <text x="388.0" y="816" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="60.0" y="882" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Maps</text>
+  <text x="60.0" y="920" font-size="20" fill="#a1a1a6">Travel times by bike, car,</text>
+  <text x="60.0" y="948" font-size="20" fill="#a1a1a6">foot or transit. Find places.</text>
+  <text x="60.0" y="978" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
 </g>
 <g>
-  <rect x="444" y="724" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <rect x="444.0" y="724" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
   <defs><linearGradient id="g7" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5de07a"/><stop offset="1" stop-color="#28b44b"/></linearGradient></defs>
-  <rect x="476" y="756" width="72" height="72" rx="18" fill="url(#g7)"/>
-  <g transform="translate(490,770)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6 C33 6 41 12.5 41 20.5 C41 28.5 33 35 22 35 C19.5 35 17 34.6 14.8 33.9 L6 38 L8.5 30.5 C5 27.8 3 24.3 3 20.5 C3 12.5 11 6 22 6 Z"/></g>
-  <text x="804" y="788" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">4</text>
-  <text x="804" y="816" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="476" y="882" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Messages</text>
-  <text x="476" y="920" font-size="20" fill="#a1a1a6">Read and search your chats.</text>
-  <text x="476" y="948" font-size="20" fill="#a1a1a6">Sending waits for your OK.</text>
-  <text x="476" y="978" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+  <rect x="476.0" y="756" width="72" height="72" rx="18" fill="url(#g7)"/>
+  <g transform="translate(490.0,770)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6 C33 6 41 12.5 41 20.5 C41 28.5 33 35 22 35 C19.5 35 17 34.6 14.8 33.9 L6 38 L8.5 30.5 C5 27.8 3 24.3 3 20.5 C3 12.5 11 6 22 6 Z"/></g>
+  <text x="804.0" y="788" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">4</text>
+  <text x="804.0" y="816" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="476.0" y="882" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Messages</text>
+  <text x="476.0" y="920" font-size="20" fill="#a1a1a6">Read and search your chats.</text>
+  <text x="476.0" y="948" font-size="20" fill="#a1a1a6">Sending waits for your OK.</text>
+  <text x="476.0" y="978" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
 </g>
 <g>
-  <rect x="860" y="724" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
-  <defs><linearGradient id="g8" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c56cf0"/><stop offset="1" stop-color="#7d4ce0"/></linearGradient></defs>
-  <rect x="892" y="756" width="72" height="72" rx="18" fill="url(#g8)"/>
-  <g transform="translate(906,770)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="12" width="28" height="28" rx="7"/><path d="M12 4 H34 C37.3 4 40 6.7 40 10 V32"/></g>
-  <text x="1220" y="788" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">2</text>
-  <text x="1220" y="816" text-anchor="end" font-size="16" fill="#86868b">tools</text>
-  <text x="892" y="882" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Shortcuts</text>
-  <text x="892" y="920" font-size="20" fill="#a1a1a6">Run only the shortcuts</text>
-  <text x="892" y="948" font-size="20" fill="#a1a1a6">you allow, listed twice.</text>
-  <text x="892" y="978" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+  <rect x="860.0" y="724" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g8" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6482"/><stop offset="1" stop-color="#ff2d55"/></linearGradient></defs>
+  <rect x="892.0" y="756" width="72" height="72" rx="18" fill="url(#g8)"/>
+  <g transform="translate(906.0,770)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 39 C22 39 4 28 4 15.5 C4 9.5 8.5 5 14 5 C17.8 5 20.6 7 22 10 C23.4 7 26.2 5 30 5 C35.5 5 40 9.5 40 15.5 C40 28 22 39 22 39 Z"/></g>
+  <text x="1220.0" y="788" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">4</text>
+  <text x="1220.0" y="816" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="892.0" y="882" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Health</text>
+  <text x="892.0" y="920" font-size="20" fill="#a1a1a6">Sleep, steps and heart rate</text>
+  <text x="892.0" y="948" font-size="20" fill="#a1a1a6">per day, from your iPhone.</text>
+  <text x="892.0" y="978" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
+</g>
+<g>
+  <rect x="444.0" y="1020" width="392" height="272" rx="28" fill="#1c1c1e" stroke="#2c2c2e"/>
+  <defs><linearGradient id="g9" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c56cf0"/><stop offset="1" stop-color="#7d4ce0"/></linearGradient></defs>
+  <rect x="476.0" y="1052" width="72" height="72" rx="18" fill="url(#g9)"/>
+  <g transform="translate(490.0,1066)" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="12" width="28" height="28" rx="7"/><path d="M12 4 H34 C37.3 4 40 6.7 40 10 V32"/></g>
+  <text x="804.0" y="1084" text-anchor="end" font-size="44" font-weight="700" fill="#f5f5f7" letter-spacing="-1">2</text>
+  <text x="804.0" y="1112" text-anchor="end" font-size="16" fill="#86868b">tools</text>
+  <text x="476.0" y="1178" font-size="30" font-weight="700" fill="#f5f5f7" letter-spacing="-0.5">Shortcuts</text>
+  <text x="476.0" y="1216" font-size="20" fill="#a1a1a6">Run only the shortcuts</text>
+  <text x="476.0" y="1244" font-size="20" fill="#a1a1a6">you allow, listed twice.</text>
+  <text x="476.0" y="1274" font-size="14" font-weight="600" fill="#86868b" letter-spacing="1.2">WITH THE MAC HELPER</text>
 </g>
 
 </svg>

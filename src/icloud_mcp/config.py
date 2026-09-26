@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 
+# Where OAuth may send a signed-in client back to: Claude (claude.ai, claude.com), ChatGPT (chatgpt.com, chat.openai.com)
+# and local clients such as Codex CLI (127.0.0.1, localhost). Every sign-in still needs the owner password.
+DEFAULT_REDIRECT_HOSTS = "claude.ai,claude.com,chatgpt.com,chat.openai.com,localhost,127.0.0.1"
+
 def _str(name: str, default: str = "") -> str:
     v = os.environ.get(name)
     return default if v is None or v.strip() == "" else v.strip()
@@ -228,7 +232,7 @@ class Settings:
             stateless_http=_bool("MCP_STATELESS", True),
             tool_timeout=_int("TOOL_TIMEOUT_SECONDS", 60),
             allowed_redirect_hosts=tuple(
-                h.lower() for h in _list("OAUTH_ALLOWED_REDIRECT_HOSTS", "claude.ai,claude.com,localhost,127.0.0.1")
+                h.lower() for h in _list("OAUTH_ALLOWED_REDIRECT_HOSTS", DEFAULT_REDIRECT_HOSTS)
             ),
             access_token_ttl=_int("ACCESS_TOKEN_TTL", 3600),
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),

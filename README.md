@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/hero-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/hero-light.svg" alt="iCloud MCP. Your iCloud, in Claude. Mail, Calendar, Contacts, Reminders, Notes, iCloud Drive, Maps and Messages." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/hero-light.svg" alt="iCloud MCP. Your iCloud, in your AI. Mail, Calendar, Contacts, Reminders, Notes, iCloud Drive, Maps, Messages and Health, for Claude, Codex, ChatGPT or any MCP client." width="100%">
 </picture>
 
 <br>
@@ -15,15 +15,15 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-86868b?style=flat-square)](https://github.com/epinethrone/icloud-mcp/blob/main/LICENSE)
 [![icloud-mcp MCP server on Glama](https://glama.ai/mcp/servers/epinethrone/icloud-mcp/badges/score.svg)](https://glama.ai/mcp/servers/epinethrone/icloud-mcp)
 
-**[Install for Claude Desktop ›](#claude-desktop-in-one-click)** &nbsp;&nbsp; **[Add to Claude Code ›](#manual-setup-claude-code-or-claude-desktop-with-more-options)** &nbsp;&nbsp; **[Host it for every device ›](#quick-start)**
+**[Run it on this computer ›](#run-it-locally)** &nbsp;&nbsp; **[Host it for every device ›](#quick-start)** &nbsp;&nbsp; **[Claude Desktop in one click ›](#claude-desktop-in-one-click)**
 
 </div>
 
 <br>
 
 <p align="center">
-Ask Claude about your week, your inbox or the file you saved last spring, and it just knows.<br>
-iCloud MCP connects Claude, or any MCP client, to the Apple account you already live in.<br>
+Ask your AI about your week, your inbox or the file you saved last spring, and it just knows.<br>
+iCloud MCP connects Claude, Codex, ChatGPT or any other MCP client to the Apple account you already live in.<br>
 It runs on your own machine, keeps your password there, and asks before anything leaves.
 </p>
 
@@ -31,7 +31,7 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Nine apps, one connector: Mail (25 tools), Calendar (12), Contacts (11), Reminders (10), Notes (9), iCloud Drive (10), Maps (2), Messages (4) and Shortcuts (2), plus a health check." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/apps-light.svg" alt="Ten apps, one connector: Mail (25 tools), Calendar (12), Contacts (11), Reminders (10), Notes (9), iCloud Drive (10), Maps (2), Messages (4), Health (4) and Shortcuts (2), plus a health check." width="100%">
 </picture>
 
 <br><br>
@@ -54,20 +54,22 @@ It runs on your own machine, keeps your password there, and asks before anything
 
 *"Catch me up on my messages from this weekend."*
 
+*"How did I sleep this week, compared with last month?"*
+
 <br>
 
 ## Private by design.
 
 **Your password stays home.**<br>
 Apple has no sign-in for these services other than an app-specific password.<br>
-It lives only on your machine or in your Mac's Keychain. Claude never sees it.
+It lives only on your machine or in your Mac's Keychain. Your AI never sees it.
 
 **Nothing leaves without you.**<br>
-Mail Claude writes waits for your approval, or lands in your Drafts.<br>
+Mail your AI writes waits for your approval, or lands in your Drafts.<br>
 Invitations to other people are off. Deletes go to the Trash.
 
 **Built for mail from strangers.**<br>
-Everything Claude reads is marked as someone else's words, not instructions.<br>
+Everything your AI reads is marked as someone else's words, not instructions.<br>
 Hidden characters are stripped, and phishing tricks are called out.
 
 **Tested where it counts.**<br>
@@ -76,38 +78,38 @@ and hands-on runs against a live iCloud account for the quirks only Apple's serv
 
 <br>
 
-## New since 0.9.
+## New in 0.12.
 
 </div>
 
 <table>
 <tr>
+<td width="33%" valign="top"><b>Apple Health</b><br>Sleep with its stages, steps, activity and heart rate per day, from your iPhone, plus your whole history from the Health app's export.</td>
+<td width="33%" valign="top"><b>Any MCP client</b><br>Claude, Codex, ChatGPT, Cursor and others. ChatGPT can sign in to a hosted server without extra settings.</td>
+<td width="33%" valign="top"><b>Clearer tool names</b><br>Every tool is <code>area_verb_noun</code>, such as <code>mail_send_message</code>, so any agent picks the right one. Old names still work in <code>TOOLS</code>.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><b>Fewer false alarms</b><br>Mail from Outlook no longer warns about hidden text. The warning stays for hidden text that addresses an AI, and you can see what was hidden.</td>
 <td width="33%" valign="top"><b>Apple Maps</b><br>Travel time by bike, car, foot or transit for a departure or arrival time, and place search. Calendar travel time can use it.</td>
 <td width="33%" valign="top"><b>Messages</b><br>Read and search your iMessage and SMS history. Sending is off by default, and then waits for your approval and an allowlist.</td>
+</tr>
+<tr>
 <td width="33%" valign="top"><b>A menu bar app</b><br>See health at a glance, pause the server, restart it, change credentials and sign out any connected app.</td>
-</tr>
-<tr>
-<td width="33%" valign="top"><b>Drafts and folders</b><br>Send a saved draft as it is, update one, rename or delete mail folders (mail goes to Trash first).</td>
-<td width="33%" valign="top"><b>Calendars and groups</b><br>Create, rename and delete calendars; contact groups the way the Contacts app keeps them.</td>
-<td width="33%" valign="top"><b>Richer Reminders</b><br>Repeating reminders, extra alerts, completed ones with when they were done, and list management.</td>
-</tr>
-<tr>
 <td width="33%" valign="top"><b>Pause</b><br>One switch and every tool answers that the server is paused, without disconnecting anyone.</td>
-<td width="33%" valign="top"><b>Sturdier</b><br>A malformed invitation can no longer break a calendar listing, found by fuzzing every parser.</td>
-<td width="33%" valign="top"><b>Safer</b><br>More safety warnings on a stranger's text, and a way to clear the approval queue at once.</td>
+<td width="33%" valign="top"><b>Safer</b><br>Invitation allowlists, screened subjects and names, your own classifier, and fuzzing of every parser that reads other people's data.</td>
 </tr>
 </table>
 
-<p align="center"><sub>In 0.6 to 0.8: about three times faster calendars, lighter mail, an instant first call, your own rules file, replies owed, clash checks and a hardened recurrence guard. Since 0.4: bulk clean-up with undo, safe unsubscribe, exact bookings, note editing, search inside Drive files, birthdays and Shortcuts. In 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP and scam warnings.</sub></p>
+<p align="center"><sub>In 0.9 to 0.11: Maps, Messages, the menu bar app and pause, drafts and folders, calendars and contact groups, and richer Reminders. In 0.6 to 0.8: about three times faster calendars, lighter mail, an instant first call, your own rules file, replies owed, clash checks and a hardened recurrence guard. Since 0.4: bulk clean-up with undo, safe unsubscribe, exact bookings, note editing, search inside Drive files, birthdays and Shortcuts. In 0.3: the one-click Claude Desktop extension, local mode, Keychain storage, free time, RSVP and scam warnings.</sub></p>
 
 <br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/how-dark.svg">
-  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/how-light.svg" alt="How it works: Claude connects to icloud-mcp over OAuth and MCP. icloud-mcp talks to iCloud Mail, Calendar and Contacts over IMAP, SMTP, CalDAV and CardDAV. An optional Mac helper connects out to the server over pinned TLS and handles Reminders, Notes, iCloud Drive, Maps and Messages on your Mac. An optional menu bar app controls the server through a private admin port on the same Mac." width="100%">
+  <img src="https://raw.githubusercontent.com/epinethrone/icloud-mcp/main/assets/readme/how-light.svg" alt="How it works: your AI (Claude, Codex, ChatGPT or any MCP client) connects to icloud-mcp over OAuth and MCP, or starts it on your computer. icloud-mcp talks to iCloud Mail, Calendar and Contacts over IMAP, SMTP, CalDAV and CardDAV. An optional Mac helper connects out to the server over pinned TLS and handles Reminders, Notes, iCloud Drive, Maps, Messages and Health on your Mac. An optional menu bar app controls the server through a private admin port on the same Mac." width="100%">
 </picture>
 
-<p align="center">Mail, Calendar and Contacts use Apple's standard protocols.<br>Reminders, Notes, iCloud Drive, Maps and Messages go through an optional helper on your Mac.<br>It connects out, so your Mac never opens a port.</p>
+<p align="center">Mail, Calendar and Contacts use Apple's standard protocols.<br>Reminders, Notes, iCloud Drive, Maps, Messages and Health go through an optional helper on your Mac.<br>It connects out, so your Mac never opens a port.</p>
 
 <br>
 
@@ -117,18 +119,20 @@ and hands-on runs against a live iCloud account for the quirks only Apple's serv
 
 </div>
 
-| | **Claude Desktop** | **Claude Code** | **Your own server** |
+| | **Any client on this computer** | **Claude Desktop, one click** | **Your own server** |
 |---|---|---|---|
-| **Setup** | Double-click an extension | One command | Docker and an HTTPS address |
-| **Works in** | Claude Desktop on this computer | Claude Code on this computer | Claude on the web, desktop and phone |
+| **Setup** | One command or a few lines of config | Double-click an extension | Docker and an HTTPS address |
+| **Works in** | Claude Code, Codex, Claude Desktop, Cursor, VS Code and any other MCP client on this computer | Claude Desktop on this computer | Claude and ChatGPT on the web, desktop and phone, Codex, and any client that supports remote MCP servers |
 | **Outgoing mail** | Saved to Drafts for you to send | Saved to Drafts for you to send | Waits for your approval in a browser |
-| **Guide** | [Install ›](#claude-desktop-in-one-click) | [Set up ›](#manual-setup-claude-code-or-claude-desktop-with-more-options) | [Quick start ›](#quick-start) |
+| **Guide** | [Set up ›](#manual-setup-any-mcp-client) | [Install ›](#claude-desktop-in-one-click) | [Quick start ›](#quick-start) |
+
+Tested with Claude (web, desktop, phone, Claude Code and the Desktop extension) and with Codex CLI running the server locally. Any client that speaks MCP works the same way: locally it starts the server itself, and hosted it signs in with OAuth.
 
 <br>
 
-## Run it locally (Claude Desktop and Claude Code)
+## Run it locally
 
-The server runs on your own computer. Your client starts it when it needs it and talks to it directly, so there is no public address, tunnel, Docker or OAuth. Claude on the web and on your phone can't reach it; for that, [host it](#quick-start).
+The server runs on your own computer. Your client starts it when it needs it and talks to it directly, so there is no public address, tunnel, Docker or OAuth. Apps on the web and on your phone can't reach it; for that, [host it](#quick-start).
 
 ### Claude Desktop in one click
 
@@ -136,9 +140,9 @@ The server runs on your own computer. Your client starts it when it needs it and
 2. Double-click it, or drag it onto Claude Desktop → Settings → Extensions.
 3. Fill in your Apple Account email, an [app-specific password](https://account.apple.com) (Claude Desktop keeps it in your system keychain), your name and your time zone, such as `Europe/Amsterdam`.
 
-It starts approval-first: mail is saved to Drafts for you to send, and invitations to other people are off. This covers Mail, Calendar and Contacts. Reminders, Notes and iCloud Drive need the [Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) and the manual setup below.
+It starts approval-first: mail is saved to Drafts for you to send, and invitations to other people are off. This covers Mail, Calendar and Contacts. Reminders, Notes and iCloud Drive need the [Mac helper](#reminders-notes-icloud-drive-maps-messages-and-health-through-your-mac) and the manual setup below.
 
-### Manual setup (Claude Code, or Claude Desktop with more options)
+### Manual setup (any MCP client)
 
 **1. Put your settings in a file only you can read.**
 
@@ -168,7 +172,13 @@ Claude Code:
 claude mcp add icloud -- uvx icloud-mcp-server --local --env-file ~/.icloud-mcp/icloud.env
 ```
 
-Claude Desktop: Settings → Developer → Edit Config, add this to `claude_desktop_config.json`, and restart Claude:
+Codex:
+
+```bash
+codex mcp add icloud -- uvx icloud-mcp-server --local --env-file ~/.icloud-mcp/icloud.env
+```
+
+Claude Desktop: Settings → Developer → Edit Config, add this to `claude_desktop_config.json`, and restart Claude. Cursor (`~/.cursor/mcp.json`), VS Code, Windsurf, Gemini CLI and most other clients take the same `command` and `args` in their own MCP settings:
 
 ```json
 {
@@ -181,28 +191,28 @@ Claude Desktop: Settings → Developer → Edit Config, add this to `claude_desk
 }
 ```
 
-If Claude Desktop can't find `uvx`, use its full path (`which uvx`). Without uv, `pip install icloud-mcp-server` and use `icloud-mcp` as the command.
+If your client can't find `uvx`, use its full path (`which uvx`). Without uv, `pip install icloud-mcp-server` and use `icloud-mcp` as the command.
 
 > [!TIP]
-> **Fewer tools, better choices.** Clients pick the right tool more reliably from a short list. Add `TOOLS=essential` for a core of 19: search, read and reply to mail; list events, find free time and create or update events; find contacts; the main Reminders, Notes and Drive tools; and the health check. Add exact names to it as needed, for example `TOOLS=essential,mail_move_messages`, or pick whole areas: `TOOLS=mail`, `TOOLS=mail,calendar` (also `contacts`, `reminders`, `notes`, `drive`; the health check always stays).
+> **Fewer tools, better choices.** Clients pick the right tool more reliably from a short list. Add `TOOLS=essential` for a core of 19: search, read and reply to mail; list events, find free time and create or update events; find contacts; the main Reminders, Notes and Drive tools; and the health check. Add exact names to it as needed, for example `TOOLS=essential,mail_move_messages`, or pick whole areas: `TOOLS=mail`, `TOOLS=mail,calendar` (also `contacts`, `reminders`, `notes`, `drive`, `maps`, `imessage`, `health`; the health check always stays).
 
-**How sending works locally.** There is no approval page, so with the default `SEND_REQUIRES_APPROVAL=true` every message Claude sends is saved to your **Drafts** folder instead, and the result says so. You review it in Mail and press Send yourself. Set `SEND_REQUIRES_APPROVAL=false` to let Claude send directly; your client's own "ask before use" setting is then the only check.
+**How sending works locally.** There is no approval page, so with the default `SEND_REQUIRES_APPROVAL=true` every message your AI sends is saved to your **Drafts** folder instead, and the result says so. You review it in Mail and press Send yourself. Set `SEND_REQUIRES_APPROVAL=false` to let it send directly; your client's own approval prompt is then the only check.
 
-**Reminders, Notes and iCloud Drive locally.** Add `ENABLE_REMINDERS=true` (and/or `ENABLE_NOTES`, `ENABLE_DRIVE`) and a `BRIDGE_TOKEN` to the env file, start your client once, then [install the Mac helper](#reminders-notes-and-icloud-drive-through-your-mac) with server `https://127.0.0.1:8001` and the fingerprint from `~/.icloud-mcp/bridge_fingerprint.txt`. In local mode the bridge only listens on `127.0.0.1`. If two clients start the server at once, only the first gets the Mac tools; Mail, Calendar and Contacts work in both.
+**Reminders, Notes and iCloud Drive locally.** Add `ENABLE_REMINDERS=true` (and/or `ENABLE_NOTES`, `ENABLE_DRIVE`) and a `BRIDGE_TOKEN` to the env file, start your client once, then [install the Mac helper](#reminders-notes-icloud-drive-maps-messages-and-health-through-your-mac) with server `https://127.0.0.1:8001` and the fingerprint from `~/.icloud-mcp/bridge_fingerprint.txt`. In local mode the bridge only listens on `127.0.0.1`. If two clients start the server at once, only the first gets the Mac tools; Mail, Calendar and Contacts work in both.
 
 ## Quick start
 
-Host it once, and Claude reaches your iCloud from the web, the desktop app and your phone.
+Host it once, and your AI reaches your iCloud from the web, desktop apps and your phone: Claude, ChatGPT, Codex, or any client that supports remote MCP servers.
 
 **You need**
 
 - Docker with the compose plugin (or Python 3.11+).
 - An Apple Account with two-factor authentication and an **app-specific password** (account.apple.com → Sign-In and Security → App-Specific Passwords).
-- A public **HTTPS** address. Claude connects from Anthropic's cloud, so a LAN or VPN address won't work. A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is the simplest: outbound only, no port forwarding.
-- A Claude plan that supports custom connectors.
+- A public **HTTPS** address. Web and phone apps connect from their provider's cloud, so a LAN or VPN address won't work. A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is the simplest: outbound only, no port forwarding.
+- A client that can add a remote MCP server with OAuth: Claude (custom connectors), ChatGPT (developer mode) or Codex, for example.
 
 > [!WARNING]
-> Don't put Cloudflare Access or any other login wall in front of the server. Claude's servers can't pass an interactive login, and the server has its own OAuth.
+> Don't put Cloudflare Access or any other login wall in front of the server. Your client's servers can't pass an interactive login, and the server has its own OAuth.
 
 **1. Configure**
 
@@ -233,13 +243,20 @@ docker compose up -d --build     # listens on 127.0.0.1:8000 only
 
 For the bundled Cloudflare Tunnel: create a tunnel, point its public hostname (the host in `MCP_PUBLIC_URL`) at `http://icloud-mcp:8000`, put the token in `.tunnel.env` as `TUNNEL_TOKEN=...`, and start with `docker compose --profile tunnel up -d --build`. Any TLS front (Caddy, nginx) works too, as long as it keeps the `Host` header. `MCP_PUBLIC_URL` must match the public address exactly.
 
-**4. Connect Claude**
+**4. Connect your client**
 
-Settings → Connectors → Add custom connector → `https://<your-host>/mcp`. Your server shows an approval page: enter the owner password. Reconnect the connector whenever you change tools or settings, because Claude caches tool definitions. To revoke every connected client, delete `oauth_state.json` in the data volume and restart.
+Add `https://<your-host>/mcp` as a remote MCP server. Your server then shows an approval page: enter the owner password.
+
+- **Claude:** Settings → Connectors → Add custom connector.
+- **ChatGPT:** Settings → Apps & Connectors → Advanced → turn on developer mode, then create a connector with OAuth (needs a plan with developer mode).
+- **Codex:** `codex mcp add icloud --url https://<your-host>/mcp`, then `codex mcp login icloud`.
+- **Others:** any client that supports remote (streamable HTTP) MCP servers with OAuth. A web client whose sign-in returns to another host needs that host in `OAUTH_ALLOWED_REDIRECT_HOSTS`.
+
+Reconnect whenever you change tools or settings, because clients cache tool definitions. The menu bar app signs out one connected client or all of them; without it, delete `oauth_state.json` in the data volume and restart to revoke every client.
 
 **5. Check it works**
 
-In a new chat, ask *"Check my iCloud connection."* Claude runs `icloud_check_health`, which signs in to each service and reports how long each took. Then try *"What's on my calendar this week?"* and ask Claude to email yourself. With the default settings nothing is sent: the message waits at `https://<your-host>/outbox` until you approve it. If anything fails, see [Troubleshooting](#troubleshooting).
+In a new chat, ask *"Check my iCloud connection."* Your AI runs `icloud_check_health`, which signs in to each service and reports how long each took. Then try *"What's on my calendar this week?"* and ask it to email you. With the default settings nothing is sent: the message waits at `https://<your-host>/outbox` until you approve it. If anything fails, see [Troubleshooting](#troubleshooting).
 
 ### Approving outgoing mail
 
@@ -264,7 +281,7 @@ A connector that can read your mail and act for you is a prompt-injection target
 | Agent reads your codes from Messages | Messages is **off**; when on, bank and one-time-code senders are hidden, and you can hide or allow chats | `ENABLE_IMESSAGE=false`, `IMESSAGE_HIDE_SHORT_CODES=true`, `IMESSAGE_HIDDEN_CHATS` |
 | Agent changes anything at all | Everything writable | `READ_ONLY=true` for a read-only connector |
 
-In Claude you can also set the send, reply, forward and delete tools to "ask before use". Anyone who obtains the app-specific password has **full access to mail, calendar and contacts** (Apple offers no narrower scope), so protect the server and its `.env` accordingly.
+Most clients can also ask you before a tool runs (in Claude, "ask before use" per tool): use it for the send, reply, forward and delete tools. Anyone who obtains the app-specific password has **full access to mail, calendar and contacts** (Apple offers no narrower scope), so protect the server and its `.env` accordingly.
 
 <details>
 <summary><b>The full security model</b></summary>
@@ -471,12 +488,12 @@ Connections stay signed in for 10 minutes after the last call (`IMAP_IDLE_SECOND
 
 [`menubar/`](https://github.com/epinethrone/icloud-mcp/blob/main/menubar/README.md) holds **iCloud MCP Control**, a native macOS app for a server that runs on your Mac. Its menu is a standard macOS menu, like Time Machine's: it shows whether the server is up, how many tools and connected apps it has and any problem in plain words, and lets you pause the server (tools answer that it is paused, nobody is disconnected), restart or stop it, the Mac helper and a tunnel. Its Settings change the owner passcode, replace the iCloud app-specific password (tested with iCloud before it is saved) and list every connected app with when it was last used, so you can sign out one, a group or all of them. Turn on its admin API with `ADMIN_PORT`: it listens on 127.0.0.1 only, on its own port, and every request needs the token the server writes to `admin-token` in its data folder.
 
-## Reminders, Notes, iCloud Drive, Maps and Messages through your Mac
+## Reminders, Notes, iCloud Drive, Maps, Messages and Health through your Mac
 
-Apple only exposes Reminders, Notes, iCloud Drive, Apple Maps and your Messages history on its own devices, so a small helper ([`mac-helper/`](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md)) runs on your Mac and does the work when the server asks.
+Apple only exposes Reminders, Notes, iCloud Drive, Apple Maps, your Messages history and Health data on its own devices, so a small helper ([`mac-helper/`](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md)) runs on your Mac and does the work when the server asks.
 
 - **Nothing listens on your Mac.** The helper connects *out* to a private HTTPS port of the server (never the public address, never the tunnel) and long-polls for jobs.
-- **No code is ever sent.** The server sends an operation name and validated arguments from a fixed list. Reminders run a small EventKit program the installer builds on your Mac, and Maps a small MapKit program. Notes run static scripts. Messages are read from your own Messages database, read-only. iCloud Drive runs one fixed Python script under Apple's own Python. In every case the arguments arrive as one JSON value, never as code.
+- **No code is ever sent.** The server sends an operation name and validated arguments from a fixed list. Reminders run a small EventKit program the installer builds on your Mac, and Maps a small MapKit program. Notes run static scripts. Messages are read from your own Messages database, read-only. iCloud Drive and Health each run one fixed Python script under Apple's own Python. In every case the arguments arrive as one JSON value, never as code.
 - **Pinned and authenticated.** TLS with a self-signed certificate the helper pins by fingerprint, plus a bearer token.
 - **Honest when it's off.** It works while your Mac is on and reachable (home network or VPN). When it isn't, the tools say so.
 
@@ -516,7 +533,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `IMESSAGE_NEVER_SEND` | empty | Handles nothing is ever sent to (your own assistant's Apple ID, say); its chat is labelled as the assistant's |
 | `IMESSAGE_ALLOW_SEND`, `IMESSAGE_SEND_REQUIRES_APPROVAL` | false, true | Allow `imessage_send_message`; every iMessage then waits for your approval on `/outbox`, whatever the mail setting |
 | `IMESSAGE_SEND_ALLOWLIST` | empty | Who may receive an iMessage (handles or chat ids); empty means nobody, `*` anyone |
-| `TOOLS` | all | `essential`, areas (`mail`, `calendar`, `contacts`, `reminders`, `notes`, `drive`) and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
+| `TOOLS` | all | `essential`, areas (`mail`, `calendar`, `contacts`, `reminders`, `notes`, `drive`, `maps`, `imessage`, `health`) and/or tool names to expose; everything else is not registered at all. An unknown name stops the server and lists the real ones |
 | `BRIDGE_TOKEN`, `BRIDGE_BIND` | empty, 127.0.0.1 | Mac helper secret (32+ characters) and the address its private port is published on |
 | `BRIDGE_HOST` | 127.0.0.1 (0.0.0.0 in the Docker image) | Address the bridge binds to inside the process. Loopback unless the helper's Mac reaches this process over the network |
 | `SHORTCUTS_ALLOW` | empty | Exact names of Shortcuts the assistant may run through the Mac helper, separated by commas (or by `;` when a name contains a comma); the Mac must list them too (see below) |
@@ -543,7 +560,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `AGENT_NOTES_FILE` | (none) | Your own rules for agents, added to the instructions and served as `icloud://agent-notes` (see `docs/agent-notes.example.md`) |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `ADMIN_PORT` | off | Loopback-only admin API for the menu bar app (its token is `admin-token` in `DATA_DIR`) |
-| `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Clients that may register |
+| `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,chatgpt.com,chat.openai.com,localhost,127.0.0.1` | Where sign-in may return a client: Claude, ChatGPT, and local clients such as Codex. Every sign-in still needs the owner password |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
 | `LOG_LEVEL` | INFO | |
 
@@ -551,16 +568,16 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 
 ## Troubleshooting
 
-Start by asking Claude to *"check my iCloud connection"*: `icloud_check_health` tests every enabled area and names the one that fails.
+Start by asking your AI to *"check my iCloud connection"*: `icloud_check_health` tests every enabled area and names the one that fails.
 
 <details>
 <summary><b>Claude Desktop extension</b></summary>
 
 | Symptom | Fix |
 |---|---|
-| "Failed to initialize cache", "Operation not permitted" or "Unable to connect to extension server" | Security software is probably blocking the `uv` and Python the extension downloads (antivirus application control, such as F-Secure's, does this for unsigned programs). Allow `uv` and its Python in that software, or quit it once to confirm, or use the [manual setup](#manual-setup-claude-code-or-claude-desktop-with-more-options) with a Python you already trust. |
+| "Failed to initialize cache", "Operation not permitted" or "Unable to connect to extension server" | Security software is probably blocking the `uv` and Python the extension downloads (antivirus application control, such as F-Secure's, does this for unsigned programs). Allow `uv` and its Python in that software, or quit it once to confirm, or use the [manual setup](#manual-setup-any-mcp-client) with a Python you already trust. |
 | Times are off by an hour or more | The time zone field needs one IANA name, such as `Europe/Amsterdam`, and nothing else. Change it under Settings → Extensions → iCloud. |
-| Reminders, Notes or Drive are missing | The extension covers Mail, Calendar and Contacts. The Mac areas need the [manual setup](#manual-setup-claude-code-or-claude-desktop-with-more-options) and the Mac helper. |
+| Reminders, Notes or Drive are missing | The extension covers Mail, Calendar and Contacts. The Mac areas need the [manual setup](#manual-setup-any-mcp-client) and the Mac helper. |
 
 </details>
 
@@ -570,9 +587,10 @@ Start by asking Claude to *"check my iCloud connection"*: `icloud_check_health` 
 | Symptom | Fix |
 |---|---|
 | `selftest` fails to log in | The login name is the usual cause. Some accounts sign in to one service with a different name: set `IMAP_USERNAME`, `SMTP_USERNAME`, `CALDAV_USERNAME` or `CARDDAV_USERNAME` separately. Use an app-specific password, never your Apple Account password. |
-| Claude can't reach the connector, or the approval page never appears | `MCP_PUBLIC_URL` must match the public address exactly, with no trailing slash, and your TLS front must keep the `Host` header. Make sure no login wall such as Cloudflare Access sits in front of the server. |
+| Your client can't reach the server, or the approval page never appears | `MCP_PUBLIC_URL` must match the public address exactly, with no trailing slash, and your TLS front must keep the `Host` header. Make sure no login wall such as Cloudflare Access sits in front of the server. |
 | The approval or outbox page won't accept your password | After 10 wrong passwords in 15 minutes the pages lock for everyone. Wait, then use the owner password from `.env`, not your Apple password. |
-| New tools or changed settings don't show up in Claude | Claude caches tool definitions. Reconnect the connector in Claude's settings and start a new chat. |
+| New tools or changed settings don't show up | Clients cache tool definitions. Reconnect the server in your client's settings (in Codex, start a new session) and start a new chat. |
+| A web client is refused at sign-in ("redirect host not allowed") | Its sign-in returns to a host the server doesn't know. Claude and ChatGPT are allowed by default; add another client's host to `OAUTH_ALLOWED_REDIRECT_HOSTS`. |
 | "Missing session ID" after the server restarted | Leave `MCP_STATELESS=true` (the default). If you turned it off, reconnect the connector after every restart. |
 | A tool call times out | iCloud can be slow; a call is abandoned after `TOOL_TIMEOUT_SECONDS` (60 by default) with an error naming the slow step. Retry, and check the server logs if it keeps happening. |
 
@@ -583,15 +601,15 @@ Start by asking Claude to *"check my iCloud connection"*: `icloud_check_health` 
 
 | Symptom | Fix |
 |---|---|
-| Claude says it sent an email but nothing arrived | That is the approval step working. Hosted: open `https://<your-host>/outbox`, review the message and approve it. Locally: it is in your Drafts. |
-| Adding a guest to an event is refused | Invitations are off by default. Set `ALLOW_CALENDAR_INVITES=true` if you want Claude to invite people. |
+| Your AI says it sent an email but nothing arrived | That is the approval step working. Hosted: open `https://<your-host>/outbox`, review the message and approve it. Locally: it is in your Drafts. |
+| Adding a guest to an event is refused | Invitations are off by default. Set `ALLOW_CALENDAR_INVITES=true` if you want your AI to invite people. |
 | Mail to a certain address is refused | Check `SEND_ALLOWLIST` and `MAX_RECIPIENTS`. |
 | Sent mail doesn't appear in Sent | iCloud doesn't file sent mail by itself. Keep `SAVE_SENT_COPY=true` (the default). |
 
 </details>
 
 <details>
-<summary><b>Mac helper: Reminders, Notes and iCloud Drive</b></summary>
+<summary><b>Mac helper: Reminders, Notes, iCloud Drive and Health</b></summary>
 
 | Symptom | Fix |
 |---|---|
@@ -601,6 +619,7 @@ Start by asking Claude to *"check my iCloud connection"*: `icloud_check_health` 
 | Notes are refused ("not allowed to control") | Allow the helper's Python to control Notes under Privacy & Security > Automation. |
 | iCloud Drive says the helper has no access | Give Full Disk Access to the Command Line Tools `Python.app`, and make sure the helper runs as that executable (re-run the installer). See the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md#icloud-drive). |
 | Reading a Drive file says it is still downloading | The file was only in iCloud ("Optimise Mac Storage"). Its download has started; ask again in a minute. |
+| Health figures are missing or hours old | Your iPhone only exports while it is unlocked: check `health_get_status`, then open the app your automation watches. A day without data means the Watch was off; one export fills the last two days. |
 
 </details>
 
@@ -619,7 +638,7 @@ These only show up against Apple's real servers, never against local test server
 <details>
 <summary><b>Limits</b></summary>
 
-- Reminders, Notes and iCloud Drive need the Mac helper and a Mac that is on. Contact photos and notes are deliberately not exposed to agents, and deleting a contact is permanent.
+- Reminders, Notes, iCloud Drive, Maps, Messages and Health need the Mac helper and a Mac that is on; Health also needs your iPhone to export. Contact photos and notes are deliberately not exposed to agents, and deleting a contact is permanent.
 - One identity: aliases can't be used as the From address. Attachments that aren't text come back as base64 and are size-capped.
 - Mail calls reuse up to two logged-in connections, which saves the login (about a second) on each call after the first; calendar and contacts calls take about 1.5 to 5 seconds against iCloud.
 - Claude doesn't show custom icons for custom connectors yet ([open request](https://github.com/anthropics/claude-ai-mcp/issues/152)). The server serves and advertises the project logo anyway, so clients that do show icons, and your browser tab on the approval and outbox pages, display it.

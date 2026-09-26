@@ -120,5 +120,5 @@ To tighten a deployment further:
 - Set `READ_ONLY=true` if agents only need to read, or `ALLOW_SEND=false` to allow drafts only.
 - Use `SEND_ALLOWLIST` to restrict who can receive mail, and keep `ALLOW_CALENDAR_INVITES=false` unless you need it.
 - Only enable the Mac areas you use (`ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE`), and keep the bridge port on your LAN or VPN.
-- In Claude, set the send, reply, forward and delete tools to "ask before use".
+- Have your client ask before the send, reply, forward and delete tools run (in Claude, "ask before use").
 - Keep `.env` at mode 600. Revoke all clients by deleting `oauth_state.json` and restarting. Rotate the app-specific password at account.apple.com if the server or its backups may have been exposed.

@@ -39,7 +39,7 @@ def svg(w: int, h: int, title: str, body: str) -> str:
 # ------------------------------------------------------------------ hero
 def hero(t: dict) -> str:
     w, h = 1280, 600
-    return svg(w, h, "iCloud MCP. Your iCloud, in Claude.", f"""
+    return svg(w, h, "iCloud MCP. Your iCloud, in your AI. For Claude, Codex, ChatGPT and any MCP client.", f"""
 <defs>
   <radialGradient id="glow" cx="0.5" cy="0.34" r="0.5">
     <stop offset="0" stop-color="{t['glow']}" stop-opacity="0.9"/>
@@ -53,10 +53,10 @@ def hero(t: dict) -> str:
 <ellipse cx="640" cy="200" rx="420" ry="240" fill="url(#glow)"/>
 {logo(572, 64, 136)}
 <text x="640" y="296" text-anchor="middle" font-size="30" font-weight="600" fill="{t['soft']}" letter-spacing="0.5">iCloud MCP</text>
-<text x="640" y="392" text-anchor="middle" font-size="84" font-weight="700" fill="{t['ink']}" letter-spacing="-2.5">Your iCloud. <tspan fill="url(#word)">In Claude.</tspan></text>
-<text x="640" y="456" text-anchor="middle" font-size="27" fill="{t['soft']}">Mail, Calendar, Contacts, Reminders, Notes, iCloud Drive, Maps and Messages.</text>
-<text x="640" y="494" text-anchor="middle" font-size="27" fill="{t['soft']}">Private by design. It asks before anything leaves.</text>
-<text x="640" y="556" text-anchor="middle" font-size="19" fill="{t['faint']}" letter-spacing="1.5">88 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
+<text x="640" y="392" text-anchor="middle" font-size="84" font-weight="700" fill="{t['ink']}" letter-spacing="-2.5">Your iCloud. <tspan fill="url(#word)">In your AI.</tspan></text>
+<text x="640" y="456" text-anchor="middle" font-size="27" fill="{t['soft']}">Mail, Calendar, Contacts, Reminders, Notes, Drive, Maps, Messages and Health.</text>
+<text x="640" y="494" text-anchor="middle" font-size="27" fill="{t['soft']}">For Claude, Codex, ChatGPT or any MCP client. It asks before anything leaves.</text>
+<text x="640" y="556" text-anchor="middle" font-size="19" fill="{t['faint']}" letter-spacing="1.5">92 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
 """)
 
 
@@ -76,6 +76,7 @@ def glyph(kind: str, cx: float, cy: float) -> str:
         "drive": f'<g {s}><path d="M3 13 C3 10 5 8 8 8 H17 L21 12 H36 C39 12 41 14 41 17 V33 C41 36 39 38 36 38 H8 C5 38 3 36 3 33 Z"/></g>',
         "maps": f'<g {s}><path d="M22 41 C22 41 8 27 8 17 A14 14 0 0 1 36 17 C36 27 22 41 22 41 Z"/><circle cx="22" cy="17" r="5"/></g>',
         "messages": f'<g {s}><path d="M22 6 C33 6 41 12.5 41 20.5 C41 28.5 33 35 22 35 C19.5 35 17 34.6 14.8 33.9 L6 38 L8.5 30.5 C5 27.8 3 24.3 3 20.5 C3 12.5 11 6 22 6 Z"/></g>',
+        "health": f'<g {s}><path d="M22 39 C22 39 4 28 4 15.5 C4 9.5 8.5 5 14 5 C17.8 5 20.6 7 22 10 C23.4 7 26.2 5 30 5 C35.5 5 40 9.5 40 15.5 C40 28 22 39 22 39 Z"/></g>',
         "shortcuts": f'<g {s}><rect x="4" y="12" width="28" height="28" rx="7"/><path d="M12 4 H34 C37.3 4 40 6.7 40 10 V32"/></g>',
     }[kind]
 
@@ -89,16 +90,20 @@ APPS = [
     ("drive", "iCloud Drive", 10, "#32ade6", "#64d2ff", ["Search inside documents,", "send, write and tidy files."]),
     ("maps", "Maps", 2, "#00a89d", "#40d3c9", ["Travel times by bike, car,", "foot or transit. Find places."]),
     ("messages", "Messages", 4, "#28b44b", "#5de07a", ["Read and search your chats.", "Sending waits for your OK."]),
+    ("health", "Health", 4, "#ff2d55", "#ff6482", ["Sleep, steps and heart rate", "per day, from your iPhone."]),
     ("shortcuts", "Shortcuts", 2, "#7d4ce0", "#c56cf0", ["Run only the shortcuts", "you allow, listed twice."]),
 ]
 
 
 def apps(t: dict) -> str:
-    w, h = 1280, 1036
+    rows = (len(APPS) + 2) // 3
     cw, ch, gap, x0, y0 = 392, 272, 24, 28, 132
+    w, h = 1280, y0 + rows * ch + (rows - 1) * gap + 36
     tiles = []
     for i, (kind, name, count, c1, c2, lines) in enumerate(APPS):
-        x, y = x0 + (i % 3) * (cw + gap), y0 + (i // 3) * (ch + gap)
+        in_row = min(3, len(APPS) - (i // 3) * 3)                           # a short last row is centred
+        left = x0 + (3 - in_row) * (cw + gap) / 2
+        x, y = left + (i % 3) * (cw + gap), y0 + (i // 3) * (ch + gap)
         mac = i >= 3
         tiles.append(f"""
 <g>
@@ -113,10 +118,10 @@ def apps(t: dict) -> str:
   <text x="{x + 32}" y="{y + 224}" font-size="20" fill="{t['soft']}">{lines[1]}</text>
   {f'<text x="{x + 32}" y="{y + 254}" font-size="14" font-weight="600" fill="{t["faint"]}" letter-spacing="1.2">WITH THE MAC HELPER</text>' if mac else ''}
 </g>""")
-    return svg(w, h, "Nine apps, one connector: Mail 25 tools, Calendar 12, Contacts 11, Reminders 10, Notes 9, iCloud Drive 10, "
-                     "Maps 2, Messages 4, Shortcuts 2.", f"""
+    return svg(w, h, "Ten apps, one connector: Mail 25 tools, Calendar 12, Contacts 11, Reminders 10, Notes 9, iCloud Drive 10, "
+                     "Maps 2, Messages 4, Health 4, Shortcuts 2.", f"""
 <rect width="{w}" height="{h}" rx="36" fill="{t['bg']}"/>
-<text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="{t['ink']}" letter-spacing="-1.2">Nine apps. One connector.</text>
+<text x="640" y="72" text-anchor="middle" font-size="46" font-weight="700" fill="{t['ink']}" letter-spacing="-1.2">Ten apps. One connector.</text>
 <text x="640" y="108" text-anchor="middle" font-size="21" fill="{t['soft']}">Plus a health check that tests every service in one call.</text>
 {''.join(tiles)}
 """)
@@ -140,18 +145,18 @@ def arrow(t: dict, x1, y1, x2, y2, label: str, lx: float, ly: float, anchor: str
 
 def how(t: dict) -> str:
     w, h = 1280, 520
-    return svg(w, h, "How it works: Claude connects to your server over OAuth and MCP; the server talks to iCloud Mail, Calendar and "
-                     "Contacts; an optional Mac helper connects out to the server for Reminders, Notes, iCloud Drive, Maps and "
-                     "Messages; an optional menu bar app controls the server through a private admin port.", f"""
+    return svg(w, h, "How it works: your AI (Claude, Codex, ChatGPT or any MCP client) connects to your server over OAuth and MCP, or starts it locally; the server talks to iCloud Mail, Calendar and "
+                     "Contacts; an optional Mac helper connects out to the server for Reminders, Notes, iCloud Drive, Maps, "
+                     "Messages and Health; an optional menu bar app controls the server through a private admin port.", f"""
 <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
   <path d="M0 0 L10 5 L0 10 z" fill="{t['faint']}"/></marker></defs>
 <rect width="{w}" height="{h}" rx="36" fill="{t['bg']}"/>
 <text x="640" y="68" text-anchor="middle" font-size="40" font-weight="700" fill="{t['ink']}" letter-spacing="-1">How it works.</text>
-{node(t, 60, 150, 280, 110, "Claude", "or any MCP client")}
+{node(t, 60, 150, 280, 110, "Your AI", "Claude, Codex, ChatGPT…")}
 {node(t, 500, 150, 280, 110, "icloud-mcp", "on your server or your Mac", "#6366f1")}
 {node(t, 940, 150, 280, 110, "iCloud", "Mail · Calendar · Contacts")}
 {node(t, 500, 360, 280, 110, "Mac helper", "optional, connects out")}
-{node(t, 940, 360, 280, 110, "On your Mac", "Reminders · Notes · Drive", sub2="Maps · Messages")}
+{node(t, 940, 360, 280, 110, "On your Mac", "Reminders · Notes · Drive", sub2="Maps · Messages · Health")}
 {node(t, 60, 360, 280, 110, "Menu bar app", "optional, on the same Mac")}
 {arrow(t, 342, 205, 496, 205, "OAuth + MCP", 420, 190)}
 {arrow(t, 782, 205, 936, 205, "IMAP · SMTP · DAV", 860, 190)}
