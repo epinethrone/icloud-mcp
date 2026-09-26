@@ -3,7 +3,7 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
-## Unreleased
+## 0.12.1
 
 - **Agents are told which tool is for which job.** The server's instructions now open with a short WHICH TOOL map: one line
   per goal (find mail, write mail, file mail, people, calendar, reminders, notes, files, messages, health...) naming the tool
