@@ -62,13 +62,13 @@ An agent that obeys every instruction it reads can only get data out through the
 
 | Channel | Gate |
 |---|---|
-| Mail (`mail_send`, `mail_reply`, `mail_forward`, `mail_unsubscribe` by mail) | Queued for the owner on `/outbox` (`SEND_REQUIRES_APPROVAL`), `SEND_ALLOWLIST`, `MAX_RECIPIENTS`; re-checked at release |
+| Mail (`mail_send_message`, `mail_reply_to_message`, `mail_forward_message`, `mail_unsubscribe_from_list` by mail) | Queued for the owner on `/outbox` (`SEND_REQUIRES_APPROVAL`), `SEND_ALLOWLIST`, `MAX_RECIPIENTS`; re-checked at release |
 | iMessage (`imessage_send_message`) | Off by default; queued for the owner; `IMESSAGE_SEND_ALLOWLIST` (empty = nobody), `IMESSAGE_NEVER_SEND` |
 | Calendar invitations, updates, cancellations and RSVPs | Off by default (`ALLOW_CALENDAR_INVITES`); when on, `INVITE_ALLOWLIST` and `MAX_ATTENDEES`. No approval page yet: an allowed guest receives the event's text |
-| One-click unsubscribe (`mail_unsubscribe`) | A POST with a fixed body to the URL in the sender's own header, public HTTPS only; it tells the sender the mail was processed and reveals the server's address, nothing else |
-| Shortcuts (`shortcuts_run`) | Off by default; a double allowlist of names; the agent's `input` text reaches whatever the Shortcut does, so allow only Shortcuts that send nothing anywhere |
+| One-click unsubscribe (`mail_unsubscribe_from_list`) | A POST with a fixed body to the URL in the sender's own header, public HTTPS only; it tells the sender the mail was processed and reveals the server's address, nothing else |
+| Shortcuts (`shortcuts_run_shortcut`) | Off by default; a double allowlist of names; the agent's `input` text reaches whatever the Shortcut does, so allow only Shortcuts that send nothing anywhere |
 | Apple Maps (`maps_*`) | Query text goes to Apple only |
-| Contact cards (`contacts_update`) | Not an exit by itself, but a poisoned address routes a later reply; results and the approval page mark agent-added addresses; `CONTACTS_ALLOW_EMAIL_CHANGES=false` blocks address changes |
+| Contact cards (`contacts_update_contact`) | Not an exit by itself, but a poisoned address routes a later reply; results and the approval page mark agent-added addresses; `CONTACTS_ALLOW_EMAIL_CHANGES=false` blocks address changes |
 | Notes, Reminders lists and iCloud Drive folders shared with other people | Not detected: a write into a shared container reaches its members. Keep shared lists and folders out of agents' hands, or run read-only |
 
 ## Hardening notes for operators
@@ -83,7 +83,7 @@ By default the server:
   public app. Every request needs the token in `DATA_DIR/admin-token` (mode 600); requests from a browser or with a
   non-loopback `Host` are refused. Credentials changed there are stored in `DATA_DIR/overrides.json` (mode 600).
 - Serves the Mac bridge only on its own private port, pinned by certificate fingerprint and protected by a bearer token, never on the public address. The server sends the Mac only an operation name and validated arguments from a fixed list, never script text.
-- Confines iCloud Drive access to the Drive folder, and never deletes notes or files permanently through the Mac helper: notes go to Recently Deleted and files to the Trash. Reminders have no trash: `reminders_delete` is final, which is accepted because a reminder is one line and easily recreated; `reminders_move` changes a reminder's list without deleting it.
+- Confines iCloud Drive access to the Drive folder, and never deletes notes or files permanently through the Mac helper: notes go to Recently Deleted and files to the Trash. Reminders have no trash: `reminders_delete_reminder` is final, which is accepted because a reminder is one line and easily recreated; `reminders_move_reminder` changes a reminder's list without deleting it.
 - Keeps what the server caches for speed in memory only, never on disk, and loses it on restart: logged-in IMAP and
   calendar connections while the server was used within the last 10 minutes (`IMAP_IDLE_SECONDS`,
   `CALDAV_KEEPALIVE_SECONDS`); the mail folder list for 60 seconds; the structure of up to 5,000 recently searched messages

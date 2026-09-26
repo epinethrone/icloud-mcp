@@ -35,7 +35,7 @@ function run(argv) {
     throw new Error("title does not match: this id belongs to a note titled '" + title + "'. Nothing was moved.");
   var dest = findFolder(app, a), to = dest.name();
   if (RECENTLY_DELETED.indexOf(norm(to)) >= 0)
-    throw new Error("moving a note into Recently Deleted is a delete; use notes_delete for that. Nothing was moved.");
+    throw new Error("moving a note into Recently Deleted is a delete; use notes_delete_note for that. Nothing was moved.");
   if (from !== null && norm(from) === norm(to) && !a.folder_id) return JSON.stringify({ id: n.id(), title: title, from: from, to: to, moved: false, note: "already in that folder" });
   app.move(n, { to: dest });
   var id = null;

@@ -239,7 +239,7 @@ def test_get_returns_the_full_record_without_notes_or_photos(env):
     full = svc.get("11111111-2222-3333-4444-555555555555")
     assert full["birthday"] == "1990-04-01" and full["addresses"] and full["urls"] and len(full["emails"]) == 3
     assert "attacker" not in json.dumps(full) and "untrusted" in full["notice"]
-    with pytest.raises(ContactsError, match="contacts_search"):
+    with pytest.raises(ContactsError, match="contacts_search_contacts"):
         svc.get("nope")
 
 
@@ -322,10 +322,10 @@ def test_tools_exist_only_when_enabled_and_carry_descriptions(env):
         mcp, _ = create_server(settings)
         return {t.name: t for t in await mcp.list_tools()}
     on = asyncio.run(tools(s))
-    assert {"contacts_search", "contacts_get"} <= set(on)
+    assert {"contacts_search_contacts", "contacts_get_contact"} <= set(on)
     assert not any(n.startswith("contacts_") for n in asyncio.run(tools(dataclasses.replace(s, enable_contacts=False))))
-    assert "email address" in on["contacts_search"].description and "do not guess" in on["contacts_search"].description
-    for name in ("contacts_create", "contacts_update"):
+    assert "email address" in on["contacts_search_contacts"].description and "do not guess" in on["contacts_search_contacts"].description
+    for name in ("contacts_create_contact", "contacts_update_contact"):
         schema = json.dumps(on[name].input_schema)
         assert "addresses" in schema and "postal_code" in schema and "Holiday house" in schema
 
@@ -333,9 +333,9 @@ def test_tools_exist_only_when_enabled_and_carry_descriptions(env):
 def test_instructions_send_agents_to_contacts_first_then_mail(env):
     s, *_ = env
     text = build_instructions(dataclasses.replace(s, allow_calendar_invites=True))
-    assert text.count("contacts_search") >= 2 and "mail_find_correspondent" in text             # calendar invites and mail both say so
+    assert text.count("contacts_search_contacts") >= 2 and "mail_find_correspondent" in text             # calendar invites and mail both say so
     off = build_instructions(dataclasses.replace(s, allow_calendar_invites=True, enable_contacts=False))
-    assert "contacts_search" not in off and "with mail_find_correspondent" in off
+    assert "contacts_search_contacts" not in off and "with mail_find_correspondent" in off
 
 
 def test_http_client_request_urls_are_not_logged_at_info():
@@ -450,9 +450,9 @@ def test_write_tools_exist_only_when_the_connector_is_writable(env):
     async def tools(settings):
         mcp, _ = create_server(settings)
         return {t.name for t in await mcp.list_tools()}
-    assert {"contacts_create", "contacts_update", "contacts_delete"} <= asyncio.run(tools(s))
+    assert {"contacts_create_contact", "contacts_update_contact", "contacts_delete_contact"} <= asyncio.run(tools(s))
     ro = asyncio.run(tools(dataclasses.replace(s, read_only=True)))
-    assert {"contacts_search", "contacts_get"} <= ro and not ({"contacts_create", "contacts_update", "contacts_delete"} & ro)
+    assert {"contacts_search_contacts", "contacts_get_contact"} <= ro and not ({"contacts_create_contact", "contacts_update_contact", "contacts_delete_contact"} & ro)
 
 
 def test_agents_never_see_internal_fields_after_a_read(wenv):

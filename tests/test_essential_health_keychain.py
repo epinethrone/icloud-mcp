@@ -33,22 +33,22 @@ def test_essential_keeps_a_small_core_of_the_enabled_areas(s):
     full = names(s)
     essential = names(dataclasses.replace(s, tools=("essential",)))
     assert essential < full and len(essential) <= len(ESSENTIAL_TOOLS)
-    assert {"mail_search", "calendar_find_free_time", "contacts_search", "icloud_check_health"} <= essential
+    assert {"mail_search_messages", "calendar_find_free_time", "contacts_search_contacts", "icloud_check_health"} <= essential
     assert not any(n.startswith(("reminders_", "notes_", "drive_")) for n in essential)   # Mac areas are off here
-    assert "mail_delete" not in essential and "contacts_delete" not in essential          # nothing destructive by default
+    assert "mail_delete_messages" not in essential and "contacts_delete_contact" not in essential          # nothing destructive by default
 
 
 def test_named_tools_can_be_added_and_unknown_names_stop_startup(s):
-    picked = names(dataclasses.replace(s, tools=("essential", "mail_move")))
-    assert "mail_move" in picked and "mail_delete" not in picked
-    assert names(dataclasses.replace(s, tools=("mail_search",))) == {"mail_search"}
+    picked = names(dataclasses.replace(s, tools=("essential", "mail_move_messages")))
+    assert "mail_move_messages" in picked and "mail_delete_messages" not in picked
+    assert names(dataclasses.replace(s, tools=("mail_search_messages",))) == {"mail_search_messages"}
     with pytest.raises(SystemExit, match="no such tool: mail_explode.*Available:"):
         create_server(dataclasses.replace(s, tools=("mail_explode",)))
 
 
 def test_tools_setting_is_read_from_the_environment(monkeypatch, s):
-    monkeypatch.setenv("TOOLS", "essential, mail_move")
-    assert Settings.from_env().tools == ("essential", "mail_move")
+    monkeypatch.setenv("TOOLS", "essential, mail_move_messages")
+    assert Settings.from_env().tools == ("essential", "mail_move_messages")
 
 
 # ------------------------------------------------------------------ icloud_check_health

@@ -67,7 +67,7 @@ def test_an_explicit_null_is_still_accepted(mcp):
     model = tools["calendar_list_events"].fn_metadata.arg_model
     got = model.model_validate({"start": "2026-09-01", "end": "2026-09-02", "calendar": None})
     assert got.calendar is None
-    model = tools["mail_reply"].fn_metadata.arg_model
+    model = tools["mail_reply_to_message"].fn_metadata.arg_model
     assert model.model_validate({"folder": "INBOX", "uid": 1, "body": "x", "uidvalidity": None}).uidvalidity is None
 
 
@@ -75,7 +75,7 @@ def test_destructive_mail_tools_require_uidvalidity(mcp):
     import pydantic
     tools = {t.name: t for t in mcp._tool_manager.list_tools()}
     base = {"folder": "INBOX", "uids": [1]}
-    for name, extra in (("mail_delete", {}), ("mail_move", {"destination": "Archive"}), ("mail_mark", {"read": True})):
+    for name, extra in (("mail_delete_messages", {}), ("mail_move_messages", {"destination": "Archive"}), ("mail_mark_messages", {"read": True})):
         model = tools[name].fn_metadata.arg_model
         for bad in ({}, {"uidvalidity": None}):
             with pytest.raises(pydantic.ValidationError):
@@ -85,15 +85,15 @@ def test_destructive_mail_tools_require_uidvalidity(mcp):
 
 
 @pytest.mark.parametrize("tool, param, phrase", [
-    ("mail_move", "uidvalidity", "a renumbered folder is refused"),
-    ("mail_delete", "uidvalidity", "a renumbered folder is refused"),
-    ("mail_reply", "uidvalidity", "renumbered folder is then refused"),
+    ("mail_move_messages", "uidvalidity", "a renumbered folder is refused"),
+    ("mail_delete_messages", "uidvalidity", "a renumbered folder is refused"),
+    ("mail_reply_to_message", "uidvalidity", "renumbered folder is then refused"),
     ("calendar_create_event", "attendees", "iCloud emails each one an invitation"),
     ("calendar_create_event", "request_id", "never a second copy"),
-    ("contacts_create", "request_id", "never a second copy"),
+    ("contacts_create_contact", "request_id", "never a second copy"),
     ("calendar_delete_event", "occurrence_start", "'recurrence_id' if set, else its 'start'. Omit to delete the whole series"),
     ("calendar_update_event", "occurrence_start", "'recurrence_id' if set, else its 'start'"),
-    ("calendar_rsvp", "occurrence_start", "'recurrence_id' if set, else its 'start'"),
+    ("calendar_respond_to_event", "occurrence_start", "'recurrence_id' if set, else its 'start'"),
     ("drive_search_content", "download", "kept on the Mac"),
 ])
 def test_the_safety_sentences_survive(mcp, tool, param, phrase):
@@ -103,13 +103,15 @@ def test_the_safety_sentences_survive(mcp, tool, param, phrase):
 # ------------------------------------------------------------------------------------------------ names
 PREFIXES = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "shortcuts", "icloud", "maps", "imessage", "health")
 VERBS = {"append", "check", "complete", "create", "delete", "extract", "find", "forward", "get", "list", "mark", "move", "read",
-         "refresh", "reply", "respond", "rsvp", "run", "search", "send", "trash", "undo", "unsubscribe", "update", "write"}
+         "refresh", "reply", "respond", "run", "search", "send", "trash", "undo", "unsubscribe", "update", "write"}
 
 
 def test_every_tool_name_is_prefix_verb_noun(mcp):
+    """<area>_<verb>_<noun> for every tool (0.12.0): a verb alone (mail_send, contacts_get) is not a name."""
     for name in listed(mcp):
         prefix, _, rest = name.partition("_")
-        assert prefix in PREFIXES and rest.split("_")[0] in VERBS, name
+        verb, _, noun = rest.partition("_")
+        assert prefix in PREFIXES and verb in VERBS and noun, name
 
 
 def served_text(server):
@@ -137,7 +139,8 @@ def test_no_old_tool_name_is_served_anywhere(mcp, monkeypatch):
         found = set(old.findall(served_text(server)))
         assert not found - {"drive_info"}, (found, extra)
     bridge_source = open(bridge_mod.__file__).read()
-    assert not set(old.findall(bridge_source)) - {"drive_info"}          # drive_info stays the helper operation's name
+    # Mac helper operations keep their own names (drive_info, drive_list, notes_list, ...); only prose may not use old tool names
+    assert not set(old.findall(bridge_source)) - set(bridge_mod.OPS) - {"drive_info"}
 
 
 def test_tools_setting_still_accepts_the_old_names(mcp, caplog):
@@ -146,8 +149,8 @@ def test_tools_setting_still_accepts_the_old_names(mcp, caplog):
     from icloud_mcp.server import apply_tool_filter
     server, _ = create_server(Settings.from_env())
     with caplog.at_level(logging.WARNING):
-        apply_tool_filter(server, ("mail_changes", "icloud_now", "mail_search"))
-    assert set(listed(server)) == {"mail_list_changes", "icloud_get_time", "mail_search"}
+        apply_tool_filter(server, ("mail_changes", "icloud_now", "mail_search_messages"))
+    assert set(listed(server)) == {"mail_list_changes", "icloud_get_time", "mail_search_messages"}
     assert "renamed to mail_list_changes" in caplog.text
 
 

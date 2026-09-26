@@ -5,6 +5,32 @@ Update the Mac helper before the server whenever its version changes.
 
 ## Unreleased (0.12.0)
 
+- **Breaking: tool names.** Every tool is now `<area>_<verb>_<noun>`. The 36 names that had a verb alone are renamed below.
+  `TOOLS` still accepts the old names (with a warning). Clients see the new names after reconnecting; update any prompt,
+  allow list or deny list that names a tool.
+
+  | Old | New | Old | New |
+  |---|---|---|---|
+  | `mail_search` | `mail_search_messages` | `reminders_list` | `reminders_list_reminders` |
+  | `mail_send` | `mail_send_message` | `reminders_create` | `reminders_create_reminder` |
+  | `mail_reply` | `mail_reply_to_message` | `reminders_update` | `reminders_update_reminder` |
+  | `mail_forward` | `mail_forward_message` | `reminders_complete` | `reminders_complete_reminder` |
+  | `mail_mark` | `mail_mark_messages` | `reminders_move` | `reminders_move_reminder` |
+  | `mail_move` | `mail_move_messages` | `reminders_delete` | `reminders_delete_reminder` |
+  | `mail_delete` | `mail_delete_messages` | `notes_list` | `notes_list_notes` |
+  | `mail_unsubscribe` | `mail_unsubscribe_from_list` | `notes_read` | `notes_read_note` |
+  | `calendar_rsvp` | `calendar_respond_to_event` | `notes_create` | `notes_create_note` |
+  | `contacts_search` | `contacts_search_contacts` | `notes_update` | `notes_update_note` |
+  | `contacts_get` | `contacts_get_contact` | `notes_append` | `notes_append_to_note` |
+  | `contacts_create` | `contacts_create_contact` | `notes_move` | `notes_move_note` |
+  | `contacts_update` | `contacts_update_contact` | `notes_delete` | `notes_delete_note` |
+  | `contacts_delete` | `contacts_delete_contact` | `drive_list` | `drive_list_folder` |
+  | `shortcuts_list` | `shortcuts_list_shortcuts` | `drive_search` | `drive_search_files` |
+  | `shortcuts_run` | `shortcuts_run_shortcut` | `drive_read` | `drive_read_file` |
+  | `drive_move` | `drive_move_item` | `drive_write` | `drive_write_file` |
+  | `drive_trash` | `drive_trash_item` | `health_refresh` | `health_refresh_data` |
+
+  Mac helper operation names are unchanged.
 - **Apple Health** (`ENABLE_HEALTH`, off by default; Mac helper 0.7.0): daily figures, one day in detail, and freshness from
   exports the owner's iPhone writes with a Shortcut, kept in a private store on the Mac, plus a one-off import of the Health
   app's full export. Overlapping exports never count twice; a day without data is reported as missing, not as zero.

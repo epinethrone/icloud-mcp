@@ -102,7 +102,7 @@ def senders(mail: MailService, folder: str = "INBOX", *, days: int = 30, limit: 
             "bulk_messages": sum(g["messages"] for g in groups.values() if g["bulk"]),
             "senders": ranked[:limit],
             "hint": "bulk=true marks newsletters and automated mail. Use mail_run_bulk_action (dry run first) to clean up a sender, "
-                    "or mail_unsubscribe with a message's uid to stop one."}
+                    "or mail_unsubscribe_from_list with a message's uid to stop one."}
 
 
 # ------------------------------------------------------------------ unsubscribing

@@ -187,7 +187,7 @@ def test_thread_spans_inbox_and_sent(mail, inbox):
 
 
 def test_every_result_that_hands_out_uids_hands_out_their_uidvalidity(mail, inbox):
-    """mail_mark, mail_move and mail_delete require uidvalidity, so each uid an agent is given must come with one: on the
+    """mail_mark_messages, mail_move_messages and mail_delete_messages require uidvalidity, so each uid an agent is given must come with one: on the
     message itself (all-folder search, threads) or once on the result's folder. Each pair is then used for real."""
     lunch = uid_of(mail, "Lunch")
     results = {
@@ -384,7 +384,7 @@ async def test_tools_via_mcp_layer(settings, inbox, cal):
     from icloud_mcp.server import create_server
 
     mcp, _ = create_server(settings)
-    res = await mcp.call_tool("mail_search", {"folder": "INBOX", "limit": 5})
+    res = await mcp.call_tool("mail_search_messages", {"folder": "INBOX", "limit": 5})
     payload = res.structured_content if hasattr(res, "structured_content") and res.structured_content else res
     assert "messages" in str(payload)
     with pytest.raises(Exception, match="No message with uid"):

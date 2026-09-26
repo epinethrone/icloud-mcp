@@ -273,7 +273,7 @@ class Bench:
         then does. Without keep-alive every call after a pause reconnects; background_* columns show the pings instead."""
         mcp = self.server()
         today = date.today()
-        steps = [("mail_search", {"folder": "INBOX", "limit": 5}),
+        steps = [("mail_search_messages", {"folder": "INBOX", "limit": 5}),
                  ("calendar_list_events", {"start": str(today), "end": str(today + timedelta(days=7))})]
         times: dict[str, list[float]] = {t: [] for t, _ in steps}
         deltas: dict[str, Counter] = {t: Counter() for t, _ in steps}
@@ -311,11 +311,11 @@ async def run(args, settings, meter: Meter) -> list[dict]:
         hit = next((m for m in (prev or {}).get("messages", []) if m.get("has_attachments")), None)
         return {"folder": "INBOX", "uid": hit["uid"], "index": 0} if hit else None
 
-    await b.measure("mail_search 20", [("mail_search", {"folder": "INBOX", "limit": 20})], mcp=warm)
-    await b.measure("mail_search 20 + get_messages 10", [("mail_search", {"folder": "INBOX", "limit": 20}),
+    await b.measure("mail_search_messages 20", [("mail_search_messages", {"folder": "INBOX", "limit": 20})], mcp=warm)
+    await b.measure("mail_search_messages 20 + get_messages 10", [("mail_search_messages", {"folder": "INBOX", "limit": 20}),
                                                          ("mail_get_messages", first_uids)], mcp=warm)
-    await b.measure("mail_search all_folders", [("mail_search", {"all_folders": True, "limit": 20})], mcp=warm)
-    await b.measure("mail_get_attachment (300 KB pdf)", [("mail_search", {"folder": "INBOX", "limit": 20}),
+    await b.measure("mail_search_messages all_folders", [("mail_search_messages", {"all_folders": True, "limit": 20})], mcp=warm)
+    await b.measure("mail_get_attachment (300 KB pdf)", [("mail_search_messages", {"folder": "INBOX", "limit": 20}),
                                                          ("mail_get_attachment", attachment)], mcp=warm)
     await b.measure("calendar_list_calendars (cold)", [("calendar_list_calendars", {})], fresh=True)
     await b.measure("calendar_list_calendars (warm)", [("calendar_list_calendars", {})], mcp=warm)
@@ -326,8 +326,8 @@ async def run(args, settings, meter: Meter) -> list[dict]:
     await b.measure("calendar_find_free_time 14 days", [("calendar_find_free_time", {"start": str(today), "end": str(d14),
                                                                                      "duration_minutes": 60})], mcp=warm)
     if settings.enable_contacts:
-        await b.measure("contacts_search (cold)", [("contacts_search", {"query": "Anna"})], fresh=True)
-        await b.measure("contacts_search (warm)", [("contacts_search", {"query": "Anna"})], mcp=warm)
+        await b.measure("contacts_search_contacts (cold)", [("contacts_search_contacts", {"query": "Anna"})], fresh=True)
+        await b.measure("contacts_search_contacts (warm)", [("contacts_search_contacts", {"query": "Anna"})], mcp=warm)
     scratch = args.scratch_calendar if args.live else "Personal"
     if scratch:
         start = datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(days=40)
@@ -375,7 +375,7 @@ def main() -> int:
     ap.add_argument("--scratch-calendar", help="live mode: a calendar the bench may create, edit and delete one event in")
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--latency-ms", type=float, default=0.0, help="added to every connect and every request/command")
-    ap.add_argument("--idle-calls", type=int, default=10, help="mail_search calls in the spaced-out loop (0 = skip)")
+    ap.add_argument("--idle-calls", type=int, default=10, help="mail_search_messages calls in the spaced-out loop (0 = skip)")
     ap.add_argument("--gap", type=float, default=20.0, help="seconds between those calls")
     ap.add_argument("--no-seed", action="store_true", help="local mode: reuse the data already in the stack")
     ap.add_argument("--out", help="also write the markdown table to this file")

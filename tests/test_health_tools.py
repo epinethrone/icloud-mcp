@@ -31,7 +31,7 @@ def test_tools_and_instructions_only_when_enabled(s):
             return {t.name for t in await mcp.list_tools()}, mcp.instructions
         return asyncio.run(go())
     tools, text = names(s)
-    assert {"health_get_summary", "health_get_day", "health_get_status", "health_refresh"} <= tools
+    assert {"health_get_summary", "health_get_day", "health_get_status", "health_refresh_data"} <= tools
     assert "HEALTH:" in text and "Apple Health" in text and "never put them in a message" in text
     tools, text = names(dataclasses.replace(s, enable_health=False))
     assert not {t for t in tools if t.startswith("health_")} and "HEALTH:" not in text
@@ -46,7 +46,7 @@ def test_calls_go_to_the_mac_with_exactly_the_given_arguments(s):
         mcp._icloud_bridge.call = lambda op, a=None: seen.append((op, a)) or {"days": []}
         a = json.loads((await mcp.call_tool("health_get_summary", {"start": "2026-09-01", "end": "2026-09-07"})).content[0].text)
         b = json.loads((await mcp.call_tool("health_get_day", {"date": "2026-09-02", "metric": "sleep"})).content[0].text)
-        await mcp.call_tool("health_refresh", {})
+        await mcp.call_tool("health_refresh_data", {})
         return a, b
     a, b = asyncio.run(go())
     assert seen == [("health_summary", {"start": "2026-09-01", "end": "2026-09-07"}),

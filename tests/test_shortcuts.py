@@ -80,10 +80,10 @@ def names(settings):
 
 
 def test_tools_exist_only_with_an_allowlist_and_never_read_only(s, monkeypatch):
-    assert not {"shortcuts_list", "shortcuts_run"} & names(s)[0]
+    assert not {"shortcuts_list_shortcuts", "shortcuts_run_shortcut"} & names(s)[0]
     on = dataclasses.replace(s, shortcuts_allow=("Lights off",))
-    assert on.bridge_enabled and {"shortcuts_list", "shortcuts_run"} <= names(on)[0]
-    assert not {"shortcuts_list", "shortcuts_run"} & names(dataclasses.replace(on, read_only=True))[0]
+    assert on.bridge_enabled and {"shortcuts_list_shortcuts", "shortcuts_run_shortcut"} <= names(on)[0]
+    assert not {"shortcuts_list_shortcuts", "shortcuts_run_shortcut"} & names(dataclasses.replace(on, read_only=True))[0]
     monkeypatch.setenv("SHORTCUTS_ALLOW", "Lights off, Say")
     assert Settings.from_env().shortcuts_allow == ("Lights off", "Say")
     monkeypatch.setenv("SHORTCUTS_ALLOW", "Lights off; Say hi, then leave")                  # ';' when a name has a comma
@@ -94,7 +94,7 @@ def test_the_server_refuses_names_it_does_not_allow_before_asking_the_mac(s):
     _, mcp = names(dataclasses.replace(s, shortcuts_allow=("Lights off",)))
     seen = []
     mcp._icloud_bridge.call = lambda op, a=None: seen.append((op, a)) or {"ran": True, "output": "ok"}
-    r = json.loads(asyncio.run(mcp.call_tool("shortcuts_run", {"name": "Delete everything"})).content[0].text)
+    r = json.loads(asyncio.run(mcp.call_tool("shortcuts_run_shortcut", {"name": "Delete everything"})).content[0].text)
     assert r["ran"] is False and seen == []
-    r = json.loads(asyncio.run(mcp.call_tool("shortcuts_run", {"name": "Lights off"})).content[0].text)
+    r = json.loads(asyncio.run(mcp.call_tool("shortcuts_run_shortcut", {"name": "Lights off"})).content[0].text)
     assert r["ran"] is True and seen == [("shortcut_run", {"name": "Lights off"})]
