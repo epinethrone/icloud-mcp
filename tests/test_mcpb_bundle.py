@@ -38,7 +38,7 @@ def test_manifest_is_well_formed_and_every_placeholder_is_backed_by_the_form(bun
     assert m["user_config"]["app_password"]["sensitive"] is True
     assert m["user_config"]["approve_sending"]["default"] is True and m["user_config"]["allow_invites"]["default"] is False
     names = {t["name"] for t in m["tools"]}
-    assert {"mail_search", "calendar_find_free_time", "contacts_search", "icloud_check_health"} <= names
+    assert {"mail_search_messages", "calendar_find_free_time", "contacts_search_contacts", "icloud_check_health"} <= names
     assert not any(n.startswith(("reminders_", "notes_", "drive_")) for n in names)  # Mac areas are not in the bundle
     assert m["privacy_policies"] and m["icon"] == "icon.png"
 

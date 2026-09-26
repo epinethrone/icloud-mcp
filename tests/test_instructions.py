@@ -56,7 +56,7 @@ def test_the_rules_follow_the_settings(s):
     invites, _ = served(dataclasses.replace(s, allow_calendar_invites=True))
     assert "INVITING PEOPLE" in invites and "delivery_warning" in invites and "tel:" in invites
     ro, tools = served(dataclasses.replace(s, read_only=True, allow_send=False))
-    assert "read-only" in ro and "mail_reply" not in ro and "SENDING" not in ro and "mail_reply" not in tools
+    assert "read-only" in ro and "mail_reply_to_message" not in ro and "SENDING" not in ro and "mail_reply_to_message" not in tools
     only_mail, tools = served(dataclasses.replace(s, tools=("mail",)))
     assert "calendar_create_event" not in only_mail and "icloud_check_health" in tools
     assert all(t.startswith("mail_") or t in ("icloud_check_health", "icloud_get_helper_status") for t in tools)
@@ -89,7 +89,7 @@ def test_an_unreadable_notes_file_is_skipped_quietly(s, tmp_path, caplog):
 def test_area_presets_and_unknown_names(s):
     mcp, _ = create_server(dataclasses.replace(s, tools=("calendar", "contacts")))
     tools = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert {"calendar_create_event", "contacts_search", "icloud_check_health"} <= tools and not any(t.startswith("mail_") for t in tools)
+    assert {"calendar_create_event", "contacts_search_contacts", "icloud_check_health"} <= tools and not any(t.startswith("mail_") for t in tools)
     full, _ = create_server(s)
     with pytest.raises(SystemExit, match="or an area: mail, calendar"):
         apply_tool_filter(full, ("mailz",))

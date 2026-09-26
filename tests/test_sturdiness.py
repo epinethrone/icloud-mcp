@@ -123,7 +123,7 @@ def test_a_timeout_names_the_slow_step(s, monkeypatch):
     monkeypatch.setattr(MailService, "search", slow)
     mcp, _ = server_mod.create_server(dataclasses.replace(s, tool_timeout=1))
     with pytest.raises(Exception, match="slow step was: IMAP SEARCH in Archive"):
-        asyncio.run(mcp.call_tool("mail_search", {"folder": "Archive"}))
+        asyncio.run(mcp.call_tool("mail_search_messages", {"folder": "Archive"}))
 
 
 def test_health_reports_uptime_and_connection_state_before_checking(s, monkeypatch):
@@ -167,7 +167,7 @@ def test_every_error_message_ends_with_a_full_stop():
 
 def test_errors_point_at_the_next_step():
     import inspect
-    for fn, needle in [(MailService._fetch_raw, "Run mail_search again"), (MailService.get_attachment, "of mail_get_message"),
+    for fn, needle in [(MailService._fetch_raw, "Run mail_search_messages again"), (MailService.get_attachment, "of mail_get_message"),
                        (cal_mod.CalendarService._find, "comes from calendar_list_events"),
                        (MailService.resolve_folder, "Call mail_list_folders"), (MailService._select, "Call mail_list_folders"),
                        (MailService._login, "Run icloud_check_health")]:
@@ -200,7 +200,7 @@ def test_the_macs_not_found_code_comes_with_what_to_do():
     t.join(5)
     b.complete(got[0].id, False, None, "reminder not found (-1728)")
     c.join(5)
-    assert "list again" in errors[0] and "reminders_list" in errors[0]
+    assert "list again" in errors[0] and "reminders_list_reminders" in errors[0]
 
 
 # ------------------------------------------------------------------------------------------------ partial reads

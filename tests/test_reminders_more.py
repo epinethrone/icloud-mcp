@@ -33,13 +33,13 @@ def run(s, tool, args, answer=None):
 
 
 def test_repeat_and_alerts_cross_the_bridge_as_text(s):
-    _, seen = run(s, "reminders_create", {"title": "Deworm the cats", "due": "2026-10-01", "repeat": "FREQ=MONTHLY;INTERVAL=3",
+    _, seen = run(s, "reminders_create_reminder", {"title": "Deworm the cats", "due": "2026-10-01", "repeat": "FREQ=MONTHLY;INTERVAL=3",
                                           "alerts_minutes_before": [1440, 30], "alerts_at": ["2026-09-30T18:00"]}, {"id": "r1"})
     assert seen == [("reminder_create", {"title": "Deworm the cats", "due": "2026-10-01", "repeat": "FREQ=MONTHLY;INTERVAL=3",
                                          "alerts_before": "1440,30", "alerts_at": "2026-09-30T18:00"})]
-    _, seen = run(s, "reminders_update", {"id": "r1", "clear_repeat": True, "alerts_minutes_before": [], "alerts_at": []}, {"id": "r1"})
+    _, seen = run(s, "reminders_update_reminder", {"id": "r1", "clear_repeat": True, "alerts_minutes_before": [], "alerts_at": []}, {"id": "r1"})
     assert seen == [("reminder_update", {"id": "r1", "clear_repeat": True, "alerts_before": "", "alerts_at": ""})]   # [] and [] clear
-    _, seen = run(s, "reminders_update", {"id": "r1", "title": "x"}, {"id": "r1"})
+    _, seen = run(s, "reminders_update_reminder", {"id": "r1", "title": "x"}, {"id": "r1"})
     assert seen == [("reminder_update", {"id": "r1", "title": "x"})]                # alerts untouched unless given
 
 
@@ -52,13 +52,13 @@ def test_rules_finer_than_daily_are_refused_before_the_mac_is_asked(s, rule, mon
     seen = []
     monkeypatch.setattr(MacBridge, "call", lambda self, op, a=None: seen.append(op))
     with pytest.raises(ToolError, match="repeats at most daily"):
-        run(s, "reminders_create", {"title": "x", "due": "2026-10-01", "repeat": rule}, {"id": "r1"})
+        run(s, "reminders_create_reminder", {"title": "x", "due": "2026-10-01", "repeat": rule}, {"id": "r1"})
 
 
 def test_completed_reminders_are_asked_for_only_when_wanted(s):
-    _, seen = run(s, "reminders_list", {}, {"reminders": []})
+    _, seen = run(s, "reminders_list_reminders", {}, {"reminders": []})
     assert seen == [("reminders_list", {"limit": 50})]
-    _, seen = run(s, "reminders_list", {"completed": "only", "completed_since": "2026-09-01"}, {"reminders": []})
+    _, seen = run(s, "reminders_list_reminders", {"completed": "only", "completed_since": "2026-09-01"}, {"reminders": []})
     assert seen == [("reminders_list", {"limit": 50, "completed": "only", "completed_since": "2026-09-01"})]
 
 
@@ -73,7 +73,7 @@ def test_deleting_a_list_with_reminders_needs_the_preview_token(s):
     from mcp.server.mcpserver.exceptions import ToolError
     with pytest.raises(ToolError, match="confirm_token"):                                        # a bad token deletes nothing
         run(s, "reminders_delete_list", {"list_id": "L1", "name": "Groceries", "confirm_token": "1.forged"}, answer)
-    empty = lambda op, a: {"reminders": []} if op == "reminders_list" else {"deleted": True}     # noqa: E731
+    empty = lambda op, a: {"reminders": []} if op == "reminders_list_reminders" else {"deleted": True}     # noqa: E731
     _, seen = run(s, "reminders_delete_list", {"list_id": "L2", "name": "Empty"}, empty)
     assert seen[-1] == ("reminder_list_delete", {"list_id": "L2", "name": "Empty", "delete_reminders": False})
 

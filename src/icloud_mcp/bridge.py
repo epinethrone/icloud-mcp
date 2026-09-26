@@ -279,7 +279,7 @@ class MacBridge:
             err = job.error or "The Mac helper reported an error."
             if "-1728" in err:                                     # Apple's "object not found"
                 err += (" The reminder, note or list is not there any more (deleted or moved on another device): list again "
-                        "(reminders_list, notes_list) for current ids.")
+                        "(reminders_list_reminders, notes_list_notes) for current ids.")
             raise BridgeError(err)
         return job.result
 

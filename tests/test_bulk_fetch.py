@@ -102,4 +102,4 @@ def test_tool_is_registered_as_read_only(mail):
     mcp, _ = create_server(svc.s)
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
     t = tools["mail_get_messages"]
-    assert t.annotations.read_only_hint is True and "mail_search" in t.description
+    assert t.annotations.read_only_hint is True and "mail_search_messages" in t.description

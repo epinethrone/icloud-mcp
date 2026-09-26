@@ -324,7 +324,7 @@ def test_moving_never_targets_recently_deleted_and_refuses_ambiguous_names():
     fx = json.loads(json.dumps(FIXTURE))
     fx["notes"]["accounts"][0]["folders"].append({"id": "f9", "name": "Recently Deleted", "notes": []})
     fx["notes"]["accounts"][1]["folders"].append({"id": "f8", "name": "Work", "notes": []})         # a second "Work", on another account
-    fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder": "Recently Deleted"}, "use notes_delete", fixture=fx)
-    fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder_id": "f9"}, "use notes_delete", fixture=fx)
+    fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder": "Recently Deleted"}, "use notes_delete_note", fixture=fx)
+    fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder_id": "f9"}, "use notes_delete_note", fixture=fx)
     fails("note_move", {"id": "n1", "title": "Shopping ideas", "folder": "Work"}, "pass folder_id", fixture=fx)
     ok("note_move", {"id": "n1", "title": "Shopping ideas", "folder_id": "f8"}, fixture=fx)

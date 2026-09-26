@@ -181,8 +181,8 @@ def test_drive_operations_cannot_reach_the_health_folder(tmp_path):
     (health / "health-20260918-100000.txt").write_text("#health v1 generated=2026-09-18T10:00:00+02:00\nsecret heart data\n")
     drive = pathlib.Path(__file__).parent.parent / "mac-helper" / "ops" / "drive.py"
     e = {**os.environ, "ICLOUD_DRIVE_ROOT": str(root)}
-    for op, args in (("drive_read", {"path": "../iCloud~is~workflow~my~workflows/Documents/Health/health-20260918-100000.txt"}),
-                     ("drive_list", {"path": "../iCloud~is~workflow~my~workflows"})):
+    for op, args in (("drive_read_file", {"path": "../iCloud~is~workflow~my~workflows/Documents/Health/health-20260918-100000.txt"}),
+                     ("drive_list_folder", {"path": "../iCloud~is~workflow~my~workflows"})):
         p = subprocess.run([PY, "-I", str(drive), op, json.dumps(args)], capture_output=True, text=True, env=e, timeout=30)
         assert p.returncode != 0 and "secret" not in p.stdout
     p = subprocess.run([PY, "-I", str(drive), "drive_search_content", json.dumps({"query": "secret", "download": False})],

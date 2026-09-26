@@ -117,7 +117,7 @@ def parse_recipients(value: Any, field: str) -> list[tuple[str, str]]:
         if not pairs or any(not _RECIPIENT_RE.match(a.strip()) for _, a in pairs):
             raise MailError(
                 f"'{item}' in '{field}' is not a usable email address. Use anna@example.org or 'Anna <anna@example.org>'. "
-                "If you only know the person's name, look the address up first with contacts_search (or mail_search) or ask the user."
+                "If you only know the person's name, look the address up first with contacts_search_contacts (or mail_search_messages) or ask the user."
             )
         out += [(n.strip(), a.strip()) for n, a in pairs]
     return out
@@ -1002,7 +1002,7 @@ class MailService:
             info = c.select_folder(folder, readonly=True) or {}
             uv, modseq, uidnext = (info.get(b"UIDVALIDITY"), info.get(b"HIGHESTMODSEQ"), info.get(b"UIDNEXT"))
             if modseq is None or uv is None or uidnext is None:
-                raise MailError("This mail server does not report changes (no CONDSTORE); use mail_search with since instead.")
+                raise MailError("This mail server does not report changes (no CONDSTORE); use mail_search_messages with since instead.")
             token = f"v2:{folder}:{int(uv)}:{int(modseq)}:{int(uidnext)}"
             base = {"notice": UNTRUSTED_NOTICE, "folder": folder, "uidvalidity": int(uv), "token": token}
             if not since:
@@ -1030,7 +1030,7 @@ class MailService:
                    "changed": [{k: m.get(k) for k in ("uid", "subject", "from", "date", "unread", "flagged", "answered")}
                                for m in self._summaries(c, folder, changed[:limit], int(uv), per_message_uidvalidity=False)]}
             if len(new) > limit or len(changed) > limit:
-                out["note"] = f"Only the newest {limit} of each are listed; use mail_search for the rest."
+                out["note"] = f"Only the newest {limit} of each are listed; use mail_search_messages for the rest."
             return out
 
     def _search_everywhere(self, crit: list[Any], charset: str | None, limit: int, offset: int, keep: Any = None) -> dict[str, Any]:
@@ -1084,7 +1084,7 @@ class MailService:
         data = c.fetch([uid], ["BODY.PEEK[]", "FLAGS", "INTERNALDATE"])
         d = data.get(uid)
         if not d:
-            raise MailError(f"No message with uid {uid} in '{folder}'. Run mail_search again: the message may have been moved, or the "
+            raise MailError(f"No message with uid {uid} in '{folder}'. Run mail_search_messages again: the message may have been moved, or the "
                             "folder renumbered (its uidvalidity changed).")
         raw = d.get(b"BODY[]") or b""
         return raw, d.get(b"FLAGS", ()), d.get(b"INTERNALDATE"), uv
@@ -1107,7 +1107,7 @@ class MailService:
         """Several messages from one folder in a single IMAP FETCH, in the order asked for. Never marks anything read."""
         wanted = list(dict.fromkeys(int(u) for u in uids))
         if not wanted:
-            raise MailError("Give at least one uid (from mail_search).")
+            raise MailError("Give at least one uid (from mail_search_messages).")
         if len(wanted) > MAX_BULK_MESSAGES:
             raise MailError(f"At most {MAX_BULK_MESSAGES} messages per call; page through the rest with a second call.")
         limit = max(200, min(body_chars or DEFAULT_BULK_BODY_CHARS, self.s.max_body_chars))
@@ -1799,11 +1799,11 @@ class MailService:
         is_draft = any((f.decode() if isinstance(f, bytes) else str(f)).lower() == "\\draft" for f in flags)
         if folder != self.resolve_folder(c, "drafts") and not is_draft:
             raise MailError(f"Message {uid} in '{folder}' is not a saved draft. Only drafts (folder Drafts) can be sent or changed "
-                            "this way; to send something new use mail_send.")
+                            "this way; to send something new use mail_send_message.")
         return folder, email.message_from_bytes(raw, policy=policy.default), uv
 
     def send_draft(self, uid: int, *, folder: str = "Drafts", uidvalidity: int | None = None) -> dict[str, Any]:
-        """Send a saved draft as it is: its own recipients, subject, body and attachments, through the same gates as mail_send
+        """Send a saved draft as it is: its own recipients, subject, body and attachments, through the same gates as mail_send_message
         (recipient cap, allowlist, owner approval). Bcc never reaches the other recipients (the SMTP layer drops the header).
         Once it is sent the draft goes to Trash."""
         with self.imap() as c:
@@ -1854,7 +1854,7 @@ class MailService:
         if m:
             out.update(uid=int(m.group(2)), uidvalidity=int(m.group(1)))
         else:
-            out["hint"] = "Find the new draft with mail_search(folder='Drafts')."
+            out["hint"] = "Find the new draft with mail_search_messages(folder='Drafts')."
         return out
 
     # -- renaming and deleting folders ------------------------------------------------

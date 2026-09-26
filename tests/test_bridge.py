@@ -341,14 +341,14 @@ def test_reminders_list_passes_the_new_arguments_and_shapes_the_answer(s):
     async def go(answer):
         mcp, _ = create_server(s)
         mcp._icloud_bridge.call = lambda op, args=None: seen.append((op, args)) or answer
-        result = await mcp.call_tool("reminders_list", {"list_id": "L1", "query": "milk", "refresh": True, "limit": 5})
+        result = await mcp.call_tool("reminders_list_reminders", {"list_id": "L1", "query": "milk", "refresh": True, "limit": 5})
         return json.loads(result.content[0].text) if result.content else result
     cached = {"reminders": [{"id": "a"}], "cached": [{"list": "Big", "list_id": "L1", "age_seconds": 90, "refreshing": False}]}
     out = asyncio.run(go(cached))
     assert seen[-1] == ("reminders_list", {"list_id": "L1", "query": "milk", "refresh": True, "limit": 5})
     assert out["count"] == 1 and out["cached"][0]["age_seconds"] == 90
     assert asyncio.run(go([{"id": "a"}, {"id": "b"}]))["count"] == 2                            # an older helper still answers with a bare list
-    assert "include_completed" not in {k for t_ in [names(s)["reminders_list"]] for k in (getattr(t_, "input_schema", None) or t_.inputSchema)["properties"]}
+    assert "include_completed" not in {k for t_ in [names(s)["reminders_list_reminders"]] for k in (getattr(t_, "input_schema", None) or t_.inputSchema)["properties"]}
 
 
 def test_instructions_mention_the_mac_only_when_enabled(s):
@@ -356,8 +356,8 @@ def test_instructions_mention_the_mac_only_when_enabled(s):
     assert "REMINDERS / NOTES" not in build_instructions(dataclasses.replace(s, enable_reminders=False))
 
 
-DRIVE_READ = {"drive_list", "drive_search", "drive_search_content", "drive_get_info", "drive_read", "drive_get_file"}
-DRIVE_WRITE = {"drive_write", "drive_create_folder", "drive_move", "drive_trash"}
+DRIVE_READ = {"drive_list_folder", "drive_search_files", "drive_search_content", "drive_get_info", "drive_read_file", "drive_get_file"}
+DRIVE_WRITE = {"drive_write_file", "drive_create_folder", "drive_move_item", "drive_trash_item"}
 
 
 def test_drive_tools_exist_only_when_enabled_and_writes_only_when_writable(s):
@@ -368,7 +368,7 @@ def test_drive_tools_exist_only_when_enabled_and_writes_only_when_writable(s):
     assert DRIVE_READ <= set(ro) and not DRIVE_WRITE & set(ro)
     alone = names(dataclasses.replace(on, enable_reminders=False))                           # Drive alone still starts the bridge
     assert "icloud_get_helper_status" in alone and DRIVE_READ <= set(alone) and "reminders_list_lists" not in alone
-    assert names(on)["drive_trash"].annotations.destructive_hint is True
+    assert names(on)["drive_trash_item"].annotations.destructive_hint is True
 
 
 def test_drive_tools_pass_exactly_the_given_arguments_to_the_mac(s):
@@ -379,15 +379,15 @@ def test_drive_tools_pass_exactly_the_given_arguments_to_the_mac(s):
         mcp._icloud_bridge.call = lambda op, a=None: seen.append((op, a)) or answer
         r = await mcp.call_tool(tool, args)
         return json.loads(r.content[0].text)
-    out = asyncio.run(go("drive_read", {"path": "Documents/a.pdf", "max_chars": 500}, {"path": "Documents/a.pdf", "text": "hi"}))
+    out = asyncio.run(go("drive_read_file", {"path": "Documents/a.pdf", "max_chars": 500}, {"path": "Documents/a.pdf", "text": "hi"}))
     assert seen[-1] == ("drive_read", {"path": "Documents/a.pdf", "max_chars": 500}) and out["text"] == "hi" and "data" in out["notice"]
     out = asyncio.run(go("drive_get_file", {"path": "CV.pdf"}, {"name": "CV.pdf", "data_base64": "JVBERi0="}))
     assert seen[-1] == ("drive_get_file", {"path": "CV.pdf", "max_bytes": 5 * 1024 * 1024}) and out["data_base64"] == "JVBERi0="
     asyncio.run(go("drive_create_folder", {"path": "A/B"}, {"path": "A/B"}))
     assert seen[-1] == ("drive_mkdir", {"path": "A/B"})
-    asyncio.run(go("drive_move", {"path": "a.txt", "to": "A"}, {"moved": True}))
+    asyncio.run(go("drive_move_item", {"path": "a.txt", "to": "A"}, {"moved": True}))
     assert seen[-1] == ("drive_move", {"path": "a.txt", "to": "A"})
-    asyncio.run(go("drive_write", {"path": "n.md", "content": "x"}, {}))
+    asyncio.run(go("drive_write_file", {"path": "n.md", "content": "x"}, {}))
     assert seen[-1] == ("drive_write", {"path": "n.md", "content": "x"})                           # overwrite not sent unless true
 
 

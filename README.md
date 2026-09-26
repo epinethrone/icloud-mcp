@@ -184,7 +184,7 @@ Claude Desktop: Settings → Developer → Edit Config, add this to `claude_desk
 If Claude Desktop can't find `uvx`, use its full path (`which uvx`). Without uv, `pip install icloud-mcp-server` and use `icloud-mcp` as the command.
 
 > [!TIP]
-> **Fewer tools, better choices.** Clients pick the right tool more reliably from a short list. Add `TOOLS=essential` for a core of 19: search, read and reply to mail; list events, find free time and create or update events; find contacts; the main Reminders, Notes and Drive tools; and the health check. Add exact names to it as needed, for example `TOOLS=essential,mail_move`, or pick whole areas: `TOOLS=mail`, `TOOLS=mail,calendar` (also `contacts`, `reminders`, `notes`, `drive`; the health check always stays).
+> **Fewer tools, better choices.** Clients pick the right tool more reliably from a short list. Add `TOOLS=essential` for a core of 19: search, read and reply to mail; list events, find free time and create or update events; find contacts; the main Reminders, Notes and Drive tools; and the health check. Add exact names to it as needed, for example `TOOLS=essential,mail_move_messages`, or pick whole areas: `TOOLS=mail`, `TOOLS=mail,calendar` (also `contacts`, `reminders`, `notes`, `drive`; the health check always stays).
 
 **How sending works locally.** There is no approval page, so with the default `SEND_REQUIRES_APPROVAL=true` every message Claude sends is saved to your **Drafts** folder instead, and the result says so. You review it in Mail and press Send yourself. Set `SEND_REQUIRES_APPROVAL=false` to let Claude send directly; your client's own "ask before use" setting is then the only check.
 
@@ -243,7 +243,7 @@ In a new chat, ask *"Check my iCloud connection."* Claude runs `icloud_check_hea
 
 ### Approving outgoing mail
 
-With the default `SEND_REQUIRES_APPROVAL=true`, `mail_send`, `mail_reply` and `mail_forward` return `queued_for_owner_approval` and nothing leaves. Open `https://<your-host>/outbox` (bookmark it, and only type the password there, never on a link an agent gives you), enter the owner password, review the exact recipients and text, then approve or discard. Queued messages expire after `OUTBOX_TTL_SECONDS` (24 hours by default) and are released at most once.
+With the default `SEND_REQUIRES_APPROVAL=true`, `mail_send_message`, `mail_reply_to_message` and `mail_forward_message` return `queued_for_owner_approval` and nothing leaves. Open `https://<your-host>/outbox` (bookmark it, and only type the password there, never on a link an agent gives you), enter the owner password, review the exact recipients and text, then approve or discard. Queued messages expire after `OUTBOX_TTL_SECONDS` (24 hours by default) and are released at most once.
 
 ## Security
 
@@ -285,26 +285,26 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 **92 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 40 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
-Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
+Every name is `area_verb_noun` (`mail_send_message`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 and 36 in 0.12.0 (a verb with no noun, such as `mail_send`) to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
 <details>
 <summary><b>Mail</b> &nbsp;·&nbsp; 25 tools</summary>
 
 | Kind | Tools |
 |---|---|
-| Read | `mail_list_folders`, `mail_search`, `mail_list_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
+| Read | `mail_list_folders`, `mail_search_messages`, `mail_list_changes`, `mail_find_correspondent`, `mail_get_message`, `mail_get_messages` (up to 25 in one call), `mail_get_thread`, `mail_get_attachment`, `mail_extract_bookings` |
 | Read | `mail_list_senders` (who fills a folder, busiest first, with bulk and unsubscribe info), `mail_list_awaiting_reply` (mail you sent that has had no answer) |
-| Write | `mail_send`, `mail_reply` (including reply-all), `mail_forward`, `mail_mark`, `mail_move`, `mail_delete` (to Trash), `mail_send_draft` (a saved draft, as it is), `mail_update_draft`, `mail_create_folder`, `mail_update_folder` (rename), `mail_delete_folder` (its mail goes to Trash first), `mail_run_bulk_action`, `mail_undo_bulk_action`, `mail_unsubscribe` |
+| Write | `mail_send_message`, `mail_reply_to_message` (including reply-all), `mail_forward_message`, `mail_mark_messages`, `mail_move_messages`, `mail_delete_messages` (to Trash), `mail_send_draft` (a saved draft, as it is), `mail_update_draft`, `mail_create_folder`, `mail_update_folder` (rename), `mail_delete_folder` (its mail goes to Trash first), `mail_run_bulk_action`, `mail_undo_bulk_action`, `mail_unsubscribe_from_list` |
 
 - Replies keep the `Re:` subject, `In-Reply-To` and `References`, the right recipients and the quoted original in plain text and HTML. Sent mail is copied to Sent and the original is flagged Answered (forwards get `$Forwarded`). `draft=true` saves to Drafts instead of sending.
 - `mail_get_messages` reads a batch (a day's unread mail, a whole thread) in one IMAP round trip, about 7 times faster than one at a time.
-- **Search every folder at once.** `mail_search` with `all_folders=true` looks in Archive, Sent, Junk and your own folders too, newest first, because mail rules and replies file messages away from the inbox.
+- **Search every folder at once.** `mail_search_messages` with `all_folders=true` looks in Archive, Sent, Junk and your own folders too, newest first, because mail rules and replies file messages away from the inbox.
 - **Newsletters are told apart from people.** Search results mark `bulk` mail (a List-Unsubscribe or List-Id header, bulk precedence, automated or no-reply senders) and say how it can be unsubscribed from; `mail_list_senders` groups a folder by sender.
 - **Clean up in bulk, safely.** `mail_run_bulk_action` (move, archive, trash, mark read) always previews first: the count, a sample and a confirm token that stands for exactly those messages. Running needs that token, so mail that arrived since is never touched. Every run is logged by Message-ID and `mail_undo_bulk_action` reverses it for 30 days. It needs at least one filter and never deletes permanently.
-- **Unsubscribe without following links.** `mail_unsubscribe` uses only the List-Unsubscribe header: the standard one-click request (RFC 8058, HTTPS to public addresses only) or an unsubscribe email through the normal send path, so approval rules apply. Links in the body are never followed, unsubscribe web pages are only handed to you, and mail in Junk is refused.
+- **Unsubscribe without following links.** `mail_unsubscribe_from_list` uses only the List-Unsubscribe header: the standard one-click request (RFC 8058, HTTPS to public addresses only) or an unsubscribe email through the normal send path, so approval rules apply. Links in the body are never followed, unsubscribe web pages are only handed to you, and mail in Junk is refused.
 - **Bookings come out exact.** `mail_extract_bookings` reads the schema.org booking data airlines, hotels, rail and ticket shops embed (flights, stays, trains, buses, rental cars, restaurants, events) and `.ics` invitations, and returns each with a ready `calendar_create_event` block. Nothing is guessed from the wording; a message without that data says so.
 - **Only what changed.** `mail_list_changes` returns a token; passed back next time, it lists just the new messages and those whose read, flagged or answered state changed, using IMAP CONDSTORE instead of re-reading the folder. If iCloud renumbered the folder, it says to start over rather than guess.
-- **Who is waiting on whom.** `mail_list_awaiting_reply` lists mail you sent to a person that has had no reply and no later message from them, in any folder, longest waiting first; `mail_search` takes `people_only` (no newsletters), `unanswered_only` and `since_hours`.
+- **Who is waiting on whom.** `mail_list_awaiting_reply` lists mail you sent to a person that has had no reply and no later message from them, in any folder, longest waiting first; `mail_search_messages` takes `people_only` (no newsletters), `unanswered_only` and `since_hours`.
 - **Layout checked, never rewritten.** Send and draft results carry `layout_warnings` when a plain-text body has HTML tags, Windows line endings or one long paragraph.
 - **Stale ids are refused.** Every message comes with its folder's `uidvalidity`; tools that act on a uid accept it back and refuse if iCloud has renumbered the folder since, instead of touching a different message.
 - Reading a message does not mark it read. Bcc recipients receive the mail, but the header is stripped on the wire.
@@ -315,7 +315,7 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 <details>
 <summary><b>Calendar</b> &nbsp;·&nbsp; 12 tools</summary>
 
-`calendar_list_calendars`, `calendar_list_events`, `calendar_find_free_time`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_move_event`, `calendar_delete_event`, `calendar_rsvp`, `calendar_create_calendar`, `calendar_update_calendar` (rename), `calendar_delete_calendar`
+`calendar_list_calendars`, `calendar_list_events`, `calendar_find_free_time`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_move_event`, `calendar_delete_event`, `calendar_respond_to_event`, `calendar_create_calendar`, `calendar_update_calendar` (rename), `calendar_delete_calendar`
 
 - Multiple calendars, recurring events expanded when listing, all-day events, alerts, links, notes and attendees. Editing or deleting a recurring event changes the whole series, or just one date when you pass `occurrence_start` (the rest of the series is left alone).
 - **Finding free time is one call.** `calendar_find_free_time` returns openings of a given length within your hours and chosen weekdays. Travel time counts as busy; events marked free, cancelled events and invitations you declined do not; all-day events are listed separately instead of guessed about.
@@ -324,8 +324,8 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 - **Move between calendars.** `calendar_move_event` moves an event (a whole series, if it repeats) to another calendar with a WebDAV MOVE, so nothing is recreated and guests get no new invitation. Servers without MOVE get a copy first and the original deleted only after.
 - **Clashes and duplicates are reported.** `calendar_create_event` returns the events a new one overlaps (`conflicts`, travel time counted on both sides, free, cancelled and declined events ignored) and a `possible_duplicate` with the same title and time; `on_conflict` / `on_duplicate` = `refuse` creates nothing instead.
 - **Invitations waiting for you.** `calendar_list_events(needs_reply=true)` lists invitations you have not answered (to any of your addresses: add aliases to `OWNER_ADDRESSES`); `starting_within_minutes` looks from now.
-- **Answer invitations.** `calendar_rsvp` accepts, declines or marks tentative, for the whole series or one date; iCloud emails the organizer itself.
-- **Safe to retry.** `calendar_create_event` and `contacts_create` take an optional `request_id`: if a call times out and is retried with the same one, the first attempt is found instead of creating a duplicate.
+- **Answer invitations.** `calendar_respond_to_event` accepts, declines or marks tentative, for the whole series or one date; iCloud emails the organizer itself.
+- **Safe to retry.** `calendar_create_event` and `contacts_create_contact` take an optional `request_id`: if a call times out and is retried with the same one, the first attempt is found instead of creating a duplicate.
 - **Apple travel time and map locations.** Events can carry Apple's travel time (by bike, on foot, by car or public transport) and a structured destination, which is what makes Apple draw the map card.
 - **Adding a guest leaves everyone else alone.** `add_attendees` and `remove_attendees` change one person; a full guest list merges instead of replacing, so existing guests keep their RSVP and aren't sent the invitation again. Invitations are emailed by iCloud itself and are off unless you allow them.
 
@@ -334,10 +334,10 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 <details>
 <summary><b>Contacts</b> &nbsp;·&nbsp; 11 tools</summary>
 
-`contacts_search`, `contacts_get`, `contacts_list_birthdays`, `contacts_create`, `contacts_update`, `contacts_delete`, `contacts_list_groups`, `contacts_get_group`, `contacts_create_group`, `contacts_update_group` (rename, add or remove members), `contacts_delete_group` (the group only, never its members)
+`contacts_search_contacts`, `contacts_get_contact`, `contacts_list_birthdays`, `contacts_create_contact`, `contacts_update_contact`, `contacts_delete_contact`, `contacts_list_groups`, `contacts_get_group`, `contacts_create_group`, `contacts_update_group` (rename, add or remove members), `contacts_delete_group` (the group only, never its members)
 
 - Contacts are fetched whole, cached and searched locally by name, nickname, company, email or phone, ignoring accents. A contact with no email comes back with `has_email: false`, so an agent asks instead of guessing.
-- **Misspelled names are handled.** `contacts_search` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.
+- **Misspelled names are handled.** `contacts_search_contacts` suggests similar-sounding names when nothing matches exactly, and `mail_find_correspondent` finds people you've emailed by approximate name, address or company, reading only message headers. Approximate matches are labelled, and agents must ask you to confirm before sending, inviting or editing on one.
 - **Postal addresses** are read and written as street, city, region, postcode and country, with home, work or your own labels ("Holiday house"), stored the way Apple's Contacts app expects.
 - **Birthdays coming up.** `contacts_list_birthdays` lists them soonest first, with the age turned when the year is known (Apple's "year unknown" 1604 is understood, and 29 February falls on the 28th in other years).
 - Updates keep every field outside the changed ones and use ETags to refuse stale overwrites. `add_emails` and `add_phones` add to a card without touching its existing addresses or their labels. Contact photos and notes are never returned.
@@ -347,7 +347,7 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 <details>
 <summary><b>Reminders</b> &nbsp;·&nbsp; 10 tools, with the Mac helper</summary>
 
-`reminders_list_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_move` (the same reminder to another list, nothing deleted), `reminders_delete` (Reminders has no Recently Deleted, so this is final), `reminders_create_list`, `reminders_update_list` (rename), `reminders_delete_list` (with everything in it, only after a preview and its token)
+`reminders_list_lists`, `reminders_list_reminders`, `reminders_create_reminder`, `reminders_update_reminder`, `reminders_complete_reminder`, `reminders_move_reminder` (the same reminder to another list, nothing deleted), `reminders_delete_reminder` (Reminders has no Recently Deleted, so this is final), `reminders_create_list`, `reminders_update_list` (rename), `reminders_delete_list` (with everything in it, only after a preview and its token)
 
 - Runs through Apple's EventKit: every read is live and takes about 20 to 40 ms, however long your lists are. Active reminders by default; `completed="only"` lists what was done in a window, with when.
 - Repeating reminders (`repeat`, daily or coarser: `FREQ=WEEKLY;BYDAY=MO`, `FREQ=MONTHLY;BYMONTHDAY=1;COUNT=12`) and extra alerts (`alerts_minutes_before`, `alerts_at`). Changing alerts keeps the alert at the due time itself.
@@ -358,10 +358,10 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 <details>
 <summary><b>Notes</b> &nbsp;·&nbsp; 9 tools, with the Mac helper</summary>
 
-`notes_list_folders`, `notes_list`, `notes_read`, `notes_create`, `notes_append`, `notes_update`, `notes_create_folder`, `notes_move`, `notes_delete`
+`notes_list_folders`, `notes_list_notes`, `notes_read_note`, `notes_create_note`, `notes_append_to_note`, `notes_update_note`, `notes_create_folder`, `notes_move_note`, `notes_delete_note`
 
-- Read, create, **edit** and **organise**: add to a note (`notes_append`, keeps headings, lists and styling; notes with tables are refused) or rewrite it (`notes_update`, keeps the title), create folders and subfolders, and move notes between them.
-- **Edits are guarded.** `notes_read` returns a `content_hash`; append and update need it with the current title, so a note that changed since it was read is never overwritten. Locked notes, notes with attachments and notes in Recently Deleted are refused, and the old version is saved to `~/Library/Application Support/icloud-mac-helper/note-backups/` before anything is written.
+- Read, create, **edit** and **organise**: add to a note (`notes_append_to_note`, keeps headings, lists and styling; notes with tables are refused) or rewrite it (`notes_update_note`, keeps the title), create folders and subfolders, and move notes between them.
+- **Edits are guarded.** `notes_read_note` returns a `content_hash`; append and update need it with the current title, so a note that changed since it was read is never overwritten. Locked notes, notes with attachments and notes in Recently Deleted are refused, and the old version is saved to `~/Library/Application Support/icloud-mac-helper/note-backups/` before anything is written.
 - Move and delete act on one note at a time and need its **current title** as well as its id, so a stale or wrong id changes nothing.
 - Delete moves a note to **Recently Deleted**, where you can recover it for about 30 days. It refuses locked notes, and notes already in Recently Deleted, because removing them from there would be permanent. Nothing is ever moved into Recently Deleted.
 
@@ -370,14 +370,14 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 <details>
 <summary><b>iCloud Drive</b> &nbsp;·&nbsp; 10 tools, with the Mac helper</summary>
 
-`drive_list`, `drive_search`, `drive_search_content`, `drive_get_info`, `drive_read`, `drive_get_file`, `drive_write`, `drive_create_folder`, `drive_move`, `drive_trash`
+`drive_list_folder`, `drive_search_files`, `drive_search_content`, `drive_get_info`, `drive_read_file`, `drive_get_file`, `drive_write_file`, `drive_create_folder`, `drive_move_item`, `drive_trash_item`
 
 - Works on your **whole iCloud Drive** as your Mac keeps it in sync, so every change syncs to your other devices by itself.
-- `drive_read` returns text from plain text files, **PDFs** and **Word, RTF, ODT and HTML** documents. Files offloaded by "Optimise Mac Storage" are downloaded first. If that takes too long, the answer says the file is still downloading, instead of timing out.
+- `drive_read_file` returns text from plain text files, **PDFs** and **Word, RTF, ODT and HTML** documents. Files offloaded by "Optimise Mac Storage" are downloaded first. If that takes too long, the answer says the file is still downloading, instead of timing out.
 - **Search inside files.** `drive_search_content` finds words in the text of plain text, PDF, Word, RTF, ODT and HTML files (case and accents ignored) and returns an excerpt for each match. Each file is read once and its text kept in a private cache on the Mac (`drive-text-cache.sqlite`, mode 600), so later searches are fast and still work after macOS offloads the file. Files that are only in iCloud are skipped unless `download=true`, and the answer always says how many were left out. (Spotlight was tried first and dropped: its index of iCloud Drive was measurably incomplete.)
-- `drive_write` creates plain text files. Replacing a file needs `overwrite`, and the old version goes to the Trash. `drive_move` never overwrites.
+- `drive_write_file` creates plain text files. Replacing a file needs `overwrite`, and the old version goes to the Trash. `drive_move_item` never overwrites.
 - `drive_get_file` hands over the file itself (base64, up to `MAX_ATTACHMENT_BYTES`), so an agent can attach it or send it on, the way `mail_get_attachment` does for mail.
-- **Nothing is ever deleted permanently.** `drive_trash` moves items to the Trash, where you can recover them.
+- **Nothing is ever deleted permanently.** `drive_trash_item` moves items to the Trash, where you can recover them.
 - Paths are relative to the Drive and can't leave it, not through `..` and not through a symbolic link (links that lead outside are not even listed). The Drive's trash folder is off limits.
 
 </details>
@@ -408,12 +408,12 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 <details>
 <summary><b>Apple Health</b> &nbsp;·&nbsp; 4 tools, with the Mac helper</summary>
 
-`health_get_summary`, `health_get_day`, `health_get_status`, `health_refresh`
+`health_get_summary`, `health_get_day`, `health_get_status`, `health_refresh_data`
 
 - Daily figures from Apple Health: steps, active energy and distance (with how many hours had data), resting and walking heart rate, HRV, breathing rate, heart rate range, and every sleep with its stages, dated by the day it ended. `health_get_day` gives one day in detail (hourly totals, heart rate readings or the sleep timeline); `health_get_status` says how fresh the data is.
 - A Mac cannot read HealthKit, so the data comes from your iPhone: a Shortcut writes the last two days to iCloud Drive (in the Shortcuts app's own folder, which the Drive tools cannot reach), and the Mac helper keeps it in a private store (`health.sqlite`, mode 600) and answers with figures, never the raw export. Build the shortcut with `python3 mac-helper/health/build_shortcut.py health.shortcut`, sign it with `shortcuts sign --mode anyone`, and run it from an automation such as opening an app you use often (a locked iPhone cannot read Health, so timed runs mostly fail). Each export overlaps the last two days, so one successful run fills any gap; overlapping exports never count twice.
 - Your whole history comes from the Health app's own export (Profile, Export All Health Data): `python3 health.py import export.zip` on the Mac, in the helper's `ops` folder. It is read as a stream; where the iPhone and the Watch both counted the same steps, the larger total per hour counts, not the sum.
-- A day or metric without data is left out rather than reported as zero, and the agent is told a gap means the Watch was off. The figures are marked private in every result. `health_refresh` runs a command you set up on the Mac only (`health-refresh.json`), never one the server sends. Turn it on with `ENABLE_HEALTH=true`.
+- A day or metric without data is left out rather than reported as zero, and the agent is told a gap means the Watch was off. The figures are marked private in every result. `health_refresh_data` runs a command you set up on the Mac only (`health-refresh.json`), never one the server sends. Turn it on with `ENABLE_HEALTH=true`.
 
 </details>
 
@@ -442,7 +442,7 @@ shows the idea: which calendar gets what, how to sign mail, lists that are share
 Tools that save an agent guesswork:
 
 - `icloud_get_time` gives the owner's date, time and timezone, so "tomorrow" means the right day.
-- `mail_list_awaiting_reply` lists mail you sent that nobody answered; `mail_search` with `unanswered_only` and `people_only` finds
+- `mail_list_awaiting_reply` lists mail you sent that nobody answered; `mail_search_messages` with `unanswered_only` and `people_only` finds
   what you still owe, without newsletters.
 - `calendar_create_event` reports overlapping events and likely duplicates, and can refuse to create either;
   `calendar_list_events` with `needs_reply` finds invitations still waiting for an answer.
@@ -482,7 +482,7 @@ Apple only exposes Reminders, Notes, iCloud Drive, Apple Maps and your Messages 
 
 Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true`, `ENABLE_DRIVE=true`, `ENABLE_MAPS=true`, `ENABLE_IMESSAGE=true` and `ENABLE_HEALTH=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
 
-**Shortcuts, allowlisted twice.** To let the assistant run some of your Shortcuts (`shortcuts_list`, `shortcuts_run`), list their exact names in `SHORTCUTS_ALLOW` on the server **and**, one per line, in `~/Library/Application Support/icloud-mac-helper/shortcuts-allow.txt` on the Mac. A name must be on both lists, so a compromised server can never run a shortcut you did not allow at the Mac itself. Apple's `shortcuts` command runs it, with optional text input, and its text output comes back. The tools do not exist without an allowlist or on a read-only server.
+**Shortcuts, allowlisted twice.** To let the assistant run some of your Shortcuts (`shortcuts_list_shortcuts`, `shortcuts_run_shortcut`), list their exact names in `SHORTCUTS_ALLOW` on the server **and**, one per line, in `~/Library/Application Support/icloud-mac-helper/shortcuts-allow.txt` on the Mac. A name must be on both lists, so a compromised server can never run a shortcut you did not allow at the Mac itself. Apple's `shortcuts` command runs it, with optional text input, and its text output comes back. The tools do not exist without an allowlist or on a read-only server.
 
 > [!IMPORTANT]
 > **iCloud Drive and Messages need Full Disk Access** for the helper's Python. On macOS 27 the grant only takes effect when the helper runs as the Command Line Tools `Python.app` executable, which is what the installer sets up. Details in the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md#icloud-drive).

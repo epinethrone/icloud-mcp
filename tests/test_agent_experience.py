@@ -28,7 +28,7 @@ def test_attendees_accept_the_forms_agents_actually_send():
 
 @pytest.mark.parametrize("bad", ["Anna", "anna@", "anna@nowhere", "a@b.com, c@d.com", "", "<>"])
 def test_attendees_reject_junk_with_a_helpful_error(bad):
-    with pytest.raises(CalendarError, match="mail_search"):
+    with pytest.raises(CalendarError, match="mail_search_messages"):
         parse_attendees([bad])
 
 
@@ -115,7 +115,7 @@ def test_every_parameter_of_every_tool_has_a_description(s):
 def test_instructions_tell_agents_who_the_owner_is_and_how_to_invite(s):
     text = build_instructions(s)
     assert "Alex <me@icloud.com>" in text and "Europe/Berlin" in text and "New events go to Calendar" in text
-    assert "INVITING PEOPLE" in text and "contacts_search" in text and "ONE calendar_create_event call" in text
+    assert "INVITING PEOPLE" in text and "contacts_search_contacts" in text and "ONE calendar_create_event call" in text
     assert "INVITING PEOPLE" not in build_instructions(dataclasses.replace(s, allow_calendar_invites=False))
     assert "CALENDAR:" not in build_instructions(dataclasses.replace(s, enable_calendar=False))
 
@@ -154,7 +154,7 @@ def test_recipients_accept_the_forms_agents_send():
 
 @pytest.mark.parametrize("bad", ["Bob", "anna@", "anna@nowhere", "a@example.org, Bob", "<>", "   "])
 def test_bad_recipient_is_an_error_not_a_silent_drop(bad):
-    with pytest.raises(MailError, match="mail_search"):
+    with pytest.raises(MailError, match="mail_search_messages"):
         parse_recipients(["anna@example.org", bad], "to")
 
 
@@ -170,7 +170,7 @@ def test_send_reply_forward_fail_before_touching_the_server_on_a_bad_recipient(s
 
 def test_instructions_carry_the_mail_workflow(s):
     text = build_instructions(s)
-    assert "MAIL:" in text and "Answer with mail_reply (it keeps the thread" in text and "uidvalidity" in text
+    assert "MAIL:" in text and "Answer with mail_reply_to_message (it keeps the thread" in text and "uidvalidity" in text
     assert "MAIL:" not in build_instructions(dataclasses.replace(s, enable_mail=False))
 
 

@@ -38,8 +38,8 @@ def test_read_only_wins_over_allow_send(monkeypatch, s):
     monkeypatch.setenv("ALLOW_SEND", "true")
     ro = Settings.from_env()
     assert ro.read_only and not ro.allow_send
-    send_tools = {"mail_send", "mail_reply", "mail_forward", "mail_save_draft", "mail_unsubscribe"}
-    assert {"mail_send", "mail_reply", "mail_forward", "mail_unsubscribe"} <= tool_names(s)
+    send_tools = {"mail_send_message", "mail_reply_to_message", "mail_forward_message", "mail_save_draft", "mail_unsubscribe_from_list"}
+    assert {"mail_send_message", "mail_reply_to_message", "mail_forward_message", "mail_unsubscribe_from_list"} <= tool_names(s)
     assert not send_tools & tool_names(ro)
     # even a Settings object built by hand with both flags on registers nothing that sends
     assert not send_tools & tool_names(dataclasses.replace(s, read_only=True, allow_send=True))
@@ -48,8 +48,8 @@ def test_read_only_wins_over_allow_send(monkeypatch, s):
 def test_reminders_delete_and_move_are_on_by_default_and_gone_when_read_only(s):
     # a reminder is easily recreated, so deleting one does not need ALLOW_PERMANENT_DELETE (mail from Trash still does)
     mac = dataclasses.replace(s, enable_reminders=True, bridge_token="t" * 40)
-    assert {"reminders_delete", "reminders_move", "reminders_complete"} <= tool_names(mac) and not s.allow_permanent_delete
-    assert not {"reminders_delete", "reminders_move"} & tool_names(dataclasses.replace(mac, read_only=True))
+    assert {"reminders_delete_reminder", "reminders_move_reminder", "reminders_complete_reminder"} <= tool_names(mac) and not s.allow_permanent_delete
+    assert not {"reminders_delete_reminder", "reminders_move_reminder"} & tool_names(dataclasses.replace(mac, read_only=True))
 
 
 def test_reminders_move_sends_only_the_target_list_and_needs_one(s):
@@ -60,7 +60,7 @@ def test_reminders_move_sends_only_the_target_list_and_needs_one(s):
     async def go(args):
         mcp, _ = create_server(dataclasses.replace(s, enable_reminders=True, bridge_token="t" * 40))
         mcp._icloud_bridge.call = lambda op, a=None: seen.append((op, a)) or {"id": "r1", "moved": True, "from": "To Do", "list": "Reminders"}
-        return json.loads((await mcp.call_tool("reminders_move", args)).content[0].text)
+        return json.loads((await mcp.call_tool("reminders_move_reminder", args)).content[0].text)
     out = asyncio.run(go({"id": "r1", "list_name": "Reminders"}))
     assert seen[-1] == ("reminder_move", {"id": "r1", "list": "Reminders"}) and out["reminder"]["moved"] is True
     asyncio.run(go({"id": "r1", "list_id": "L-2"}))

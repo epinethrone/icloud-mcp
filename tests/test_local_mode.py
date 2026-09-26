@@ -97,7 +97,7 @@ def test_local_server_has_no_oauth_and_the_same_tools(local_env, tmp_path, monke
     monkeypatch.setenv("MCP_OWNER_PASSWORD", "x" * 16)
     remote, _ = create_server(Settings.from_env())
     assert local_tools == {t.name for t in asyncio.run(remote.list_tools())}
-    assert {"mail_send", "calendar_create_event", "contacts_search"} <= local_tools
+    assert {"mail_send_message", "calendar_create_event", "contacts_search_contacts"} <= local_tools
 
 
 def test_env_file_fills_gaps_but_never_overrides(tmp_path, monkeypatch):
@@ -142,7 +142,7 @@ def test_stdio_end_to_end_lists_tools_over_a_clean_stdout(tmp_path):
     init, names = asyncio.run(asyncio.wait_for(run(), timeout=60))
     assert init.server_info.name == "iCloud"
     assert "Drafts" in (init.instructions or "")
-    assert {"mail_search", "mail_send", "calendar_list_events", "contacts_search"} <= names
+    assert {"mail_search_messages", "mail_send_message", "calendar_list_events", "contacts_search_contacts"} <= names
     assert os.path.isdir(tmp_path / "data")
 
 

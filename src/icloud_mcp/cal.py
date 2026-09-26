@@ -427,7 +427,7 @@ def parse_attendees(items: list[str] | None) -> list[tuple[str, str]]:
         if len(pairs) != 1 or not _EMAIL_RE.match(pairs[0][1].strip()):
             raise CalendarError(
                 f"'{raw}' is not a usable email address. Attendees need an address like anna@example.org or 'Anna <anna@example.org>'. "
-                "If you only know the person's name, look their address up first (contacts_search, or mail_search) or ask the user."
+                "If you only know the person's name, look their address up first (contacts_search_contacts, or mail_search_messages) or ask the user."
             )
         name, addr = pairs[0][0].strip(), pairs[0][1].strip()
         if addr.lower() in seen:

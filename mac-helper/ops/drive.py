@@ -324,7 +324,7 @@ def op_info(a):
 def op_read(a):
     full = resolve(a.get("path"))
     if os.path.isdir(full) and os.path.splitext(full)[1].lower() != ".rtfd":
-        raise DriveError("that is a folder; use drive_list" if describe(full)["type"] == "folder" else
+        raise DriveError("that is a folder; use drive_list_folder" if describe(full)["type"] == "folder" else
                          "that is an app document (%s), which cannot be read as text" % os.path.splitext(full)[1])
     budget = a.get("budget") or 45
     start = time.time()
@@ -344,7 +344,7 @@ def op_get_file(a):
     full = resolve(a.get("path"))
     info = describe(full)
     if info["type"] != "file":
-        raise DriveError("that is a folder; use drive_list" if info["type"] == "folder" else
+        raise DriveError("that is a folder; use drive_list_folder" if info["type"] == "folder" else
                          "that is an app document (%s), which is a bundle of files, not one file. Export it (for example to PDF) first"
                          % os.path.splitext(full)[1])
     limit = min(a.get("max_bytes") or MAX_GET, MAX_GET)
