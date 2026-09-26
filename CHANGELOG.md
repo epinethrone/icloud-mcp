@@ -3,6 +3,14 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
+## Unreleased
+
+- **Agents are told which tool is for which job.** The server's instructions now open with a short WHICH TOOL map: one line
+  per goal (find mail, write mail, file mail, people, calendar, reminders, notes, files, messages, health...) naming the tool
+  for each step. It is built from the tools actually registered, so `TOOLS=essential`, a read-only server or an area that is
+  off never points an agent at a tool it does not have. Tests check that every tool is in the map and that the instructions
+  name only real tools. Three routing hints the map now covers were shortened in the rules.
+
 ## 0.12.0
 
 - **Breaking: tool names.** Every tool is now `<area>_<verb>_<noun>`. The 36 names that had a verb alone are renamed below.
