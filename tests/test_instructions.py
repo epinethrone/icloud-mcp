@@ -12,7 +12,7 @@ from icloud_mcp import instructions as instr_mod
 from icloud_mcp.config import Settings
 from icloud_mcp.server import apply_tool_filter, create_server
 
-CAP = 8000
+CAP = 10500   # 0.12.1: the WHICH TOOL map (about 2,600 characters with every area on) is worth its context
 
 
 @pytest.fixture
@@ -100,3 +100,47 @@ def test_the_example_notes_file_is_fictional_and_short():
     example = Path(__file__).resolve().parents[1] / "docs" / "agent-notes.example.md"
     text = example.read_text()
     assert len(text) < instr_mod.NOTES_MAX_CHARS and re.search(r"@example\.org\b", text)   # made-up addresses only
+
+
+def _every_area(monkeypatch, tmp_path):
+    for k, v in dict(ICLOUD_USERNAME="me@icloud.com", ICLOUD_APP_PASSWORD="aaaa-bbbb-cccc-dddd", DATA_DIR=str(tmp_path),
+                     MCP_PUBLIC_URL="https://mcp.example.com", MCP_OWNER_PASSWORD="x" * 16, BRIDGE_TOKEN="t" * 40,
+                     ENABLE_REMINDERS="true", ENABLE_NOTES="true", ENABLE_DRIVE="true", ENABLE_MAPS="true", ENABLE_IMESSAGE="true",
+                     ENABLE_HEALTH="true", IMESSAGE_ALLOW_SEND="true", IMESSAGE_SEND_ALLOWLIST="a@example.org",
+                     SHORTCUTS_ALLOW="Morning").items():
+        monkeypatch.setenv(k, v)
+    from icloud_mcp.config import Settings
+    return Settings.from_env()
+
+
+def _served(settings):
+    import asyncio
+
+    from icloud_mcp.server import create_server
+    mcp, _ = create_server(settings)
+    return mcp.instructions, {t.name for t in asyncio.run(mcp.list_tools())}
+
+
+def test_the_tool_map_names_every_tool_and_only_real_ones(monkeypatch, tmp_path):
+    """Agents are told which tool is for which job: every registered tool is in the WHICH TOOL map, and every tool name the
+    instructions mention is one the server really has."""
+    import re
+    text, tools = _served(_every_area(monkeypatch, tmp_path))
+    start = text.index("WHICH TOOL")
+    tool_map = text[start:text.index("\n\n", start)]
+    named = set(re.findall(r"\b(?:mail|calendar|contacts|reminders|notes|drive|maps|imessage|health|shortcuts|icloud)_[a-z_]+", text)) - {"calendar_event"}
+    assert tools <= set(re.findall(r"\b[a-z]+_[a-z_]+", tool_map)), sorted(tools - set(re.findall(r"\b[a-z]+_[a-z_]+", tool_map)))
+    assert named <= tools, sorted(named - tools)
+    assert len(tool_map) < 3500                                       # a map, not a manual
+
+
+def test_the_tool_map_shrinks_with_the_tool_set(monkeypatch, tmp_path):
+    import dataclasses
+    import re
+    s = _every_area(monkeypatch, tmp_path)
+    for variant in ({"read_only": True}, {"tools": ("essential",)}, {"enable_drive": False, "enable_health": False}):
+        text, tools = _served(dataclasses.replace(s, **variant))
+        named = set(re.findall(r"\b(?:mail|calendar|contacts|reminders|notes|drive|maps|imessage|health|shortcuts|icloud)_[a-z_]+", text)) - {"calendar_event"}
+        assert named <= tools, (variant, sorted(named - tools))
+    text, tools = _served(dataclasses.replace(s, tools=("essential",)))
+    assert "calendar_update_event" in text and "calendar_delete_event" not in text        # half of "update / delete" survives
