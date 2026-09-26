@@ -37,7 +37,7 @@ from . import callctx
 from .config import Settings
 from .keepalive import TICKER
 from .matching import fuzzy_match_all, norm, similar_enough
-from .safety import HIDDEN_TEXT_WARNING, compact, confirm_problem, strip_hidden_html, warnings_for
+from .safety import HIDDEN_NOTICE, HIDDEN_TEXT_WARNING, compact, confirm_problem, hidden_text, strip_hidden_html, warnings_for
 from .safety import confirm_token as make_confirm_token
 from .mailbulk import bulk_view
 from . import mailparts
@@ -1091,7 +1091,7 @@ class MailService:
 
     @_retrying
     def get_message(self, folder: str, uid: int, *, include_html: bool = False, mark_read: bool = False,
-                    uidvalidity: int | None = None) -> dict[str, Any]:
+                    uidvalidity: int | None = None, show_hidden: bool = False) -> dict[str, Any]:
         with self.imap() as c:
             folder = self.resolve_folder(c, folder)
             raw, flags, internal, uv = self._fetch_raw(c, folder, uid, readonly=not mark_read, uidvalidity=uidvalidity)
@@ -1100,7 +1100,7 @@ class MailService:
                 c.add_flags([uid], [SEEN])
                 flags = tuple(flags) + (SEEN.encode(),)
         return {"notice": UNTRUSTED_NOTICE, **self._message_view(folder, uid, raw, flags, internal, body_chars=self.s.max_body_chars,
-                                                                 include_html=include_html, uidvalidity=uv)}
+                                                                 include_html=include_html, uidvalidity=uv, show_hidden=show_hidden)}
 
     @_retrying
     def get_messages(self, folder: str, uids: list[int], *, body_chars: int | None = None, uidvalidity: int | None = None) -> dict[str, Any]:
@@ -1174,7 +1174,7 @@ class MailService:
 
     def _message_view(self, folder: str, uid: int, raw: bytes, flags: tuple[Any, ...], internal: datetime | None, *,
                       body_chars: int, include_html: bool = False, uidvalidity: int | None = None,
-                      skeleton: bool = False) -> dict[str, Any]:
+                      skeleton: bool = False, show_hidden: bool = False) -> dict[str, Any]:
         msg = email.message_from_bytes(raw, policy=policy.default)
         if skeleton:
             msg._icloud_skeleton = True
@@ -1199,12 +1199,16 @@ class MailService:
             "text_truncated": truncated,
             **({"safety_warnings": w} if (w := warnings_for(_hdr(msg, "Subject"), _names(msg), text if text is not None else
                                                            (html_to_text(htm) if htm else None))
-                                          + ([HIDDEN_TEXT_WARNING] if htm and strip_hidden_html(htm)[1] else [])) else {}),
+                                          + ([HIDDEN_TEXT_WARNING] if htm and hidden_text(htm)[1] else [])) else {}),
             "attachments": list_attachments(msg),
             **_flag_view(flags),
         }
         if include_html and htm is not None:
             out["html"] = strip_hidden_html(htm)[0][: body_chars * 2]
+        if show_hidden:
+            found = hidden_text(htm)[0] if htm else ""
+            out["hidden_text"] = ({"notice": HIDDEN_NOTICE, "text": found[:4000], **({"truncated": True} if len(found) > 4000 else {})}
+                                  if found else {"text": "", "note": "Nothing with words was hidden in this message."})
         return out
 
     @_retrying

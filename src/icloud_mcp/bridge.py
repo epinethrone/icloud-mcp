@@ -47,6 +47,7 @@ _MAX_FAILURES, _FAILURE_WINDOW = 20, 900
 OP_MIN_HELPER: dict[str, str] = {
     "maps_travel_time": "0.6.0", "maps_search": "0.6.0",
     "imessage_chats": "0.6.0", "imessage_read": "0.6.0", "imessage_search": "0.6.0", "imessage_send": "0.6.0",
+    **{op: "0.7.0" for op in ("health_summary", "health_day", "health_status", "health_refresh")},
     **{op: "0.5.0" for op in ("reminder_list_create", "reminder_list_update", "reminder_list_delete")},
     # "op.argument": an argument an older helper would reject as unknown
     **{f"{op}.{arg}": "0.5.0" for op, args in (("reminders_list", ("completed", "completed_since", "completed_before")),
@@ -123,6 +124,11 @@ OPS: dict[str, dict[str, tuple[str, bool, int]]] = {
     "imessage_send": {"chat_id": ("str", False, 300), "handle": ("str", False, 300), "text": ("str", True, 10000)},
     # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
     "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
+    # Apple Health (ops/health.py on the Mac: daily figures from the owner's iPhone exports, kept in a private store there)
+    "health_summary": {"start": ("iso", True, 40), "end": ("iso", False, 40)},
+    "health_day": {"date": ("iso", True, 40), "metric": ("str", True, 40)},
+    "health_status": {},
+    "health_refresh": {},
 }
 
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?\Z")

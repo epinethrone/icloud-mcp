@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 TOKEN_FILE = "admin-token"
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
-_AREAS = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "maps", "imessage", "shortcuts", "icloud")
+_AREAS = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "maps", "imessage", "health", "shortcuts", "icloud")
 _HEALTH_TIMEOUT = 45
 
 

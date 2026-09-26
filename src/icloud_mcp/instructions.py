@@ -100,6 +100,11 @@ _RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("MESSAGES", "A chat marked assistant_thread is the owner's own assistant: never send to it.", ("imessage_list_chats",)),
     ("MESSAGES", "Send with imessage_send_message only to a conversation or person the owner named here, with wording they "
                  "approved; status queued_for_owner_approval or not_sent_needs_owner means NOT sent.", ("imessage_send_message",)),
+    ("HEALTH", "Health figures are the owner's private data: use them only for what the owner asked or a task they set up, and "
+               "never put them in a message, mail, note or file for anyone else.", ("health_get_summary",)),
+    ("HEALTH", "Check freshness before judging: a day without data, or a heart_rate 'from'/'to' span of minutes, means the Watch "
+               "was off, not that nothing happened. Ask health_refresh for current figures; it can take a minute and may not "
+               "arrive if the iPhone is locked.", ("health_get_summary",)),
     ("FAILURES", "An error, or 'complete': false with 'not_read', is not an empty inbox or a free calendar: say what could not "
                  "be read, run icloud_check_health once and report it. Repeat a write at most once: after a timeout it may have "
                  "gone through.", ("icloud_check_health",)),
@@ -184,12 +189,14 @@ def build_instructions(s: Settings, tools: set[str] | frozenset[str] | None = No
               else ("with " + _LOOKUP_MAIL if by_mail else "by asking the owner for it"))
     areas = [a for a, on in (("Mail", s.enable_mail), ("Calendar", s.enable_calendar), ("Contacts", s.enable_contacts),
                              ("Reminders", s.enable_reminders), ("Notes", s.enable_notes), ("iCloud Drive", s.enable_drive),
-                             ("Apple Maps", s.enable_maps), ("Messages", s.enable_imessage)) if on]
+                             ("Apple Maps", s.enable_maps), ("Messages", s.enable_imessage),
+                             ("Apple Health", s.enable_health)) if on]
     off = [a for a, on in (("Reminders", s.enable_reminders), ("Notes", s.enable_notes), ("iCloud Drive", s.enable_drive)) if not on]
     helper = (f" {', '.join(off)}: not enabled here (they need the owner's Mac helper); if asked, say so." if off else "")
     out = [_owner_block(s) + f"Tools for the owner's iCloud: {', '.join(areas) or 'none enabled'}.{helper} Results leave empty fields out.\n"]
     enabled = {"TIME": s.enable_calendar, "MAIL": s.enable_mail, "CALENDAR": s.enable_calendar, "CONTACTS": s.enable_contacts,
-               "REMINDERS / NOTES": s.enable_reminders or s.enable_notes, "MESSAGES": s.enable_imessage, "FAILURES": True}
+               "REMINDERS / NOTES": s.enable_reminders or s.enable_notes, "MESSAGES": s.enable_imessage,
+               "HEALTH": s.enable_health, "FAILURES": True}
     section = None
     for name, text, needs in _RULES:
         if not enabled.get(name) or not ok(needs):

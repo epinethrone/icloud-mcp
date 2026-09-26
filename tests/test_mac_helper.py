@@ -23,9 +23,10 @@ spec.loader.exec_module(helper)
 def test_helper_and_server_agree_on_the_operations():
     assert helper.OPS == bridge_mod.OPS
     # Reminders through EventKit, Notes through a script each, iCloud Drive through ops/drive.py; every operation in exactly one
-    assert set(helper.OP_FILES) | helper.EVENTKIT_OPS | helper.DRIVE_OPS | helper.SHORTCUT_OPS | helper.MAPS_OPS | helper.IMESSAGE_OPS == set(helper.OPS)
+    assert set(helper.OP_FILES) | helper.EVENTKIT_OPS | helper.DRIVE_OPS | helper.SHORTCUT_OPS | helper.MAPS_OPS | helper.IMESSAGE_OPS | helper.HEALTH_OPS == set(helper.OPS)
     assert not set(helper.OP_FILES) & helper.EVENTKIT_OPS and not (set(helper.OP_FILES) | helper.EVENTKIT_OPS) & helper.DRIVE_OPS
     assert pathlib.Path(helper.DRIVE_SCRIPT).is_file() and pathlib.Path(helper.SHORTCUT_SCRIPT).is_file()
+    assert pathlib.Path(helper.HEALTH_SCRIPT).is_file()
     for op, filename in helper.OP_FILES.items():
         assert (HELPER_PATH.parent / "ops" / filename).is_file(), op
 

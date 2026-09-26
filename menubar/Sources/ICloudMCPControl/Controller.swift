@@ -147,7 +147,7 @@ final class Controller {
 
     static func areaName(_ key: String) -> String {
         ["mail": "Mail", "calendar": "Calendar", "contacts": "Contacts", "reminders": "Reminders", "notes": "Notes",
-         "drive": "iCloud Drive", "maps": "Maps", "imessage": "Messages", "mac": "Mac helper", "helper": "Mac helper",
+         "drive": "iCloud Drive", "maps": "Maps", "imessage": "Messages", "health": "Health", "mac": "Mac helper", "helper": "Mac helper",
          "shortcuts": "Shortcuts"][key] ?? key.capitalized
     }
 
