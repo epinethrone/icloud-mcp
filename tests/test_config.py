@@ -40,3 +40,27 @@ def test_the_shipped_env_example_cannot_be_used_as_is(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     with pytest.raises(SystemExit, match="placeholder"):
         Settings.from_env().validate_for_server()
+
+
+def test_claude_chatgpt_and_local_clients_may_sign_in_by_default(good, monkeypatch):
+    """The redirect allowlist covers the clients the README documents; setting it replaces the default entirely."""
+    assert set(good.allowed_redirect_hosts) == {"claude.ai", "claude.com", "chatgpt.com", "chat.openai.com", "localhost", "127.0.0.1"}
+    monkeypatch.setenv("OAUTH_ALLOWED_REDIRECT_HOSTS", "claude.ai")
+    assert Settings.from_env().allowed_redirect_hosts == ("claude.ai",)
+
+
+def test_the_origins_match_the_sign_in_clients(good):
+    """A browser-based client's Origin must be accepted wherever its sign-in is: otherwise it signs in and then gets 403."""
+    from starlette.testclient import TestClient
+
+    from icloud_mcp.server import build_app, create_server
+    from icloud_mcp.auth import SCOPE
+    mcp, provider = create_server(good)
+    token = provider._issue("test-client", [SCOPE], None).access_token
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    headers = {"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {token}"}
+    with TestClient(build_app(good, mcp), base_url=f"https://{good.public_host}") as client:
+        for origin in ("https://claude.ai", "https://claude.com", "https://chatgpt.com", "https://chat.openai.com"):
+            r = client.post("/mcp", json=body, headers={**headers, "Origin": origin})
+            assert r.status_code == 200, (origin, r.status_code, r.text[:200])
+        assert client.post("/mcp", json=body, headers={**headers, "Origin": "https://evil.example"}).status_code == 403
