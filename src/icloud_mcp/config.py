@@ -149,6 +149,7 @@ class Settings:
     caldav_keepalive_seconds: int = 600   # CALDAV_KEEPALIVE_SECONDS: keep pooled CalDAV connections warm this long after the last call (0 = off)
     enable_maps: bool = False     # ENABLE_MAPS: Apple Maps travel times and place search via the Mac helper (needs BRIDGE_TOKEN)
     enable_imessage: bool = False  # ENABLE_IMESSAGE: read and search the owner's own iMessage history via the Mac helper
+    enable_health: bool = False    # ENABLE_HEALTH: daily Apple Health figures from the owner's iPhone exports, via the Mac helper
     imessage_hidden_chats: tuple[str, ...] = ()    # IMESSAGE_HIDDEN_CHATS: chat ids (handles) never listed, read or searched
     imessage_visible_chats: tuple[str, ...] = ()   # IMESSAGE_VISIBLE_CHATS: when set, only these chats
     imessage_max_age_days: int = 0                 # IMESSAGE_MAX_AGE_DAYS: 0 = the whole history (default); e.g. 365 limits it
@@ -239,6 +240,7 @@ class Settings:
             caldav_keepalive_seconds=max(0, _int("CALDAV_KEEPALIVE_SECONDS", 600)),
             enable_maps=_bool("ENABLE_MAPS", False),
             enable_imessage=_bool("ENABLE_IMESSAGE", False),
+            enable_health=_bool("ENABLE_HEALTH", False),
             imessage_hidden_chats=tuple(_norm_handle(x) for x in _list("IMESSAGE_HIDDEN_CHATS") if x.strip()),
             imessage_visible_chats=tuple(_norm_handle(x) for x in _list("IMESSAGE_VISIBLE_CHATS") if x.strip()),
             imessage_max_age_days=max(0, _int("IMESSAGE_MAX_AGE_DAYS", 0)),
@@ -271,7 +273,7 @@ class Settings:
     @property
     def bridge_enabled(self) -> bool:
         return (self.enable_reminders or self.enable_notes or self.enable_drive or self.enable_maps or self.enable_imessage
-                or bool(self.shortcuts_allow))
+                or self.enable_health or bool(self.shortcuts_allow))
 
     @property
     def public_host(self) -> str:
@@ -290,7 +292,7 @@ class Settings:
     def _validate_bridge_and_areas(self) -> None:
         if self.bridge_enabled:
             if len(self.bridge_token) < 32 or "change-me" in self.bridge_token.lower():
-                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / ENABLE_MAPS / ENABLE_IMESSAGE / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
+                raise SystemExit("ENABLE_REMINDERS / ENABLE_NOTES / ENABLE_DRIVE / ENABLE_MAPS / ENABLE_IMESSAGE / ENABLE_HEALTH / SHORTCUTS_ALLOW need BRIDGE_TOKEN: a random secret of at least 32 characters "
                                  "(for example `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`).")
             if self.owner_password and self.bridge_token == self.owner_password:
                 raise SystemExit("BRIDGE_TOKEN must differ from MCP_OWNER_PASSWORD.")

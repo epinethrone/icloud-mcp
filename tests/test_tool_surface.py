@@ -101,9 +101,9 @@ def test_the_safety_sentences_survive(mcp, tool, param, phrase):
 
 
 # ------------------------------------------------------------------------------------------------ names
-PREFIXES = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "shortcuts", "icloud", "maps", "imessage")
+PREFIXES = ("mail", "calendar", "contacts", "reminders", "notes", "drive", "shortcuts", "icloud", "maps", "imessage", "health")
 VERBS = {"append", "check", "complete", "create", "delete", "extract", "find", "forward", "get", "list", "mark", "move", "read",
-         "reply", "rsvp", "run", "search", "send", "trash", "undo", "unsubscribe", "update", "write"}
+         "refresh", "reply", "respond", "rsvp", "run", "search", "send", "trash", "undo", "unsubscribe", "update", "write"}
 
 
 def test_every_tool_name_is_prefix_verb_noun(mcp):

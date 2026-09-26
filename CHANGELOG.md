@@ -3,6 +3,14 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
+## Unreleased (0.12.0)
+
+- **Apple Health** (`ENABLE_HEALTH`, off by default; Mac helper 0.7.0): daily figures, one day in detail, and freshness from
+  exports the owner's iPhone writes with a Shortcut, kept in a private store on the Mac, plus a one-off import of the Health
+  app's full export. Overlapping exports never count twice; a day without data is reported as missing, not as zero.
+- **Hidden text in mail:** Outlook's styling no longer sets off the warning; it appears only when the hidden part reads like
+  instructions to an assistant. `mail_get_message(show_hidden=true)` shows what was hidden, marked as untrusted.
+
 ## 0.11.0
 
 - **Injection hardening** (#71): an invitation allowlist and attendee cap (`INVITE_ALLOWLIST`, `MAX_ATTENDEES`); text hidden

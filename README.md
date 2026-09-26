@@ -256,7 +256,7 @@ A connector that can read your mail and act for you is a prompt-injection target
 | Agent invites the wrong people once invites are on | Any address, at most 10 guests | `INVITE_ALLOWLIST`, `MAX_ATTENDEES` |
 | Agent puts a stranger's address on a real contact so a later reply goes there | Allowed, but the address is marked as agent-added in results and on the approval page | `CONTACTS_ALLOW_EMAIL_CHANGES=false` to block it |
 | Agent reads years of archive for a task about today | Whole mailbox | `MAIL_MAX_AGE_DAYS` |
-| Hostile text is not spotted | Built-in patterns (English and Dutch) plus removal of text hidden in HTML mail | `SAFETY_SCREEN=command:<path>` adds your own classifier |
+| Hostile text is not spotted | Built-in patterns (English and Dutch) plus removal of text hidden in HTML mail (warned about when it reads like instructions; `show_hidden` shows it) | `SAFETY_SCREEN=command:<path>` adds your own classifier |
 | Agent mails arbitrary addresses | Any address, at most 25 per message | `SEND_ALLOWLIST`, `MAX_RECIPIENTS` |
 | Agent destroys mail | Delete moves mail to Trash; deleting from Trash is off | `ALLOW_PERMANENT_DELETE=false` |
 | Agent destroys notes or files | Notes go to Recently Deleted, Drive files to the Trash. Reminders have no trash, so a deleted reminder is gone (it is one line, easily recreated); moving one between lists never deletes it | always |
@@ -283,7 +283,7 @@ In Claude you can also set the send, reply, forward and delete tools to "ask bef
 
 ## Tools
 
-**88 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 36 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
+**92 tools.** 50 for Mail, Calendar, Contacts, the clock and the health check, 40 more with the optional Mac helper, and 2 for Shortcuts you allowlist. Open a section for the details.
 
 Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). Eleven tools were renamed in 0.7.0 to follow that pattern; `TOOLS` still accepts the old names and logs the new one.
 
@@ -406,6 +406,18 @@ Every name is `area_verb_noun` (`mail_list_senders`, `calendar_create_event`). E
 </details>
 
 <details>
+<summary><b>Apple Health</b> &nbsp;·&nbsp; 4 tools, with the Mac helper</summary>
+
+`health_get_summary`, `health_get_day`, `health_get_status`, `health_refresh`
+
+- Daily figures from Apple Health: steps, active energy and distance (with how many hours had data), resting and walking heart rate, HRV, breathing rate, heart rate range, and every sleep with its stages, dated by the day it ended. `health_get_day` gives one day in detail (hourly totals, heart rate readings or the sleep timeline); `health_get_status` says how fresh the data is.
+- A Mac cannot read HealthKit, so the data comes from your iPhone: a Shortcut writes the last two days to iCloud Drive (in the Shortcuts app's own folder, which the Drive tools cannot reach), and the Mac helper keeps it in a private store (`health.sqlite`, mode 600) and answers with figures, never the raw export. Build the shortcut with `python3 mac-helper/health/build_shortcut.py health.shortcut`, sign it with `shortcuts sign --mode anyone`, and run it from an automation such as opening an app you use often (a locked iPhone cannot read Health, so timed runs mostly fail). Each export overlaps the last two days, so one successful run fills any gap; overlapping exports never count twice.
+- Your whole history comes from the Health app's own export (Profile, Export All Health Data): `python3 health.py import export.zip` on the Mac, in the helper's `ops` folder. It is read as a stream; where the iPhone and the Watch both counted the same steps, the larger total per hour counts, not the sum.
+- A day or metric without data is left out rather than reported as zero, and the agent is told a gap means the Watch was off. The figures are marked private in every result. `health_refresh` runs a command you set up on the Mac only (`health-refresh.json`), never one the server sends. Turn it on with `ENABLE_HEALTH=true`.
+
+</details>
+
+<details>
 <summary><b>Status and time</b> &nbsp;·&nbsp; 3 tools</summary>
 
 `icloud_check_health` checks every enabled area in one call (signs in to mail, lists calendars, reads the address book, asks whether the Mac helper is online) and says how long each took. `icloud_get_helper_status` says whether the Mac helper is online, when it was last seen, which version it runs, how many jobs are queued and how long they take. `icloud_get_time` gives the current date, weekday and time in your timezone, so an agent never books from a guessed date.
@@ -468,7 +480,7 @@ Apple only exposes Reminders, Notes, iCloud Drive, Apple Maps and your Messages 
 - **Pinned and authenticated.** TLS with a self-signed certificate the helper pins by fingerprint, plus a bearer token.
 - **Honest when it's off.** It works while your Mac is on and reachable (home network or VPN). When it isn't, the tools say so.
 
-Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true`, `ENABLE_DRIVE=true`, `ENABLE_MAPS=true` and `ENABLE_IMESSAGE=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
+Enable it in `.env` with any of `ENABLE_REMINDERS=true`, `ENABLE_NOTES=true`, `ENABLE_DRIVE=true`, `ENABLE_MAPS=true`, `ENABLE_IMESSAGE=true` and `ENABLE_HEALTH=true`, a `BRIDGE_TOKEN` of at least 32 random characters, and `BRIDGE_BIND` set to the address the Mac reaches the server on. The server logs the certificate fingerprint for the installer, and also writes it to `bridge_fingerprint.txt` in its data folder. Then follow the [Mac helper guide](https://github.com/epinethrone/icloud-mcp/blob/main/mac-helper/README.md).
 
 **Shortcuts, allowlisted twice.** To let the assistant run some of your Shortcuts (`shortcuts_list`, `shortcuts_run`), list their exact names in `SHORTCUTS_ALLOW` on the server **and**, one per line, in `~/Library/Application Support/icloud-mac-helper/shortcuts-allow.txt` on the Mac. A name must be on both lists, so a compromised server can never run a shortcut you did not allow at the Mac itself. Apple's `shortcuts` command runs it, with optional text input, and its text output comes back. The tools do not exist without an allowlist or on a read-only server.
 
@@ -497,6 +509,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `ENABLE_MAIL`, `ENABLE_CALENDAR`, `ENABLE_CONTACTS` | true | Switch whole areas off |
 | `ENABLE_REMINDERS`, `ENABLE_NOTES`, `ENABLE_DRIVE`, `ENABLE_MAPS` | false | Areas that go through the Mac helper (need `BRIDGE_TOKEN`); Maps is Apple Maps travel times and place search |
 | `ENABLE_IMESSAGE` | false | Read and search your own iMessage and SMS history through the Mac helper |
+| `ENABLE_HEALTH` | false | Daily Apple Health figures from your iPhone's exports, through the Mac helper |
 | `IMESSAGE_HIDDEN_CHATS`, `IMESSAGE_VISIBLE_CHATS` | empty | Chats never shown to the agent; or, when set, the only ones shown |
 | `IMESSAGE_MAX_AGE_DAYS` | 0 | 0 = the whole history; a number limits every read to that many days |
 | `IMESSAGE_HIDE_SHORT_CODES` | true | Hides service senders (banks, delivery, one-time codes): any sender that is not an email or a full phone number |

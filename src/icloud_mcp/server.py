@@ -407,7 +407,8 @@ def _finish(mcp: MCPServer, s: Settings) -> None:
 # A small set that covers what agents do most, for clients where the full list of tool definitions costs too much context
 # (TOOLS=essential). TOOLS also takes area presets (mail, calendar, contacts, reminders, notes, drive) and tool names.
 AREA_PRESETS = {"mail": ("mail_",), "calendar": ("calendar_",), "contacts": ("contacts_",), "reminders": ("reminders_",),
-                "notes": ("notes_",), "drive": ("drive_",), "maps": ("maps_",), "imessage": ("imessage_",)}
+                "notes": ("notes_",), "drive": ("drive_",), "maps": ("maps_",), "imessage": ("imessage_",),
+                "health": ("health_",)}
 ALWAYS_KEPT = ("icloud_check_health", "icloud_get_helper_status")   # the diagnostics stay with any area preset
 # Tool names before 0.7.0, which made every name verb_noun. TOOLS still accepts them (with a warning); they are not tools any more.
 RENAMED = {
@@ -573,10 +574,12 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         @mcp.tool(annotations=_READ)
         @_guard
         def mail_get_message(folder: Folder, uid: Uid, include_html: Annotated[bool, _d("true = also return the HTML source (rarely needed).")] = False,
-                             uidvalidity: UidValidity = None) -> dict[str, Any]:
+                             uidvalidity: UidValidity = None,
+                             show_hidden: Annotated[bool, _d("true = also return the text hidden from a reader, only when the owner asks.")] = False,
+                             ) -> dict[str, Any]:
             """Read one message: headers, plain-text body, attachment list (index, filename, type, size) and flags.
             Does not mark the message as read. Set include_html=true only if the HTML source is needed."""
-            return mail.get_message(folder, uid, include_html=include_html, uidvalidity=uidvalidity)
+            return mail.get_message(folder, uid, include_html=include_html, uidvalidity=uidvalidity, show_hidden=show_hidden)
 
         @mcp.tool(annotations=_READ)
         @_guard
@@ -1441,6 +1444,44 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
                 got = bridge.call("shortcut_run", _given(name=name, input=input))
                 found = warnings_for(str(got.get("output") or "")) if isinstance(got, dict) else []
                 return {"notice": _MAC_NOTICE, **got, **({"safety_warnings": found} if found else {})}
+
+        if s.enable_health:
+            _health_note = ("Apple Health data from the owner's iPhone: private. Figures are per day in the phone's local time; "
+                            "freshness says how old the latest export is.")
+
+            @mcp.tool(annotations=_READ)
+            @_guard
+            def health_get_summary(
+                start: Annotated[str, _d("First day (YYYY-MM-DD).")],
+                end: Annotated[str | None, _d("Last day (YYYY-MM-DD), at most 92 days after start; default start.")] = None,
+            ) -> dict[str, Any]:
+                """The owner's Apple Health figures per day: steps, active energy, distance (totals with hours_recorded), resting
+                and walking heart rate, HRV, respiratory rate, heart rate min/avg/max, and each sleep (dated by the day it ended)
+                with stages. A day or metric with no data is left out."""
+                return {"notice": _health_note, **bridge.call("health_summary", _given(start=start, end=end))}
+
+            @mcp.tool(annotations=_READ)
+            @_guard
+            def health_get_day(
+                date: Annotated[str, _d("The day (YYYY-MM-DD).")],
+                metric: Annotated[str, _d("steps, active_energy, distance, heart_rate, sleep, resting_heart_rate, hrv, ...")],
+            ) -> dict[str, Any]:
+                """One day of one Apple Health metric in detail: hourly totals, heart rate readings, or the sleep stages."""
+                return {"notice": _health_note, **bridge.call("health_day", {"date": date, "metric": metric})}
+
+            @mcp.tool(annotations=_READ)
+            @_guard
+            def health_get_status() -> dict[str, Any]:
+                """How current the Apple Health data is: the latest export, the latest reading per metric, how far back the
+                history goes, and whether refreshing is set up."""
+                return bridge.call("health_status", {})
+
+            @mcp.tool(annotations=_READ)
+            @_guard
+            def health_refresh() -> dict[str, Any]:
+                """Ask the owner's iPhone for a fresh Apple Health export and wait for it (up to about a minute). Use it when
+                current figures matter; it does nothing when the latest export is under 10 minutes old."""
+                return bridge.call("health_refresh", {})
 
         if s.enable_imessage:
             messages = IMessageService(s, bridge, contacts if s.enable_contacts else None)

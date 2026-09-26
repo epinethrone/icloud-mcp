@@ -32,7 +32,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPS_DIR = os.path.join(HERE, "ops")
 DEFAULT_CONFIG = os.path.expanduser("~/.config/icloud-mac-helper/config.json")
@@ -95,6 +95,11 @@ OPS = {
     "imessage_send": {"chat_id": ("str", False, 300), "handle": ("str", False, 300), "text": ("str", True, 10000)},
     # Shortcuts (only names on BOTH the server's SHORTCUTS_ALLOW and the Mac's own shortcuts-allow.txt run; see ops/shortcut.py)
     "shortcut_run": {"name": ("str", True, 200), "input": ("str", False, 20000)},
+    # Apple Health (ops/health.py; exports the owner's iPhone writes to the Shortcuts app's iCloud folder, kept in a private store here)
+    "health_summary": {"start": ("iso", True, 40), "end": ("iso", False, 40)},
+    "health_day": {"date": ("iso", True, 40), "metric": ("str", True, 40)},
+    "health_status": {},
+    "health_refresh": {},
 }
 # Reminders: one EventKit binary, one process per operation (measured ~21 ms fixed cost, 20-40 ms per operation end to end, against
 # 0.5-22 s for the JXA scripts, which scan a whole list per request). There is deliberately NO fallback to the JXA Reminders scripts:
@@ -114,6 +119,9 @@ DRIVE_OPS = frozenset(op for op in OPS if op.startswith("drive_"))
 # Shortcuts: one fixed script, run by the same Apple Python, which checks the Mac's own allowlist before `shortcuts run`.
 SHORTCUT_SCRIPT = os.path.join(OPS_DIR, "shortcut.py")
 SHORTCUT_OPS = frozenset({"shortcut_run"})
+# Apple Health: one fixed script, run by the same Apple Python; the refresh command it may run is set on the Mac only.
+HEALTH_SCRIPT = os.path.join(OPS_DIR, "health.py")
+HEALTH_OPS = frozenset(op for op in OPS if op.startswith("health_"))
 EVENTKIT_OPS = frozenset({"reminder_lists", "reminders_list", "reminder_create", "reminder_update", "reminder_complete", "reminder_delete", "reminder_move",
                           "reminder_list_create", "reminder_list_update", "reminder_list_delete"})
 REMINDERS_GRANT = 'Full Access to Reminders for "iCloud Mac Helper (Reminders)" (System Settings > Privacy & Security > Reminders)'
@@ -218,6 +226,8 @@ def build_command(op, args):
         return [sys.executable, "-I", IMESSAGE_SCRIPT, op, payload]
     if op in SHORTCUT_OPS:
         return [sys.executable, "-I", SHORTCUT_SCRIPT, op, payload]
+    if op in HEALTH_OPS:
+        return [sys.executable, "-I", HEALTH_SCRIPT, op, payload]
     return [OSASCRIPT, "-l", "JavaScript", os.path.join(OPS_DIR, OP_FILES[op]), payload]
 
 
@@ -246,13 +256,13 @@ def run_one(op, args, timeout=60, extra=None):
     """Run one operation. Returns (ok, result, error). The child is killed if it exceeds the timeout.
     `extra` is added AFTER validation and only by the helper itself; it is the one sanctioned way to add anything post-validation."""
     if op not in OPS or (op not in OP_FILES and op not in EVENTKIT_OPS and op not in DRIVE_OPS and op not in SHORTCUT_OPS
-                         and op not in MAPS_OPS and op not in IMESSAGE_OPS):
+                         and op not in MAPS_OPS and op not in IMESSAGE_OPS and op not in HEALTH_OPS):
         return False, None, "unknown operation"
     try:
         clean = validate_args(op, args)
     except HelperError as e:
         return False, None, str(e)
-    if op in DRIVE_OPS or op in SHORTCUT_OPS or op in IMESSAGE_OPS:        # how long the script may take within the job
+    if op in DRIVE_OPS or op in SHORTCUT_OPS or op in IMESSAGE_OPS or op in HEALTH_OPS:        # how long the script may take within the job
         clean = dict(clean, budget=max(1, timeout - 10))
     if extra:
         clean = dict(clean, **extra)

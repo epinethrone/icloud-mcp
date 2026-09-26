@@ -29,6 +29,8 @@
 !mac-helper/ops/
 !mac-helper/ops/*.js
 !mac-helper/ops/*.py
+!mac-helper/health/
+!mac-helper/health/*.py
 !mac-helper/pdftext/
 !mac-helper/pdftext/*.swift
 !mac-helper/maps/
