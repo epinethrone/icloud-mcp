@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 600" width="1280" height="600" role="img" aria-labelledby="t"><title id="t">iCloud MCP. Your iCloud, in Claude.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 600" width="1280" height="600" role="img" aria-labelledby="t"><title id="t">iCloud MCP. Your iCloud, in your AI. For Claude, Codex, ChatGPT and any MCP client.</title>
 <style>text{font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif}</style>
 
 <defs>
@@ -66,9 +66,9 @@
   </g>
 </svg>
 <text x="640" y="296" text-anchor="middle" font-size="30" font-weight="600" fill="#6e6e73" letter-spacing="0.5">iCloud MCP</text>
-<text x="640" y="392" text-anchor="middle" font-size="84" font-weight="700" fill="#1d1d1f" letter-spacing="-2.5">Your iCloud. <tspan fill="url(#word)">In Claude.</tspan></text>
-<text x="640" y="456" text-anchor="middle" font-size="27" fill="#6e6e73">Mail, Calendar, Contacts, Reminders, Notes, iCloud Drive, Maps and Messages.</text>
-<text x="640" y="494" text-anchor="middle" font-size="27" fill="#6e6e73">Private by design. It asks before anything leaves.</text>
-<text x="640" y="556" text-anchor="middle" font-size="19" fill="#86868b" letter-spacing="1.5">88 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
+<text x="640" y="392" text-anchor="middle" font-size="84" font-weight="700" fill="#1d1d1f" letter-spacing="-2.5">Your iCloud. <tspan fill="url(#word)">In your AI.</tspan></text>
+<text x="640" y="456" text-anchor="middle" font-size="27" fill="#6e6e73">Mail, Calendar, Contacts, Reminders, Notes, Drive, Maps, Messages and Health.</text>
+<text x="640" y="494" text-anchor="middle" font-size="27" fill="#6e6e73">For Claude, Codex, ChatGPT or any MCP client. It asks before anything leaves.</text>
+<text x="640" y="556" text-anchor="middle" font-size="19" fill="#86868b" letter-spacing="1.5">92 TOOLS  ·  ONE CONNECTOR  ·  RUNS ON YOUR OWN MACHINE</text>
 
 </svg>
