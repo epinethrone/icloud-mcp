@@ -538,7 +538,8 @@ class Dashboard:
         topbar = f'<header class="topbar">{self.brand()}{self.state_chip()}</header>'
         banner = f'<p class="banner{" bad" if bad else ""}" role="status">{_esc(flash)}</p>' if flash else ""
         head = f'<div class="page-head"><h1>{_esc(title)}</h1>' + (f'<p class="lede">{_esc(lede)}</p>' if lede else "") + "</div>"
-        return self._doc(title, f'<div class="wrap">{sidebar}<div style="flex:1;min-width:0">{topbar}<main{' class="wide"' if wide else ''}>{head}'
+        main = '<main class="wide">' if wide else "<main>"         # Python 3.11 cannot nest the same quote in an f-string
+        return self._doc(title, f'<div class="wrap">{sidebar}<div style="flex:1;min-width:0">{topbar}{main}{head}'
                                 f'<div class="stack">{banner}{inner}</div></main></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>', status)
 
     def auth_page(self, title: str, body_html: str, foot_html: str = "", status: int = 200) -> Response:
