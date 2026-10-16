@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, field as dfield
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -483,24 +484,21 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             return d.message(rec, "Not found", "There is no such settings page.", 404)
         return group_page(rec, g)
 
-    @mcp.custom_route("/dashboard/settings/{slug}", methods=["POST"])
-    async def settings_save(request: Request) -> Response:
-        got = await d.checked_form(request)
-        if isinstance(got, Response):
-            return got
-        _, rec, form = got
-        g = next((x for x in GROUPS if x.slug == request.path_params["slug"]), None)
-        if g is None or not editable:
-            return d.message(rec, "Not allowed", "These settings cannot be changed here.", 403)
-        stored = store.read()
-        new = dict(stored)
-        changes, looser = [], []
+    # A change that weakens protection waits here while the owner confirms it's them, so it need not be entered again.
+    held: dict[str, tuple[float, str, str, dict[str, str]]] = {}     # session csrf -> (when, group slug, "save" | "reset", form)
+
+    def hold(rec: dict[str, Any], g: Group, action: str, form: dict[str, str], lede: str) -> Response:
+        while len(held) > 200:
+            held.pop(next(iter(held)))
+        held[rec["csrf"]] = (time.time(), g.slug, action, form)
+        return d.confirm(rec, f"/dashboard/settings/{g.slug}/confirmed", lede)
+
+    def read_form(g: Group, form: dict[str, str], stored: dict[str, str]):
         if g.slug == "mail" and form.get("SEND_MODE") in ("drafts", "approval", "direct"):
             mode = form.get("SEND_MODE")
-            form = {**dict(form), "ALLOW_SEND": "true" if mode != "drafts" else "",
-                    "SEND_REQUIRES_APPROVAL": "true" if mode != "direct" else ""}
+            form = {**form, "ALLOW_SEND": "true" if mode != "drafts" else "", "SEND_REQUIRES_APPROVAL": "true" if mode != "direct" else ""}
             form = {k: v for k, v in form.items() if v != ""}
-        entered, typed, errors = {}, {}, {}
+        new, changes, looser, entered, typed, errors = dict(stored), [], [], {}, {}, {}
         for sp in g.specs:
             old, _src = current(sp.key, stored)
             try:
@@ -515,6 +513,10 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             changes.append((sp, old, val))
             if sp.loosens and sp.loosens(old, val):
                 looser.append(sp)
+        return new, changes, looser, entered, typed, errors
+
+    async def save(rec: dict[str, Any], g: Group, form: dict[str, str]) -> Response:
+        new, changes, looser, entered, typed, errors = read_form(g, form, store.read())
         if errors:
             first = next(iter(errors.values()))
             more = f" ({len(errors) - 1} more marked below)" if len(errors) > 1 else ""
@@ -522,9 +524,8 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         if not changes:
             return group_page(rec, g, "Nothing changed.")
         if looser and not d.recent(rec):
-            return d.confirm(rec, f"/dashboard/settings/{g.slug}",
-                             "This change weakens protection (" + ", ".join(sp.label for sp in looser) + "), so it asks you to sign in again. "
-                             "Then save once more.")
+            return hold(rec, g, "save", form, "This change weakens protection (" + ", ".join(sp.label for sp in looser)
+                        + "), so it asks you to sign in again. It is saved as soon as you have.")
         if problem := await asyncio.to_thread(validate, new, known_tools()):
             key, why = problem
             return group_page(rec, g, f"Not saved: {why}", True, 400, entered, errors={key: why} if key else None)
@@ -536,22 +537,16 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         log.warning("Owner changed %s from the dashboard; they apply after a restart", ", ".join(sp.key for sp, _, _ in changes))
         return RedirectResponse("/dashboard/settings?m=settings_saved", status_code=303, headers=D._HEADERS)
 
-    @mcp.custom_route("/dashboard/settings/{slug}/reset", methods=["POST"])
-    async def settings_reset(request: Request) -> Response:
-        got = await d.checked_form(request)
-        if isinstance(got, Response):
-            return got
-        _, rec, form = got
-        key = str(form.get("key", ""))
+    async def reset(rec: dict[str, Any], g: Group, key: str) -> Response:
         stored = store.read()
-        g = next((x for x in GROUPS if x.slug == request.path_params["slug"]), None)
-        if g is None or not editable or key not in stored or key not in {sp.key for sp in g.specs}:
+        if key not in stored or key not in {sp.key for sp in g.specs}:
             return d.message(rec, "Not found", "That setting was not changed here.", 404)
         sp = SPECS[key]
         new = {k: v for k, v in stored.items() if k != key}
         back, _ = current(key, new)
         if sp.loosens and sp.loosens(stored[key], back) and not d.recent(rec):
-            return d.confirm(rec, f"/dashboard/settings/{g.slug}", "Going back to the server's value weakens protection, so it asks you to sign in again.")
+            return hold(rec, g, "reset", {"key": key}, "Going back to the server's value weakens protection, so it asks you to sign in "
+                        "again. It is reset as soon as you have.")
         if problem := await asyncio.to_thread(validate, new, known_tools()):
             return group_page(rec, g, f"Not reset: {problem[1]}", True, 400)
         store.write(new)
@@ -559,6 +554,49 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         d.audit.record("settings.changed", actor="owner", via=rec.get("via", ""),
                        summary=f"Reset {sp.label} to {display(sp, back)}", keys=[key])
         return group_page(rec, g, f"{sp.label} now follows the server again ({display(sp, back)}). Restart to apply.")
+
+    def group_for(request: Request) -> Group | None:
+        g = next((x for x in GROUPS if x.slug == request.path_params["slug"]), None)
+        return g if g is not None and editable else None
+
+    @mcp.custom_route("/dashboard/settings/{slug}", methods=["POST"])
+    async def settings_save(request: Request) -> Response:
+        got = await d.checked_form(request)
+        if isinstance(got, Response):
+            return got
+        _, rec, form = got
+        g = group_for(request)
+        if g is None:
+            return d.message(rec, "Not allowed", "These settings cannot be changed here.", 403)
+        return await save(rec, g, {k: str(v) for k, v in form.items() if k != "csrf"})
+
+    @mcp.custom_route("/dashboard/settings/{slug}/reset", methods=["POST"])
+    async def settings_reset(request: Request) -> Response:
+        got = await d.checked_form(request)
+        if isinstance(got, Response):
+            return got
+        _, rec, form = got
+        g = group_for(request)
+        if g is None:
+            return d.message(rec, "Not found", "That setting was not changed here.", 404)
+        return await reset(rec, g, str(form.get("key", "")))
+
+    @mcp.custom_route("/dashboard/settings/{slug}/confirmed", methods=["GET"])
+    @checked
+    async def settings_confirmed(request: Request, rec) -> Response:
+        """Where the confirm card returns to, after signing in again or after Cancel. Only a change this session submitted
+        itself (with its CSRF token) in the last ten minutes is applied, once."""
+        g = group_for(request)
+        item = held.pop(rec["csrf"], None)
+        if g is None or item is None or item[1] != g.slug or time.time() - item[0] > 600:
+            return RedirectResponse(f"/dashboard/settings/{request.path_params['slug']}", status_code=303, headers=D._HEADERS)
+        _, _, action, form = item
+        if not d.recent(rec):                                    # Cancel: show the change again, unsaved
+            if action == "reset":
+                return group_page(rec, g, "Not reset: it was not confirmed.", True)
+            _, _, _, entered, typed, _ = read_form(g, form, store.read())
+            return group_page(rec, g, "Not saved: it was not confirmed. Save again to confirm.", True, 200, entered, typed)
+        return await (save(rec, g, form) if action == "save" else reset(rec, g, form.get("key", "")))
 
     @mcp.custom_route("/dashboard/settings/accounts/app-password", methods=["POST"])
     async def app_password(request: Request) -> Response:

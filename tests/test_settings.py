@@ -52,13 +52,52 @@ async def test_weakening_protection_asks_again(web):  # noqa: F811
         form = {"csrf": token, "ALLOW_SEND": "true", "SAVE_SENT_COPY": "true", "MAX_RECIPIENTS": "25", "MAIL_MAX_AGE_DAYS": "0",
                 "MAX_BODY_CHARS": "30000", "MAX_ATTACHMENT_BYTES": "5", "OUTBOX_TTL_SECONDS": "24", "OUTBOX_MAX": "20", "SEND_ALLOWLIST": ""}
         r = await c.post("/dashboard/settings/mail", headers=SAME, data=form)            # SEND_REQUIRES_APPROVAL unticked
-        assert "Confirm it’s you" in r.text and "Send only after my approval" in r.text
+        assert "Confirm it’s you" in r.text and "Send only after my approval" in r.text and "saved as soon as you have" in r.text
+        assert 'name="next" value="/dashboard/settings/mail/confirmed"' in r.text
         assert not (d.sessions.path.parent / "settings.json").exists()
-        await c.post("/dashboard/signin", headers=SAME, data={"csrf": token, "password": "correct-horse-battery", "next": "/dashboard/settings/mail"})
-        r = await c.post("/dashboard/settings/mail", headers=SAME, data=form)
-        assert r.status_code == 303
+        r = await c.post("/dashboard/signin", headers=SAME,
+                         data={"csrf": token, "password": "correct-horse-battery", "next": "/dashboard/settings/mail/confirmed"})
+        assert r.headers["location"] == "/dashboard/settings/mail/confirmed"
+        r = await c.get("/dashboard/settings/mail/confirmed")                          # the held change, without entering it again
+        assert r.status_code == 303 and r.headers["location"] == "/dashboard/settings?m=settings_saved"
+        assert (await c.get("/dashboard/settings/mail/confirmed")).headers["location"] == "/dashboard/settings/mail"   # only once
     assert json.loads((d.sessions.path.parent / "settings.json").read_text()) == {"SEND_REQUIRES_APPROVAL": "false"}
     assert d.audit.entries()[0]["details"]["weakened"] == ["SEND_REQUIRES_APPROVAL"]
+
+
+async def test_cancelling_the_confirmation_saves_nothing_but_keeps_the_change_on_screen(web):  # noqa: F811
+    app, mcp, _, _ = web()
+    d = mcp._icloud_dashboard
+    async with client(app) as c:
+        token = await signed_in(c)
+        for rec in d.sessions._items.values():
+            rec["auth_at"] -= 600
+        r = await c.post("/dashboard/settings/mail", headers=SAME, data={
+            "csrf": token, "SEND_MODE": "direct", "SAVE_SENT_COPY": "true", "MAX_RECIPIENTS": "25", "MAIL_MAX_AGE_DAYS": "0",
+            "MAX_BODY_CHARS": "30000", "MAX_ATTACHMENT_BYTES": "7", "OUTBOX_TTL_SECONDS": "24", "OUTBOX_MAX": "20", "SEND_ALLOWLIST": ""})
+        assert "Confirm it’s you" in r.text
+        r = await c.get("/dashboard/settings/mail/confirmed")                          # Cancel leads here without signing in again
+        assert r.status_code == 200 and "it was not confirmed" in r.text
+        assert 'name="SEND_MODE" value="direct" checked' in r.text and 'value="7"' in r.text
+    assert not (d.sessions.path.parent / "settings.json").exists()
+
+
+async def test_a_held_change_belongs_to_the_session_that_made_it(web):  # noqa: F811
+    app, mcp, _, _ = web()
+    d = mcp._icloud_dashboard
+    async with client(app) as a, client(app) as b:
+        token = await signed_in(a)
+        await signed_in(b)
+        for rec in d.sessions._items.values():
+            rec["auth_at"] -= 600
+        await a.post("/dashboard/settings/mail", headers=SAME, data={
+            "csrf": token, "SEND_MODE": "direct", "SAVE_SENT_COPY": "true", "MAX_RECIPIENTS": "25", "MAIL_MAX_AGE_DAYS": "0",
+            "MAX_BODY_CHARS": "30000", "MAX_ATTACHMENT_BYTES": "5", "OUTBOX_TTL_SECONDS": "24", "OUTBOX_MAX": "20", "SEND_ALLOWLIST": ""})
+        for rec in d.sessions._items.values():
+            rec["auth_at"] = rec["auth_at"] + 600
+        r = await b.get("/dashboard/settings/mail/confirmed")
+        assert r.headers["location"] == "/dashboard/settings/mail"
+    assert not (d.sessions.path.parent / "settings.json").exists()
 
 
 async def test_values_the_server_could_not_start_with_are_refused(web):  # noqa: F811
@@ -142,3 +181,21 @@ async def test_the_sending_choice_sets_both_switches(web):  # noqa: F811
         assert json.loads(path.read_text()) == {"ALLOW_SEND": "false"}
         assert (await c.post("/dashboard/settings/mail", headers=SAME, data={**base, "SEND_MODE": "direct"})).status_code == 303
         assert json.loads(path.read_text()) == {"ALLOW_SEND": "true", "SEND_REQUIRES_APPROVAL": "false"}
+
+
+async def test_a_reset_that_weakens_protection_is_applied_after_confirming(web):  # noqa: F811
+    app, mcp, _, _ = web(SEND_REQUIRES_APPROVAL="false")
+    d = mcp._icloud_dashboard
+    path = d.sessions.path.parent / "settings.json"
+    path.write_text(json.dumps({"SEND_REQUIRES_APPROVAL": "true"}))
+    async with client(app) as c:
+        token = await signed_in(c)
+        for rec in d.sessions._items.values():
+            rec["auth_at"] -= 600
+        r = await c.post("/dashboard/settings/mail/reset", headers=SAME, data={"csrf": token, "key": "SEND_REQUIRES_APPROVAL"})
+        assert "Confirm it’s you" in r.text and "reset as soon as you have" in r.text
+        await c.post("/dashboard/signin", headers=SAME, data={"csrf": token, "password": "correct-horse-battery",
+                                                              "next": "/dashboard/settings/mail/confirmed"})
+        r = await c.get("/dashboard/settings/mail/confirmed")
+        assert "now follows the server again" in r.text
+    assert json.loads(path.read_text()) == {}
