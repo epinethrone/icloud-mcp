@@ -204,6 +204,24 @@ async def test_passkey_registration_and_sign_in_through_the_pages(web):
     assert via == ["passkey “Desk key”"]
 
 
+async def test_a_password_lockout_does_not_lock_out_the_passkey(web):
+    pytest.importorskip("webauthn")
+    app, mcp, provider, _ = web()
+    store = mcp._icloud_dashboard.passkeys
+    dev = SoftAuthenticator(BASE, "mcp.example.com")
+    opts = store.registration_options()
+    store.register(opts["ticket"], dev.create(opts["publicKey"]), "Phone")
+    for _ in range(10):
+        provider.record_failure()
+    async with client(app) as c:
+        r = await c.post("/dashboard/signin", data={"password": PASSWORD}, headers=SAME)
+        assert r.status_code == 429 and "or use your passkey" in r.text
+        opts = (await c.post("/dashboard/passkey/options", json={"purpose": "signin"}, headers=SAME)).json()
+        r = await c.post("/dashboard/passkey/verify", headers=SAME,
+                         json={"purpose": "signin", "ticket": opts["ticket"], "credential": dev.get(opts["publicKey"])})
+        assert r.status_code == 200 and (await c.get("/dashboard")).status_code == 200
+
+
 async def test_password_sign_in_can_be_turned_off_once_a_passkey_exists(web):
     pytest.importorskip("webauthn")
     app, mcp, _, _ = web(OWNER_PASSWORD_LOGIN="false")

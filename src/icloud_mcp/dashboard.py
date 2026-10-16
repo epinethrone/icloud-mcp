@@ -646,7 +646,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
     def signin_page(error: str = "", nxt: str = "/dashboard", status: int = 200) -> Response:
         body, _ = sign_in_body("Sign in", "Review what your agents want to send, see what they did, and manage this server.", nxt, error, None)
         foot = ('<p class="hint">' + ("" if d.passkeys.list() else "After you sign in, you can add a passkey under Security. ")
-                + "Ten wrong passwords in 15 minutes lock sign-in for everyone for a while.</p>")
+                + "Ten wrong passwords in 15 minutes lock password sign-in for everyone for a while.</p>")
         return d.auth_page("Sign in", body, foot, status)
 
     def confirm_page(rec: dict[str, Any], back: str,
@@ -669,7 +669,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if not d.password_login():
             return signin_page("Sign-in with the owner password is turned off. Use your passkey.", nxt, 403)
         if not provider.login_allowed():
-            return signin_page("Too many failed attempts. Try again in 15 minutes.", nxt, 429)
+            return signin_page("Too many wrong passwords. Try again in 15 minutes" + (", or use your passkey." if d.passkeys.list() else "."),
+                               nxt, 429)
         if not hmac.compare_digest(str(form.get("password", "")).encode(), s.owner_password.encode()):
             provider.record_failure()
             log.warning("Failed owner-password attempt on the dashboard")
@@ -711,9 +712,9 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         purpose = str((await json_body(request)).get("purpose", ""))
         try:
             if purpose == "signin":
-                if not provider.login_allowed():
-                    return JSONResponse({"error": "Too many failed attempts. Try again in 15 minutes."}, status_code=429, headers=_HEADERS)
+                # Not behind the password lock: a passkey cannot be guessed, and ten wrong passwords from anyone would lock the owner out
                 return JSONResponse(d.passkeys.authentication_options(), headers=_HEADERS)
+
             if purpose == "register":
                 got = signed_in(request)
                 if got is None or not hmac.compare_digest(request.headers.get("x-csrf", "").encode(), got[1]["csrf"].encode()):
