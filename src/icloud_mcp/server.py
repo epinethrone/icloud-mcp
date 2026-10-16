@@ -2854,6 +2854,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         sources = ([MailApprovals(approval["mail"])] if approval["mail"] is not None else []) + \
                   ([IMessageApprovals(approval["imessage"], approval["imessage_outbox"])] if approval["imessage_outbox"] is not None else [])
         mcp._icloud_dashboard = register_dashboard(mcp, provider, s, _audit, sources)
+        if s.dashboard_settings != "off":
+            from .settings import register_settings
+            register_settings(mcp._icloud_dashboard, mcp, s)
 
 def build_app(s: Settings, mcp: MCPServer):
     """The ASGI app exactly as served in production (used by main() and by the tests)."""

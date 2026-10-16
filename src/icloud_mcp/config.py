@@ -1,6 +1,7 @@
 """Environment-driven configuration."""
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 from dataclasses import dataclass
@@ -21,13 +22,49 @@ DAV_PING_TIMEOUT = (3.0, 5.0)    # (connect, read) of the CalDAV keep-alive PROP
 LOGOUT_TIMEOUT = 2.0             # the courtesy LOGOUT of a healthy IMAP session being closed
 
 
+SETTINGS_FILE = "settings.json"        # in DATA_DIR: settings the owner changed on the dashboard (DASHBOARD_EDITABLE only)
+# What the dashboard may change. Everything about where and how the server listens, signs apps in and reaches its services stays
+# in the environment: a browser session must never be able to open a new OAuth redirect, a port or a bridge.
+DASHBOARD_EDITABLE = frozenset("""
+ICLOUD_EMAIL_ADDRESS ICLOUD_DISPLAY_NAME EMAIL_SIGNATURE
+ENABLE_MAIL ENABLE_CALENDAR ENABLE_CONTACTS TOOLS
+ALLOW_SEND SEND_REQUIRES_APPROVAL SEND_ALLOWLIST MAX_RECIPIENTS SAVE_SENT_COPY ALLOW_PERMANENT_DELETE MAIL_MAX_AGE_DAYS
+MAX_BODY_CHARS MAX_ATTACHMENT_BYTES OUTBOX_TTL_SECONDS OUTBOX_MAX
+DEFAULT_TIMEZONE DEFAULT_CALENDAR ALLOW_CALENDAR_INVITES INVITE_ALLOWLIST MAX_ATTENDEES OWNER_ADDRESSES
+CONTACTS_ALLOW_EMAIL_CHANGES
+ENABLE_REMINDERS ENABLE_NOTES ENABLE_DRIVE ENABLE_MAPS ENABLE_IMESSAGE ENABLE_HEALTH IMESSAGE_HIDDEN_CHATS IMESSAGE_VISIBLE_CHATS
+IMESSAGE_MAX_AGE_DAYS IMESSAGE_HIDE_SHORT_CODES IMESSAGE_NEVER_SEND IMESSAGE_ALLOW_SEND IMESSAGE_SEND_REQUIRES_APPROVAL
+IMESSAGE_SEND_ALLOWLIST SHORTCUTS_ALLOW BRIDGE_JOB_TIMEOUT_SECONDS
+READ_ONLY
+OWNER_PASSWORD_LOGIN DASHBOARD_SESSION_MINUTES AUDIT_LOG AUDIT_KEEP_DAYS
+""".split())
+_dashboard_values: dict[str, str] = {}   # the dashboard's values while Settings.from_env runs; they win over the environment
+
+
+def read_dashboard_settings(data_dir: str) -> dict[str, str]:
+    """DATA_DIR/settings.json, limited to DASHBOARD_EDITABLE. Unreadable or DASHBOARD_SETTINGS=off = none."""
+    import json
+    if os.environ.get("DASHBOARD_SETTINGS", "edit").strip().lower() == "off":
+        return {}
+    try:
+        with open(os.path.join(data_dir, SETTINGS_FILE)) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in data.items() if k in DASHBOARD_EDITABLE and isinstance(v, str)} if isinstance(data, dict) else {}
+
+
+def _env(name: str) -> str | None:
+    return _dashboard_values[name] if name in _dashboard_values else os.environ.get(name)
+
+
 def _str(name: str, default: str = "") -> str:
-    v = os.environ.get(name)
+    v = _env(name)
     return default if v is None or v.strip() == "" else v.strip()
 
 
 def _bool(name: str, default: bool) -> bool:
-    v = os.environ.get(name)
+    v = _env(name)
     if v is None or v.strip() == "":
         return default
     return v.strip().lower() in ("1", "true", "yes", "on")
@@ -71,7 +108,7 @@ def _norm_handle(value: str) -> str:
 
 
 def _int(name: str, default: int) -> int:
-    v = os.environ.get(name)
+    v = _env(name)
     return default if v is None or v.strip() == "" else int(v)
 
 
@@ -193,9 +230,24 @@ class Settings:
     dashboard_session_minutes: int = 30  # DASHBOARD_SESSION_MINUTES: a dashboard session ends after this long without use
     audit_log: bool = True        # AUDIT_LOG: record writes, approvals and sign-ins in DATA_DIR/audit.jsonl
     audit_keep_days: int = 90     # AUDIT_KEEP_DAYS: how long activity entries are kept
+    dashboard_settings: str = "edit"        # DASHBOARD_SETTINGS: edit | view (shown, not changeable) | off (settings.json ignored)
+    settings_active: tuple[str, ...] = ()   # which settings come from DATA_DIR/settings.json (names only)
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls, dashboard_values: dict[str, str] | None = None) -> "Settings":
+        """The environment, with the owner's dashboard settings on top (or `dashboard_values` instead, to test a change)."""
+        global _dashboard_values
+        values = read_dashboard_settings(os.environ.get("DATA_DIR", "").strip() or "./data") if dashboard_values is None else \
+            {k: v for k, v in dashboard_values.items() if k in DASHBOARD_EDITABLE}
+        _dashboard_values = values
+        try:
+            return dataclasses.replace(cls._from_env(), settings_active=tuple(sorted(values)),
+                                       dashboard_settings=(os.environ.get("DASHBOARD_SETTINGS", "edit").strip().lower() or "edit"))
+        finally:
+            _dashboard_values = {}
+
+    @classmethod
+    def _from_env(cls) -> "Settings":
         username = _str("ICLOUD_USERNAME")
         read_only = _bool("READ_ONLY", False)
         overrides = read_overrides(_str("DATA_DIR", "./data"))

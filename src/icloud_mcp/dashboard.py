@@ -240,10 +240,10 @@ class IMessageApprovals(ApprovalSource):
 _CSS = """
 :root{color-scheme:light dark;--bg:#f2f2f7;--card:#fff;--text:#1d1d1f;--muted:#636366;--line:#d1d1d6;--quiet:#e5e5ea;--code:#f2f2f7;
 --accent:#0071e3;--accent-text:#0066cc;--info:#e8f0fe;--info-text:#0b4a8f;--ok-bg:#e3f5e8;--ok:#1a7f37;--warn-bg:#fdf1dc;--warn:#8a5300;
---err-bg:#fde8e8;--err:#c00;--badge:#d70015;--bar:#f9f9fb;--shadow:#0000000d}
+--err-bg:#fde8e8;--err:#c00;--badge:#d70015;--bar:#f9f9fb;--shadow:#0000000d;--knob:#fff;--knob-shadow:#0004}
 @media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--muted:#98989d;--line:#38383a;--quiet:#2c2c2e;--code:#2c2c2e;
 --accent:#0a84ff;--accent-text:#4da3ff;--info:#0a2a4d;--info-text:#9ecbff;--ok-bg:#0f2e1a;--ok:#3fb950;--warn-bg:#33240a;--warn:#ffb340;
---err-bg:#3a1414;--err:#ff6961;--badge:#ff453a;--bar:#111113;--shadow:#0000}}
+--err-bg:#3a1414;--err:#ff6961;--badge:#ff453a;--bar:#111113;--shadow:#0000;--knob:#fff;--knob-shadow:#0008}}
 *{box-sizing:border-box}
 body{font:16px/1.45 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;-webkit-text-size-adjust:100%}
 a{color:var(--accent-text)}
@@ -306,7 +306,22 @@ background:var(--quiet);color:var(--text);text-decoration:none;display:inline-fl
 /* forms */
 .field{display:flex;flex-direction:column;gap:6px}
 .field label{font-size:14px;font-weight:600}
-.field input{width:100%;min-height:46px;padding:0 12px;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text)}
+.field input,.field select,.field textarea{width:100%;min-height:46px;padding:0 12px;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text)}
+.field textarea{padding:10px 12px;min-height:5rem;resize:vertical}
+.field input[disabled],.field select[disabled],.field textarea[disabled]{opacity:.6}
+.field-label{font-size:14px;font-weight:600}
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:48px}
+.switch-row label{display:flex;flex-direction:column;gap:2px;font-size:15px}
+.switch{appearance:none;-webkit-appearance:none;flex-shrink:0;width:51px;height:31px;border-radius:16px;background:var(--line);position:relative;cursor:pointer;margin:0}
+.switch::before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:var(--knob);box-shadow:0 1px 3px var(--knob-shadow);transition:left .15s}
+.switch:checked{background:var(--ok)}
+.switch:checked::before{left:22px}
+.switch[disabled]{opacity:.5;cursor:default}
+.radio-seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--quiet);border-radius:9px;padding:2px;gap:2px}
+.radio-seg label{position:relative;min-height:38px;display:flex;align-items:center;justify-content:center;border-radius:7px;font-size:13px;cursor:pointer;text-align:center;padding:0 4px;white-space:nowrap}
+.radio-seg input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.radio-seg label:has(input:checked){background:var(--card);font-weight:600;box-shadow:0 1px 3px var(--shadow)}
+.radio-seg label:has(input:focus-visible){outline:3px solid var(--accent);outline-offset:1px}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
 .check input{width:20px;height:20px;margin:1px 0 0;flex-shrink:0}
 /* segmented filter */
@@ -600,9 +615,9 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 + "Ten wrong passwords in 15 minutes lock sign-in for everyone for a while.</p>")
         return d.auth_page("Sign in", body, foot, status)
 
-    def confirm_page(rec: dict[str, Any], back: str) -> Response:
-        body, _ = sign_in_body("Confirm it’s you", "This step changes how your server is protected, so it asks you to sign in again.",
-                               back, "", rec)
+    def confirm_page(rec: dict[str, Any], back: str,
+                     lede: str = "This step changes how your server is protected, so it asks you to sign in again.") -> Response:
+        body, _ = sign_in_body("Confirm it’s you", lede, back, "", rec)
         return d.auth_page("Confirm", body, link_button("Cancel", back))
 
     @mcp.custom_route("/dashboard/signin", methods=["GET"])
@@ -1033,11 +1048,14 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         audit.record("owner_password.changed", actor="owner", via=rec.get("via", ""), summary="Changed the owner password")
         return security_page(rec, "Saved. The new password applies after the server restarts.")
 
+    # other parts (settings.py) build on the same guards
+    d.signed_in, d.to_signin, d.checked_form, d.recent, d.confirm = signed_in, to_signin, checked_form, recent, confirm_page
     return d
 
 
 _MESSAGES = {"checked": "Checked.", "paused": "Paused. Tools now answer that the server is paused.", "resumed": "Resumed.",
-             "passkey_added": "Passkey added. You can now sign in with it."}
+             "passkey_added": "Passkey added. You can now sign in with it.",
+             "settings_saved": "Saved. The change applies when the server restarts."}
 
 
 def _flash(request: Request) -> str:
