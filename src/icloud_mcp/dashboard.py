@@ -292,6 +292,7 @@ background:var(--bar);border-bottom:1px solid var(--line)}
 .alert{border-radius:10px;padding:10px 12px;font-size:14px;background:var(--warn-bg);color:var(--warn)}
 .alert ul{margin:6px 0 0;padding-left:18px}
 /* content */
+.message{background:var(--code);padding:10px 12px;border-radius:10px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font-size:15px;line-height:1.5}
 pre{background:var(--code);padding:10px 12px;border-radius:10px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font:14px/1.45 ui-monospace,Menlo,monospace;margin:0}
 dl{display:grid;grid-template-columns:minmax(4.5rem,max-content) minmax(0,1fr);gap:6px 14px;margin:0;font-size:15px}
 dt{color:var(--muted)} dd{margin:0;word-break:break-word}
@@ -859,7 +860,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                     body.append('<div class="alert" role="alert"><b>Check this first</b><ul>'
                                 + "".join(f"<li>{_esc(w)}</li>" for w in v["warnings"]) + "</ul></div>")
                 if v["text"]:
-                    body.append(f'<pre>{_esc(v["text"])}</pre>')
+                    body.append(f'<div class="message">{_esc(v["text"])}</div>')
                 body += [hint(x) for x in v["notes"]]
                 who = f" by {q.requested_by}" if getattr(q, "requested_by", None) else ""
                 body.append(f'<p class="meta">Requested {d.ago(q.created_at)}{_esc(who)} · expires in about {left}</p>')
