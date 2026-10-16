@@ -290,7 +290,7 @@ background:var(--bar);border-bottom:1px solid var(--line)}
 .banner{border-radius:12px;padding:12px 14px;font-size:15px;background:var(--info);color:var(--info-text)}
 .banner.bad{background:var(--err-bg);color:var(--err)}
 .field-error{font-size:13px;color:var(--err);font-weight:600}
-[aria-invalid=true]{border-color:var(--err)}
+.field [aria-invalid=true]{border-color:var(--err)}
 .alert{border-radius:10px;padding:10px 12px;font-size:14px;background:var(--warn-bg);color:var(--warn)}
 .alert ul{margin:6px 0 0;padding-left:18px}
 /* content */
