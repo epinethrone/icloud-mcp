@@ -268,7 +268,7 @@ background:var(--bar);border-bottom:1px solid var(--line)}
 .card{background:var(--card);border-radius:14px;box-shadow:0 1px 4px var(--shadow);overflow:hidden}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 0}
 .card-head h2{font-size:17px;font-weight:600}
-.head-link{font-size:14px;text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center}
+.head-link{font-size:14px;text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center;gap:4px}
 .head-link:hover{text-decoration:underline}
 .card-body{padding:10px 16px 14px;display:flex;flex-direction:column;gap:10px}
 .card-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--quiet)}
@@ -392,6 +392,9 @@ body{font-size:15px}
 main{padding:0 40px 40px}
 .page-head{padding-top:32px}
 }
+.overview-grid{display:grid;gap:12px}
+@media (min-width:1100px){main.wide{max-width:72rem}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-grid>.span2{grid-column:1/-1}
+.overview-grid>.card{display:flex;flex-direction:column}.overview-grid>.card>.card-body{flex:1}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 """
 
@@ -516,7 +519,7 @@ class Dashboard:
         return chip("Paused", "warn") if self.paused() else chip("Running", "ok")
 
     def page(self, title: str, active: str, inner: str, rec: dict[str, Any], status: int = 200, flash: str = "",
-             bad: bool = False, lede: str = "") -> Response:
+             bad: bool = False, lede: str = "", wide: bool = False) -> Response:
         """A signed-in page: top bar or sidebar, the page head, a banner for the last action, then the cards."""
         n = self.waiting()
         items = [("overview", "Overview", "/dashboard"), ("approvals", "Approvals", "/dashboard/approvals"),
@@ -534,7 +537,7 @@ class Dashboard:
         topbar = f'<header class="topbar">{self.brand()}{self.state_chip()}</header>'
         banner = f'<p class="banner{" bad" if bad else ""}" role="status">{_esc(flash)}</p>' if flash else ""
         head = f'<div class="page-head"><h1>{_esc(title)}</h1>' + (f'<p class="lede">{_esc(lede)}</p>' if lede else "") + "</div>"
-        return self._doc(title, f'<div class="wrap">{sidebar}<div style="flex:1;min-width:0">{topbar}<main>{head}'
+        return self._doc(title, f'<div class="wrap">{sidebar}<div style="flex:1;min-width:0">{topbar}<main{' class="wide"' if wide else ''}>{head}'
                                 f'<div class="stack">{banner}{inner}</div></main></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>', status)
 
     def auth_page(self, title: str, body_html: str, foot_html: str = "", status: int = 200) -> Response:
@@ -773,8 +776,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         csrf = d.csrf_input(rec)
         cards = []
         if n:
-            cards.append(card("Waiting for your approval", f'<p>{_esc(", ".join(f"{c} {k.lower()}" for k, c in kinds.items()))}. '
-                              'Nothing has left the server yet.</p>', link_button("Review", "/dashboard/approvals", "primary"), chip(str(n), "info")))
+            cards.append('<div class="span2">' + card("Waiting for your approval", f'<p>{_esc(", ".join(f"{c} {k.lower()}" for k, c in kinds.items()))}. '
+                              'Nothing has left the server yet.</p>', link_button("Review", "/dashboard/approvals", "primary"), chip(str(n), "info")) + "</div>")
         health = d.last_health
         if health is None:
             services = hint("Not checked since the server started.")
@@ -811,7 +814,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         acts = "".join(f'<li><time>{d.fmt_time(e.get("t"))}</time><span>{_entry_text(e)}</span></li>' for e in entries)
         cards.append(card("Recent activity", f'<ol class="log">{acts}</ol>' if acts else hint("Nothing recorded yet."),
                           link=("All activity", "/dashboard/activity")))
-        return d.page("Overview", "overview", "".join(cards), rec, flash=_flash(request))
+        return d.page("Overview", "overview", f'<div class="overview-grid">{"".join(cards)}</div>', rec, flash=_flash(request), wide=True)
 
     @mcp.custom_route("/dashboard/check", methods=["POST"])
     async def check(request: Request) -> Response:
