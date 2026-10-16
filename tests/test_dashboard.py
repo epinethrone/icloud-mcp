@@ -2,7 +2,6 @@
 import contextlib
 import json
 import re
-import time
 
 import httpx
 import pytest

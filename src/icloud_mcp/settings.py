@@ -423,7 +423,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         foot = ('<p class="foot-hint">Saved changes apply after a restart.</p>' + D.button("Save", "primary")) if editable \
             else '<p class="foot-hint">These settings can only be viewed here.</p>' 
         names = list(sections)
-        inner = "".join(f'<section class="card">' + (f'<div class="card-head"><h2>{D._esc(name)}</h2></div>' if name else "")
+        inner = "".join('<section class="card">' + (f'<div class="card-head"><h2>{D._esc(name)}</h2></div>' if name else "")
                         + f'<div class="card-body">{"".join(items)}</div>'
                         + (f'<div class="card-foot">{foot}</div>' if i == len(names) - 1 else "") + "</section>"
                         for i, (name, items) in enumerate(sections.items()))

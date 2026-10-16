@@ -2,7 +2,6 @@
 and a change that weakens protection asks for the owner again."""
 import json
 
-import pytest
 
 from icloud_mcp.config import DASHBOARD_EDITABLE, Settings
 
