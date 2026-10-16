@@ -28,7 +28,7 @@ async def test_a_change_is_saved_converted_and_logged(web):  # noqa: F811
     async with client(app) as c:
         token = await signed_in(c)
         page = (await c.get("/dashboard/settings/mail")).text
-        assert 'name="MAX_ATTACHMENT_BYTES"' in page and 'value="5"' in page and "Default" in page
+        assert 'name="MAX_ATTACHMENT_BYTES"' in page and 'value="5"' in page and "Default" not in page   # only non-default origins are named
         r = await c.post("/dashboard/settings/mail", headers=SAME, data={
             "csrf": token, "ALLOW_SEND": "true", "SEND_REQUIRES_APPROVAL": "true", "SAVE_SENT_COPY": "true",
             "MAX_RECIPIENTS": "25", "MAIL_MAX_AGE_DAYS": "0", "MAX_BODY_CHARS": "30000", "MAX_ATTACHMENT_BYTES": "20",

@@ -295,10 +295,6 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
     def known_tools() -> set[str]:
         return {t.name for t in mcp._tool_manager.list_tools()}
 
-    def source_chip(src: str, key: str) -> str:
-        label = {"dashboard": "Changed here", "environment": "From the environment", "default": "Default"}[src]
-        return f'<span class="row-sub">{D._esc(label)}</span>'
-
     def group_summary(g: Group, stored: dict[str, str]) -> str:
         parts = []
         for sp in g.specs[:3]:
@@ -323,8 +319,8 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
     def control(sp: Spec, v: str, src: str) -> str:
         dis = "" if editable else " disabled"
         sub = D._esc(sp.help)
-        tag = {"dashboard": "Changed here", "environment": "From the environment", "default": "Default"}[src]
-        meta = f'<p class="hint">{sub + " · " if sub else ""}{tag}</p>'
+        tag = {"dashboard": "Changed here", "environment": "Set in the environment", "default": ""}[src]   # only when not the default
+        meta = f'<p class="hint">{sub}{" · " if sub and tag else ""}{tag}</p>' if sub or tag else ""
         fid = f"f-{sp.key.lower()}"
         if sp.kind == "bool":
             return (f'<div class="switch-row"><label for="{fid}"><span>{D._esc(sp.label)}</span>{meta}</label>'
@@ -364,9 +360,9 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
                        for val, label in (("drafts", "Drafts only"), ("approval", "After approval"), ("direct", "Directly")))
         explain = {"drafts": "Agents save drafts; you send them in Mail.", "approval": "Agents queue mail; you send it on Approvals.",
                    "direct": "Mail leaves at once. Your client's own prompt is the only check."}[mode]
-        tag = {"dashboard": "Changed here", "environment": "From the environment", "default": "Default"}[src]
+        tag = {"dashboard": "Changed here", "environment": "Set in the environment", "default": ""}[src]
         return (f'<div class="field"><span class="field-label" id="sendmode">When agents send mail</span>'
-                f'<div class="radio-seg" role="radiogroup" aria-labelledby="sendmode">{opts}</div><p class="hint">{explain} · {tag}</p></div>')
+                f'<div class="radio-seg" role="radiogroup" aria-labelledby="sendmode">{opts}</div><p class="hint">{explain}{" · " + tag if tag else ""}</p></div>')
 
     def index_page(rec: dict[str, Any], flash: str = "", bad: bool = False) -> Response:
         stored = store.read()
