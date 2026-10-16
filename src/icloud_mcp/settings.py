@@ -321,7 +321,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
     def control(sp: Spec, v: str, src: str, typed: str | None = None, error: str = "") -> str:
         dis = "" if editable else " disabled"
         sub = D._esc(sp.help)
-        tag = {"dashboard": "Set here", "environment": "Set in the environment", "default": ""}[src]   # only when not the default
+        tag = "Set in the environment" if src == "environment" else ""   # values set here are listed in the card below
         meta = f'<p class="hint">{sub}{" · " if sub and tag else ""}{tag}</p>' if sub or tag else ""
         fid = f"f-{sp.key.lower()}"
         if error:
@@ -368,7 +368,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
                        for val, label in (("drafts", "Drafts only"), ("approval", "After approval"), ("direct", "Directly")))
         explain = {"drafts": "Agents save drafts; you send them in Mail.", "approval": "Agents queue mail; you send it on Approvals.",
                    "direct": "Mail leaves at once. Your client's own prompt is the only check."}[mode]
-        tag = {"dashboard": "Set here", "environment": "Set in the environment", "default": ""}[src]
+        tag = "Set in the environment" if src == "environment" else ""
         return (f'<div class="field"><span class="field-label" id="sendmode">When agents send mail</span>'
                 f'<div class="radio-seg" role="radiogroup" aria-labelledby="sendmode">{opts}</div><p class="hint">{explain}{" · " + tag if tag else ""}</p></div>')
 

@@ -142,7 +142,8 @@ async def test_reset_goes_back_to_the_environment(web):  # noqa: F811
     async with client(app) as c:
         token = await signed_in(c)
         page = (await c.get("/dashboard/settings/calendar")).text
-        assert "Set here" in page and "Asia/Tokyo" in page
+        assert "Asia/Tokyo" in page and page.count("Set here") == 1                 # the card with Reset, no note at the field
+        assert "· Set here" not in page
         r = await c.post("/dashboard/settings/calendar/reset", headers=SAME, data={"csrf": token, "key": "DEFAULT_TIMEZONE"})
         assert "follows the server again (Europe/Berlin)" in r.text
     assert json.loads(path.read_text()) == {}
