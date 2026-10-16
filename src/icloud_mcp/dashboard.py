@@ -393,6 +393,7 @@ main{padding:0 40px 40px}
 .page-head{padding-top:32px}
 }
 .overview-grid{display:grid;gap:12px}
+@media (min-width:860px){.phone-only{display:none}}   /* the sidebar carries Sign out from here on */
 @media (min-width:1100px){main.wide{max-width:72rem}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-grid>.span2{grid-column:1/-1}
 .overview-grid>.card{display:flex;flex-direction:column}.overview-grid>.card>.card-body{flex:1}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
@@ -999,9 +1000,9 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                           + field("np", "New owner password", 'type="password" name="password" autocomplete="new-password" minlength="12" required',
                                   "At least 12 characters. It also approves new apps on the connect page and takes effect after the server restarts."),
                           button("Change password"), form="/dashboard/security/password", hidden_html=d.csrf_input(rec)))
-        cards.append(card("This browser", '<div class="list">' + row("Signed in", value(d.ago(rec.get("created"))), rec.get("via", "")) + "</div>"
+        cards.append('<div class="phone-only">' + card("This browser", '<div class="list">' + row("Signed in", value(d.ago(rec.get("created"))), rec.get("via", "")) + "</div>"
                           + hint("Removing a passkey, changing the password and signing out apps ask you to confirm when your sign-in is older than 5 minutes."),
-                          button("Sign out", "danger"), form="/dashboard/logout", hidden_html=d.csrf_input(rec)))
+                          button("Sign out", "danger"), form="/dashboard/logout", hidden_html=d.csrf_input(rec)) + "</div>")
         return d.page("Security", "security", "".join(cards), rec, status, flash, bad, "Who can sign in here, and which apps are connected.")
 
     @mcp.custom_route("/dashboard/security", methods=["GET"])
