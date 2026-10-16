@@ -77,6 +77,26 @@ async def test_values_the_server_could_not_start_with_are_refused(web):  # noqa:
     assert not (mcp._icloud_dashboard.sessions.path.parent / "settings.json").exists()
 
 
+async def test_a_refused_save_keeps_what_was_typed_and_marks_the_field(web):  # noqa: F811
+    app, mcp, _, _ = web()
+    async with client(app) as c:
+        token = await signed_in(c)
+        r = await c.post("/dashboard/settings/calendar", headers=SAME, data={
+            "csrf": token, "DEFAULT_TIMEZONE": "Mars/Olympus", "DEFAULT_CALENDAR": "Club", "ALLOW_CALENDAR_INVITES": "false",
+            "INVITE_ALLOWLIST": "jana@example.org", "MAX_ATTENDEES": "4", "OWNER_ADDRESSES": ""})
+        assert r.status_code == 400
+        assert 'value="Mars/Olympus" autocomplete="off" aria-invalid="true" aria-describedby="f-default_timezone-err"' in r.text
+        assert 'value="Club"' in r.text and 'value="jana@example.org"' in r.text and 'value="4"' in r.text
+        assert 'name="ALLOW_CALENDAR_INVITES" value="false" checked' in r.text
+        r = await c.post("/dashboard/settings/mail", headers=SAME, data={
+            "csrf": token, "SEND_MODE": "drafts", "SAVE_SENT_COPY": "true", "MAX_RECIPIENTS": "abc", "MAIL_MAX_AGE_DAYS": "0",
+            "MAX_BODY_CHARS": "30000", "MAX_ATTACHMENT_BYTES": "9999", "OUTBOX_TTL_SECONDS": "24", "OUTBOX_MAX": "20", "SEND_ALLOWLIST": ""})
+        assert r.status_code == 400 and "(1 more marked below)" in r.text
+        assert 'value="abc"' in r.text and 'value="9999"' in r.text and r.text.count('aria-invalid="true"') == 2
+        assert 'name="SEND_MODE" value="drafts" checked' in r.text
+    assert not (mcp._icloud_dashboard.sessions.path.parent / "settings.json").exists()
+
+
 async def test_reset_goes_back_to_the_environment(web):  # noqa: F811
     app, mcp, _, _ = web()
     path = mcp._icloud_dashboard.sessions.path.parent / "settings.json"

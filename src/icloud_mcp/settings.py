@@ -260,25 +260,26 @@ def parse(sp: Spec, form: Any) -> str:
     return v[:300]
 
 
-def validate(new_values: dict[str, str], known_tools: set[str]) -> str | None:
-    """Would the server start with these values? Returns the reason it would not, in the owner's words."""
+def validate(new_values: dict[str, str], known_tools: set[str]) -> tuple[str, str] | None:
+    """Would the server start with these values? Returns (setting, reason) when it would not, the reason in the owner's words;
+    the setting is "" when the server cannot tell which one is wrong."""
     if tz := new_values.get("DEFAULT_TIMEZONE"):
         try:
             ZoneInfo(tz)
         except Exception:  # noqa: BLE001
-            return f"“{tz}” is not a time zone name. Use one such as Europe/Amsterdam or America/New_York."
+            return "DEFAULT_TIMEZONE", f"“{tz}” is not a time zone name. Use one such as Europe/Amsterdam or America/New_York."
     if tools := new_values.get("TOOLS"):
         from .server import AREA_PRESETS, RENAMED
         unknown = [t for t in tools.split(",") if t and t != "essential" and t not in AREA_PRESETS and t not in RENAMED and t not in known_tools]
         if unknown:
-            return "Unknown tool names: " + ", ".join(unknown) + ". The server would not start with them."
+            return "TOOLS", "Unknown tool names: " + ", ".join(unknown) + ". The server would not start with them."
     try:
         s = Settings.from_env(dashboard_values=new_values)
         s.validate_for_server()
     except SystemExit as e:
-        return str(e)
+        return "", str(e)
     except ValueError as e:
-        return f"A value does not parse: {e}"
+        return "", f"A value does not parse: {e}"
     return None
 
 
@@ -316,12 +317,17 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             return f"{v} {sp.unit_label}"
         return v or "(empty)"
 
-    def control(sp: Spec, v: str, src: str) -> str:
+    def control(sp: Spec, v: str, src: str, typed: str | None = None, error: str = "") -> str:
         dis = "" if editable else " disabled"
         sub = D._esc(sp.help)
         tag = {"dashboard": "Changed here", "environment": "Set in the environment", "default": ""}[src]   # only when not the default
         meta = f'<p class="hint">{sub}{" · " if sub and tag else ""}{tag}</p>' if sub or tag else ""
         fid = f"f-{sp.key.lower()}"
+        if error:
+            meta = f'<p class="field-error" id="{fid}-err">{D._esc(error)}</p>' + meta
+            dis += f' aria-invalid="true" aria-describedby="{fid}-err"'
+        if typed is not None:
+            v = typed
         if sp.kind == "bool":
             return (f'<div class="switch-row"><label for="{fid}"><span>{D._esc(sp.label)}</span>{meta}</label>'
                     f'<input id="{fid}" class="switch" type="checkbox" role="switch" name="{sp.key}" value="true"{" checked" if _on(v) else ""}{dis}></div>')
@@ -338,7 +344,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             inp = f'<textarea id="{fid}" name="{sp.key}" rows="3"{dis}>{D._esc(v.replace(chr(92) + "n", chr(10)))}</textarea>'
         elif sp.kind == "int":
             shown = v
-            if sp.unit != 1:
+            if sp.unit != 1 and typed is None:
                 try:
                     shown = f"{int(v) / sp.unit:g}"
                 except ValueError:
@@ -351,9 +357,10 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             inp = f'<input id="{fid}" name="{sp.key}" type="text" value="{D._esc(v)}" autocomplete="off"{dis}>'
         return f'<div class="field"><label for="{fid}">{D._esc(sp.label)}</label>{inp}{meta}</div>'
 
-    def send_mode(stored: dict[str, str]) -> str:
-        allow, _ = current("ALLOW_SEND", stored)
+    def send_mode(stored: dict[str, str], entered: dict[str, str]) -> str:
+        allow = entered.get("ALLOW_SEND") or current("ALLOW_SEND", stored)[0]
         appr, src = current("SEND_REQUIRES_APPROVAL", stored)
+        appr = entered.get("SEND_REQUIRES_APPROVAL") or appr
         mode = "drafts" if not _on(allow) else ("approval" if _on(appr) else "direct")
         dis = "" if editable else " disabled"
         opts = "".join(f'<label><input type="radio" name="SEND_MODE" value="{val}"{" checked" if val == mode else ""}{dis}><span>{label}</span></label>'
@@ -392,8 +399,13 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
                             "Every change is recorded in Activity."))
         return d.page("Settings", "settings", "".join(cards), rec, flash=flash, bad=bad, lede="Everything this server does, in one place.")
 
-    def group_page(rec: dict[str, Any], g: Group, flash: str = "", bad: bool = False, status: int = 200) -> Response:
+    def group_page(rec: dict[str, Any], g: Group, flash: str = "", bad: bool = False, status: int = 200,
+                   entered: dict[str, str] | None = None, typed: dict[str, str] | None = None,
+                   errors: dict[str, str] | None = None) -> Response:
+        """After a refused save, entered holds the values that parsed, typed the raw text of those that did not, and errors
+        the message per setting; the form shows them instead of the saved values, so nothing the owner typed is lost."""
         stored = store.read()
+        entered, typed, errors = entered or {}, typed or {}, errors or {}
         if g.needs_bridge and not s.bridge_token:
             body = D.hint("These areas work through a small helper on your Mac. Set BRIDGE_TOKEN and follow the Mac helper guide first; "
                           "then they can be switched on here.")
@@ -403,9 +415,10 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         for sp in g.specs:
             if sp.hidden:
                 continue
-            sections.setdefault(sp.section, []).append(control(sp, *current(sp.key, stored)))
+            v, src = current(sp.key, stored)
+            sections.setdefault(sp.section, []).append(control(sp, entered.get(sp.key, v), src, typed.get(sp.key), errors.get(sp.key, "")))
         if g.slug == "mail":
-            sections.setdefault("Sending", []).insert(0, send_mode(stored))
+            sections.setdefault("Sending", []).insert(0, send_mode(stored, entered))
         foot = ('<p class="foot-hint">Saved changes apply after a restart.</p>' + D.button("Save", "primary")) if editable \
             else '<p class="foot-hint">These settings can only be viewed here.</p>' 
         names = list(sections)
@@ -487,18 +500,25 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             form = {**dict(form), "ALLOW_SEND": "true" if mode != "drafts" else "",
                     "SEND_REQUIRES_APPROVAL": "true" if mode != "direct" else ""}
             form = {k: v for k, v in form.items() if v != ""}
-        try:
-            for sp in g.specs:
-                old, _src = current(sp.key, stored)
+        entered, typed, errors = {}, {}, {}
+        for sp in g.specs:
+            old, _src = current(sp.key, stored)
+            try:
                 val = parse(sp, form)
-                if val == old:
-                    continue
-                new[sp.key] = val
-                changes.append((sp, old, val))
-                if sp.loosens and sp.loosens(old, val):
-                    looser.append(sp)
-        except ValueError as e:
-            return group_page(rec, g, str(e), True, 400)
+            except ValueError as e:
+                typed[sp.key], errors[sp.key] = str(form.get(sp.key) or ""), str(e)
+                continue
+            entered[sp.key] = val
+            if val == old:
+                continue
+            new[sp.key] = val
+            changes.append((sp, old, val))
+            if sp.loosens and sp.loosens(old, val):
+                looser.append(sp)
+        if errors:
+            first = next(iter(errors.values()))
+            more = f" ({len(errors) - 1} more marked below)" if len(errors) > 1 else ""
+            return group_page(rec, g, f"Not saved: {first}{more}", True, 400, entered, typed, errors)
         if not changes:
             return group_page(rec, g, "Nothing changed.")
         if looser and not d.recent(rec):
@@ -506,7 +526,8 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
                              "This change weakens protection (" + ", ".join(sp.label for sp in looser) + "), so it asks you to sign in again. "
                              "Then save once more.")
         if problem := await asyncio.to_thread(validate, new, known_tools()):
-            return group_page(rec, g, f"Not saved: {problem}", True, 400)
+            key, why = problem
+            return group_page(rec, g, f"Not saved: {why}", True, 400, entered, errors={key: why} if key else None)
         store.write(new)
         state["restart_needed"] = True
         d.audit.record("settings.changed", actor="owner", via=rec.get("via", ""), ok=True,
@@ -532,7 +553,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         if sp.loosens and sp.loosens(stored[key], back) and not d.recent(rec):
             return d.confirm(rec, f"/dashboard/settings/{g.slug}", "Going back to the server's value weakens protection, so it asks you to sign in again.")
         if problem := await asyncio.to_thread(validate, new, known_tools()):
-            return group_page(rec, g, f"Not reset: {problem}", True, 400)
+            return group_page(rec, g, f"Not reset: {problem[1]}", True, 400)
         store.write(new)
         state["restart_needed"] = True
         d.audit.record("settings.changed", actor="owner", via=rec.get("via", ""),
