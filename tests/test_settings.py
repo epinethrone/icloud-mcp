@@ -198,3 +198,17 @@ async def test_a_reset_that_weakens_protection_is_applied_after_confirming(web):
         r = await c.get("/dashboard/settings/mail/confirmed")
         assert "now follows the server again" in r.text
     assert json.loads(path.read_text()) == {}
+
+
+async def test_restart_now_restarts_the_server(web):  # noqa: F811
+    import threading
+    app, mcp, _, _ = web()
+    d = mcp._icloud_dashboard
+    done = threading.Event()
+    d.exit_fn = done.set
+    async with client(app) as c:
+        token = await signed_in(c)
+        r = await c.post("/dashboard/settings/restart", headers=SAME, data={"csrf": token})
+        assert r.status_code == 200 and "Restarting" in r.text and "cannot be changed here" not in r.text
+    assert done.wait(3)
+    assert d.audit.entries()[0]["action"] == "server.restart"

@@ -559,6 +559,20 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         g = next((x for x in GROUPS if x.slug == request.path_params["slug"]), None)
         return g if g is not None and editable else None
 
+    # Registered before /dashboard/settings/{slug}: routes match in order, and "restart" would be taken for a group name.
+    @mcp.custom_route("/dashboard/settings/restart", methods=["POST"])
+    async def restart(request: Request) -> Response:
+        got = await d.checked_form(request)
+        if isinstance(got, Response):
+            return got
+        rec = got[1]
+        d.audit.record("server.restart", actor="owner", via=rec.get("via", ""), summary="Restarted the server to apply settings")
+        log.warning("Owner asked for a restart from the dashboard")
+        threading.Timer(0.7, d.exit_fn).start()           # after the page has gone out; Docker or launchd starts it again
+        return d.page("Restarting", "settings", D.card("Restarting", D.hint("The server starts again in about half a minute. "
+                                                                             "Reload this page then."), D.link_button("Reload", "/dashboard/settings")),
+                      rec, lede="")
+
     @mcp.custom_route("/dashboard/settings/{slug}", methods=["POST"])
     async def settings_save(request: Request) -> Response:
         got = await d.checked_form(request)
@@ -624,16 +638,3 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         state["restart_needed"] = True
         d.audit.record("settings.changed", actor="owner", via=rec.get("via", ""), summary="Replaced the iCloud app-specific password")
         return RedirectResponse("/dashboard/settings?m=settings_saved", status_code=303, headers=D._HEADERS)
-
-    @mcp.custom_route("/dashboard/settings/restart", methods=["POST"])
-    async def restart(request: Request) -> Response:
-        got = await d.checked_form(request)
-        if isinstance(got, Response):
-            return got
-        rec = got[1]
-        d.audit.record("server.restart", actor="owner", via=rec.get("via", ""), summary="Restarted the server to apply settings")
-        log.warning("Owner asked for a restart from the dashboard")
-        threading.Timer(0.7, d.exit_fn).start()           # after the page has gone out; Docker or launchd starts it again
-        return d.page("Restarting", "settings", D.card("Restarting", D.hint("The server starts again in about half a minute. "
-                                                                             "Reload this page then."), D.link_button("Reload", "/dashboard/settings")),
-                      rec, lede="")
