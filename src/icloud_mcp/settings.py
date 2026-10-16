@@ -404,7 +404,8 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             sections.setdefault(sp.section, []).append(control(sp, *current(sp.key, stored)))
         if g.slug == "mail":
             sections.setdefault("Sending", []).insert(0, send_mode(stored))
-        foot = (D.link_button("Cancel", "/dashboard/settings") + D.button("Save", "primary")) if editable else D.link_button("Back", "/dashboard/settings")
+        foot = ('<p class="foot-hint">Saved changes apply after a restart.</p>' + D.button("Save", "primary")) if editable \
+            else '<p class="foot-hint">These settings can only be viewed here.</p>' 
         names = list(sections)
         inner = "".join(f'<section class="card">' + (f'<div class="card-head"><h2>{D._esc(name)}</h2></div>' if name else "")
                         + f'<div class="card-body">{"".join(items)}</div>'

@@ -269,7 +269,8 @@ background:var(--bar);border-bottom:1px solid var(--line)}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 0}
 .card-head h2{font-size:17px;font-weight:600}
 .card-body{padding:10px 16px 14px;display:flex;flex-direction:column;gap:10px}
-.card-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--quiet)}
+.card-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--quiet)}
+.foot-hint{flex:1 1 12rem;margin:0;font-size:13px;color:var(--muted)}
 .card-foot .btn{flex:1 1 8rem}
 .card-foot form{display:contents}
 .list{display:flex;flex-direction:column}
@@ -353,7 +354,27 @@ border-top:1px solid var(--line);padding:4px 4px calc(6px + env(safe-area-inset-
 .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
 .or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
 .full{width:100%}
-@media (min-width:640px){.card-foot .btn{flex:0 0 auto;min-width:9rem}.auth .card-foot .btn{flex:1 1 auto}}
+@media (min-width:640px){.card-foot .btn{flex:0 0 auto}.auth .card-foot .btn{flex:1 1 auto}}
+/* Mouse and trackpad: desktop sizes (buttons as wide as their label, about 32 px high). Touch keeps 44 px targets. */
+@media (pointer:fine) and (min-width:640px){
+body{font-size:15px}
+.btn{min-height:32px;padding:0 14px;font-size:14px;border-radius:8px}
+.btn svg{width:16px;height:16px}
+.btn.text{min-height:32px;min-width:0;padding:0 2px}
+.card-foot{padding:10px 16px;background:var(--bar)}
+.field input,.field select{min-height:34px;font-size:14px;border-radius:8px;padding:0 10px}
+.field textarea{font-size:14px;border-radius:8px}
+.field label,.field-label{font-size:13px}
+.row{min-height:40px}
+.switch{width:38px;height:22px;border-radius:11px}
+.switch::before{top:2px;left:2px;width:18px;height:18px}
+.switch:checked::before{left:18px}
+.switch-row{min-height:40px}
+.radio-seg label{min-height:28px}
+.seg a{min-height:28px}
+.auth .btn{min-height:36px}
+}
+@media (pointer:fine) and (min-width:860px){.field,.switch-row,.radio-seg{max-width:36rem}}
 @media (min-width:860px){
 .topbar,.tabs{display:none}
 .side{display:flex;flex-direction:column;gap:2px;width:260px;flex-shrink:0;padding:20px 12px;border-right:1px solid var(--line);background:var(--bar);position:sticky;top:0;height:100vh}
