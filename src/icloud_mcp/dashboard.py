@@ -348,7 +348,7 @@ border-top:1px solid var(--line);padding:4px 4px calc(6px + env(safe-area-inset-
 /* sidebar (wide screens) */
 .side{display:none}
 /* sign-in */
-.auth{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.auth{min-height:100vh;max-width:none;display:flex;align-items:center;justify-content:center;padding:24px 16px}
 .auth .card{width:100%;max-width:25rem}
 .auth .card-head{padding:18px 18px 0}
 .auth .card-body{padding:14px 18px 18px;gap:14px}

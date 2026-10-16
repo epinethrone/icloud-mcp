@@ -28,3 +28,10 @@ def test_dashboard_follows_the_system_theme():
     rules = css[css.index("}}", css.index("prefers-color-scheme")) + 2:]           # everything after the dark block
     colours = re.findall(r"#[0-9a-fA-F]{3,6}\b", rules.replace("color:#fff", ""))
     assert not colours, colours
+
+
+def test_the_sign_in_card_is_centred_on_wide_screens():
+    css = dashboard._CSS
+    auth_rule = re.search(r"\.auth\{([^}]*)\}", css).group(1)
+    assert "max-width:52rem" in re.search(r"(?:^|\n)main\{([^}]*)\}", css).group(1)   # the page column is capped ...
+    assert "max-width:none" in auth_rule and "justify-content:center" in auth_rule   # ... the sign-in screen is not
