@@ -329,6 +329,12 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         if sp.kind == "bool":
             return (f'<div class="switch-row"><label for="{fid}"><span>{D._esc(sp.label)}</span>{meta}</label>'
                     f'<input id="{fid}" class="switch" type="checkbox" role="switch" name="{sp.key}" value="true"{" checked" if _on(v) else ""}{dis}></div>')
+        if sp.kind == "choice" and len(sp.choices) <= 4:
+            # Up to four short, equal options are shown side by side (a segmented control), so every choice is visible at once
+            opts = "".join(f'<label><input type="radio" name="{sp.key}" value="{D._esc(c)}"{" checked" if c == v.lower() else ""}{dis}>'
+                           f'<span>{D._esc(lbl)}</span></label>' for c, lbl in sp.choices)
+            return (f'<div class="field"><span class="field-label" id="{fid}">{D._esc(sp.label)}</span>'
+                    f'<div class="radio-seg" role="radiogroup" aria-labelledby="{fid}">{opts}</div>{meta}</div>')
         if sp.kind == "choice":
             opts = "".join(f'<option value="{D._esc(c)}"{" selected" if c == v.lower() else ""}>{D._esc(lbl)}</option>' for c, lbl in sp.choices)
             inp = f'<select id="{fid}" name="{sp.key}"{dis}>{opts}</select>'
