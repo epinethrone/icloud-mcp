@@ -251,3 +251,22 @@ async def test_dashboard_can_be_turned_off(web):
     async with client(app) as c:
         assert (await c.get("/dashboard")).status_code == 404
         assert (await c.get("/outbox")).status_code == 200          # the password page stays
+
+
+async def test_a_failed_release_points_the_owner_to_the_overview(web, monkeypatch):
+    from icloud_mcp.dashboard import MailApprovals
+
+    def fail(self, q):
+        raise RuntimeError("SMTP authentication failed. Check ICLOUD_USERNAME and the app-specific password. "
+                           "Run icloud_check_health to see which service is failing.")
+    monkeypatch.setattr(MailApprovals, "release", fail)
+    app, mcp, _, sent = web()
+    queue(mcp)
+    src = mcp._icloud_dashboard.sources["mail"]
+    async with client(app) as c:
+        token = await signed_in(c)
+        q = src.pending()[0]
+        r = await c.post("/dashboard/approvals/act", headers=SAME,
+                         data={"csrf": token, "kind": "mail", "id": q.id, "sha": q.sha256, "action": "approve"})
+        assert "Check now on the Overview shows which service is failing." in r.text and "icloud_check_health" not in r.text
+        assert len(src.pending()) == 1 and sent == []                               # still waiting, can be retried
