@@ -268,6 +268,8 @@ background:var(--bar);border-bottom:1px solid var(--line)}
 .card{background:var(--card);border-radius:14px;box-shadow:0 1px 4px var(--shadow);overflow:hidden}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 0}
 .card-head h2{font-size:17px;font-weight:600}
+.head-link{font-size:14px;text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center}
+.head-link:hover{text-decoration:underline}
 .card-body{padding:10px 16px 14px;display:flex;flex-direction:column;gap:10px}
 .card-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--quiet)}
 .foot-hint{flex:1 1 12rem;margin:0;font-size:13px;color:var(--muted)}
@@ -408,9 +410,12 @@ def _esc(v: Any) -> str:
 
 
 # -- components (each returns HTML; arguments named *_html are already escaped) ----------------------------------------
-def card(title: str = "", body_html: str = "", foot_html: str = "", chip_html: str = "", form: str = "", hidden_html: str = "") -> str:
-    """One card. form='/dashboard/x' wraps the whole card in a POST form, so its fields and its foot buttons belong together."""
-    head = f'<div class="card-head"><h2>{_esc(title)}</h2>{chip_html}</div>' if title else ""
+def card(title: str = "", body_html: str = "", foot_html: str = "", chip_html: str = "", form: str = "", hidden_html: str = "",
+         link: tuple[str, str] | None = None) -> str:
+    """One card. form='/dashboard/x' wraps the whole card in a POST form, so its fields and its foot buttons belong together.
+    Buttons act and sit in the foot; link=(label, href) navigates and sits at the right of the head."""
+    aside = chip_html + (f'<a class="head-link" href="{_esc(link[1])}">{_esc(link[0])} <span aria-hidden="true">›</span></a>' if link else "")
+    head = f'<div class="card-head"><h2>{_esc(title)}</h2>{aside}</div>' if title else ""
     inner = (head + (f'<div class="card-body">{body_html}</div>' if body_html else "")
              + (f'<div class="card-foot">{foot_html}</div>' if foot_html else ""))
     if form:
@@ -800,11 +805,11 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 + row("Emptying Trash", value("Allowed" if s.allow_permanent_delete else "Off"))
                 + row("Time zone", value(s.default_timezone)) + "</div>")
         has_settings = any(k == "settings" for k, _, _ in d.extra_nav)
-        cards.append(card("Protection", prot, link_button("All settings", "/dashboard/settings") if has_settings else ""))
+        cards.append(card("Protection", prot, link=("All settings", "/dashboard/settings") if has_settings else None))
         entries = audit.entries(limit=5)
         acts = "".join(f'<li><time>{d.fmt_time(e.get("t"))}</time><span>{_entry_text(e)}</span></li>' for e in entries)
         cards.append(card("Recent activity", f'<ol class="log">{acts}</ol>' if acts else hint("Nothing recorded yet."),
-                          link_button("Open the activity log", "/dashboard/activity")))
+                          link=("All activity", "/dashboard/activity")))
         return d.page("Overview", "overview", "".join(cards), rec, flash=_flash(request))
 
     @mcp.custom_route("/dashboard/check", methods=["POST"])
