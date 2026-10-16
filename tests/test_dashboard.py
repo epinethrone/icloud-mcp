@@ -124,7 +124,9 @@ async def test_approve_sends_once_and_is_logged(web):
         sha = re.search(r'name="sha" value="([0-9a-f]+)"', page)[1]
         form = {"csrf": token, "kind": "mail", "id": qid, "sha": sha, "action": "approve"}
         r = await c.post("/dashboard/approvals/act", data=form, headers=SAME)
-        assert r.status_code == 200 and "Sent to bob@example.org" in r.text and len(sent) == 1
+        assert r.status_code == 303 and r.headers["location"] == "/dashboard/approvals" and len(sent) == 1   # reloading never re-posts
+        assert "Sent to bob@example.org" in (await c.get("/dashboard/approvals")).text
+        assert "Sent to bob@example.org" not in (await c.get("/dashboard/approvals")).text                     # shown once
         r = await c.post("/dashboard/approvals/act", data=form, headers=SAME)              # a replay finds nothing waiting
         assert r.status_code == 409 and len(sent) == 1
         page = (await c.get("/dashboard/activity")).text
@@ -140,7 +142,7 @@ async def test_a_changed_message_is_not_sent_and_discard_sends_nothing(web):
         assert (await c.post("/dashboard/approvals/act", data=form, headers=SAME)).status_code == 409
         sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
         r = await c.post("/dashboard/approvals/act", data={**form, "sha": sha, "action": "discard"}, headers=SAME)
-        assert "Discarded" in r.text and sent == [] and mcp._icloud_dashboard.sources["mail"].pending() == []
+        assert r.status_code == 303 and "Discarded" in (await c.get("/dashboard/approvals")).text and sent == [] and mcp._icloud_dashboard.sources["mail"].pending() == []
 
 
 async def test_sessions_survive_a_restart_and_sign_out_ends_them(web):

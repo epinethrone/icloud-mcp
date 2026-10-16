@@ -882,12 +882,20 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         lede = f"{total} waiting. Nothing has left the server yet; what you see is exactly what will be sent." if total else ""
         return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede)
 
+    flashes: dict[str, str] = {}      # one-shot result of an approval, keyed by session, so the result page is a plain GET
+
+    def after_action(rec: dict[str, Any], note: str) -> Response:
+        while len(flashes) > 200:
+            flashes.pop(next(iter(flashes)))
+        flashes[rec["csrf"]] = note
+        return RedirectResponse("/dashboard/approvals", status_code=303, headers=_HEADERS)
+
     @mcp.custom_route("/dashboard/approvals", methods=["GET"])
     async def approvals_get(request: Request) -> Response:
         got = signed_in(request)
         if got is None:
             return to_signin(request)
-        return await asyncio.to_thread(approvals_page, got[1])
+        return await asyncio.to_thread(approvals_page, got[1], flashes.pop(got[1]["csrf"], ""))
 
     @mcp.custom_route("/dashboard/approvals/act", methods=["POST"])
     async def approvals_act(request: Request) -> Response:
@@ -905,7 +913,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if action == "discard":
             await asyncio.to_thread(src.discard, q)
             audit.record("approval.discarded", **who, summary=f"Discarded {v['badge'].lower()} “{v['title']}”", kind=src.kind)
-            return await asyncio.to_thread(approvals_page, rec, "Discarded. Nothing was sent.")
+            return after_action(rec, "Discarded. Nothing was sent.")
         if v["needs_override"] and str(form.get("override", "")) != "1":
             return await asyncio.to_thread(approvals_page, rec, "Not sent: tick the box under the warning if you still want it sent.", True)
         try:
@@ -916,7 +924,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
             return await asyncio.to_thread(approvals_page, rec, f"Not sent (still waiting): {e}", True)
         audit.record("approval.sent", **who, summary=f"Approved {v['badge'].lower()} “{v['title']}”", kind=src.kind,
                      recipients=[val for k, val in v["rows"] if k in ("To", "Guests", "Will be delivered to")])
-        return await asyncio.to_thread(approvals_page, rec, note)
+        return after_action(rec, note)
 
     # -- activity ------------------------------------------------------------------------------------------------------
     _FILTERS = {"all": ("All", ()), "approvals": ("Approvals", ("approval.",)), "agents": ("Agents", ("tool.",)),
