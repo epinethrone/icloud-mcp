@@ -321,7 +321,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
     def control(sp: Spec, v: str, src: str, typed: str | None = None, error: str = "") -> str:
         dis = "" if editable else " disabled"
         sub = D._esc(sp.help)
-        tag = {"dashboard": "Changed here", "environment": "Set in the environment", "default": ""}[src]   # only when not the default
+        tag = {"dashboard": "Set here", "environment": "Set in the environment", "default": ""}[src]   # only when not the default
         meta = f'<p class="hint">{sub}{" · " if sub and tag else ""}{tag}</p>' if sub or tag else ""
         fid = f"f-{sp.key.lower()}"
         if error:
@@ -368,7 +368,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
                        for val, label in (("drafts", "Drafts only"), ("approval", "After approval"), ("direct", "Directly")))
         explain = {"drafts": "Agents save drafts; you send them in Mail.", "approval": "Agents queue mail; you send it on Approvals.",
                    "direct": "Mail leaves at once. Your client's own prompt is the only check."}[mode]
-        tag = {"dashboard": "Changed here", "environment": "Set in the environment", "default": ""}[src]
+        tag = {"dashboard": "Set here", "environment": "Set in the environment", "default": ""}[src]
         return (f'<div class="field"><span class="field-label" id="sendmode">When agents send mail</span>'
                 f'<div class="radio-seg" role="radiogroup" aria-labelledby="sendmode">{opts}</div><p class="hint">{explain}{" · " + tag if tag else ""}</p></div>')
 
@@ -387,11 +387,9 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
                 sub = "Not set up. See the Mac helper guide."
             else:
                 sub = g.summary(lambda k: current(k, stored)[0]) if g.summary else group_summary(g, stored)
-            n = sum(1 for sp in g.specs if sp.key in stored)
-            badge = D.chip(f"{n} changed", "info") if n else ""
             rows.append(f'<a class="row" href="/dashboard/settings/{g.slug}" style="color:inherit;text-decoration:none">'
                         f'<span class="row-main"><span>{D._esc(g.title)}</span><span class="row-sub">{D._esc(sub)}</span></span>'
-                        f'<span style="display:flex;gap:8px;align-items:center">{badge}<span aria-hidden="true" class="hint">›</span></span></a>')
+                        f'<span aria-hidden="true" class="hint">›</span></a>')
         rows.append('<a class="row" href="/dashboard/settings/server" style="color:inherit;text-decoration:none"><span class="row-main">'
                     '<span>Server</span><span class="row-sub">Address, app sign-in, connections, performance · view only</span></span>'
                     '<span aria-hidden="true" class="hint">›</span></a>')
@@ -434,7 +432,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
             rows = "".join(D.row(sp.label, f'<form method="post" action="/dashboard/settings/{g.slug}/reset">{d.csrf_input(rec)}'
                                            f'<input type="hidden" name="key" value="{sp.key}">{D.button("Reset", "text")}</form>',
                                  f"Here: {display(sp, stored[sp.key])}") for sp in changed)
-            cards.append(D.card("Changed here", f'<div class="list">{rows}</div>'
+            cards.append(D.card("Set here", f'<div class="list">{rows}</div>'
                                 + D.hint("Reset goes back to the server's environment or the default.")))
         if g.slug == "accounts" and editable:
             cards.append(D.card("App-specific password", D.field("apppw", "New app-specific password",

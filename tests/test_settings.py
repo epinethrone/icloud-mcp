@@ -36,7 +36,7 @@ async def test_a_change_is_saved_converted_and_logged(web):  # noqa: F811
         stored = json.loads((mcp._icloud_dashboard.sessions.path.parent / "settings.json").read_text())
         assert stored == {"MAX_ATTACHMENT_BYTES": str(20 * 1024 * 1024)}
         page = (await c.get("/dashboard/settings")).text
-        assert "Restart to apply" in page and "1 changed" in page
+        assert "Restart to apply" in page and " changed</span>" not in page   # no badge: the restart card says it
     entry = mcp._icloud_dashboard.audit.entries()[0]
     assert entry["action"] == "settings.changed" and "Largest attachment 5 MiB → 20 MiB" in entry["summary"]
 
@@ -142,7 +142,7 @@ async def test_reset_goes_back_to_the_environment(web):  # noqa: F811
     async with client(app) as c:
         token = await signed_in(c)
         page = (await c.get("/dashboard/settings/calendar")).text
-        assert "Changed here" in page and "Asia/Tokyo" in page
+        assert "Set here" in page and "Asia/Tokyo" in page
         r = await c.post("/dashboard/settings/calendar/reset", headers=SAME, data={"csrf": token, "key": "DEFAULT_TIMEZONE"})
         assert "follows the server again (Europe/Berlin)" in r.text
     assert json.loads(path.read_text()) == {}
