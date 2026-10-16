@@ -240,10 +240,10 @@ class IMessageApprovals(ApprovalSource):
 _CSS = """
 :root{color-scheme:light dark;--bg:#f2f2f7;--card:#fff;--text:#1d1d1f;--muted:#636366;--line:#d1d1d6;--quiet:#e5e5ea;--code:#f2f2f7;
 --accent:#0071e3;--accent-text:#0066cc;--info:#e8f0fe;--info-text:#0b4a8f;--ok-bg:#e3f5e8;--ok:#1a7f37;--warn-bg:#fdf1dc;--warn:#8a5300;
---err-bg:#fde8e8;--err:#c00;--badge:#d70015;--bar:#f9f9fb;--shadow:#0000000d;--knob:#fff;--knob-shadow:#0004}
+--err-bg:#fde8e8;--err:#c00;--badge:#d70015;--bar:#f9f9fb;--shadow:#0000000d;--knob:#fff;--knob-shadow:#0004;--seg-on:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--muted:#98989d;--line:#38383a;--quiet:#2c2c2e;--code:#2c2c2e;
 --accent:#0a84ff;--accent-text:#4da3ff;--info:#0a2a4d;--info-text:#9ecbff;--ok-bg:#0f2e1a;--ok:#3fb950;--warn-bg:#33240a;--warn:#ffb340;
---err-bg:#3a1414;--err:#ff6961;--badge:#ff453a;--bar:#111113;--shadow:#0000;--knob:#fff;--knob-shadow:#0008}}
+--err-bg:#3a1414;--err:#ff6961;--badge:#ff453a;--bar:#111113;--shadow:#0000;--knob:#fff;--knob-shadow:#0008;--seg-on:#636366}}
 *{box-sizing:border-box}
 body{font:16px/1.45 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;-webkit-text-size-adjust:100%}
 a{color:var(--accent-text)}
@@ -321,14 +321,14 @@ background:var(--quiet);color:var(--text);text-decoration:none;display:inline-fl
 .radio-seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--quiet);border-radius:9px;padding:2px;gap:2px}
 .radio-seg label{position:relative;min-height:38px;display:flex;align-items:center;justify-content:center;border-radius:7px;font-size:13px;cursor:pointer;text-align:center;padding:0 4px;white-space:nowrap}
 .radio-seg input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
-.radio-seg label:has(input:checked){background:var(--card);font-weight:600;box-shadow:0 1px 3px var(--shadow)}
+.radio-seg label:has(input:checked){background:var(--seg-on);font-weight:600;box-shadow:0 1px 3px var(--knob-shadow)}
 .radio-seg label:has(input:focus-visible){outline:3px solid var(--accent);outline-offset:1px}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
 .check input{width:20px;height:20px;margin:1px 0 0;flex-shrink:0}
 /* segmented filter */
 .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--quiet);border-radius:9px;padding:2px;gap:2px}
 .seg a{min-height:34px;display:flex;align-items:center;justify-content:center;border-radius:7px;font-size:13px;color:var(--text);text-decoration:none}
-.seg a[aria-current=page]{background:var(--card);font-weight:600;box-shadow:0 1px 3px var(--shadow)}
+.seg a[aria-current=page]{background:var(--seg-on);font-weight:600;box-shadow:0 1px 3px var(--knob-shadow)}
 /* activity */
 ol.log{list-style:none;margin:0;padding:0}
 ol.log li{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:10px;padding:10px 0;border-bottom:1px solid var(--quiet);font-size:15px}
