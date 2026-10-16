@@ -3,7 +3,7 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install .
+RUN pip install ".[passkey]"
 RUN useradd --system --uid 10001 app && mkdir /data && chown app /data
 USER app
 ENV DATA_DIR=/data MCP_HOST=0.0.0.0 BRIDGE_HOST=0.0.0.0 MCP_PORT=8000

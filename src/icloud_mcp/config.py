@@ -188,6 +188,11 @@ class Settings:
     overrides_active: tuple[str, ...] = ()  # which OVERRIDABLE settings come from DATA_DIR/overrides.json (names only)
     json_response: bool = True    # MCP_JSON_RESPONSE: answer each POST with one JSON body instead of an SSE stream
     structured_content: bool = False  # MCP_STRUCTURED_CONTENT: also send each result as structuredContent (for a client that needs it)
+    dashboard: bool = True        # DASHBOARD: the owner's dashboard at /dashboard (hosted mode only)
+    owner_password_login: bool = True   # OWNER_PASSWORD_LOGIN: false = the dashboard signs in with a passkey only (once one exists)
+    dashboard_session_minutes: int = 30  # DASHBOARD_SESSION_MINUTES: a dashboard session ends after this long without use
+    audit_log: bool = True        # AUDIT_LOG: record writes, approvals and sign-ins in DATA_DIR/audit.jsonl
+    audit_keep_days: int = 90     # AUDIT_KEEP_DAYS: how long activity entries are kept
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -282,6 +287,11 @@ class Settings:
             overrides_active=tuple(OVERRIDABLE[k] for k in sorted(overrides)),
             json_response=_bool("MCP_JSON_RESPONSE", True),
             structured_content=_bool("MCP_STRUCTURED_CONTENT", False),
+            dashboard=_bool("DASHBOARD", True),
+            owner_password_login=_bool("OWNER_PASSWORD_LOGIN", True),
+            dashboard_session_minutes=max(5, min(_int("DASHBOARD_SESSION_MINUTES", 30), 720)),
+            audit_log=_bool("AUDIT_LOG", True),
+            audit_keep_days=max(1, min(_int("AUDIT_KEEP_DAYS", 90), 3650)),
         )
 
     # ------------------------------------------------------------------

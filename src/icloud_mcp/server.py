@@ -28,6 +28,7 @@ from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
 from . import callctx
 from .approvals import register_outbox_routes
+from .audit import AuditLog
 from .auth import SCOPE, OwnerOAuthProvider, register_routes
 from .bridge import BridgeError, MacBridge, build_bridge_app, ensure_tls, start_bridge_listener
 from .cal import CalendarError, CalendarService, get_tz, too_frequent
@@ -141,6 +142,70 @@ PAUSED_MESSAGE = ("Paused by the owner: this server is not taking requests right
                   "icloud_check_health still answers.")
 
 
+_audit: AuditLog | None = None          # the activity log (set in create_server for a hosted server)
+_audit_provider: Any = None             # the OAuth provider, to name the app behind a tool call
+_WRITE_TOOLS: set[str] = set()          # tools that change something (annotations read_only_hint=False), filled in by _finish
+_PAST = {"send": "sent", "reply": "replied to", "forward": "forwarded", "mark": "marked", "move": "moved", "delete": "deleted",
+         "create": "created", "update": "updated", "run": "ran", "undo": "undid", "unsubscribe": "unsubscribed from",
+         "respond": "answered", "complete": "completed", "append": "appended to", "write": "wrote", "trash": "trashed"}
+_AUDIT_LABELS = ("summary", "title", "subject", "name", "path", "list_name")
+_AUDIT_KEEP = ("folder", "destination", "calendar", "to_calendar", "new_name", "to", "response", "action", "uid", "id")
+_AUDIT_ADDRS = ("to", "cc", "bcc", "attendees", "add_attendees", "remove_attendees", "handle")
+
+
+def _caller() -> tuple[str, str]:
+    """The app behind the current tool call: (its name, its client id), from the access token the SDK verified."""
+    try:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+        tok = get_access_token()
+    except Exception:  # noqa: BLE001
+        tok = None
+    cid = getattr(tok, "client_id", "") or ""
+    info = (getattr(_audit_provider, "clients", {}) or {}).get(cid, {}) if cid else {}
+    return (info.get("client_name") or ("An app" if cid else "Local client")), cid[:8]
+
+
+def _addresses(v: Any) -> list[str]:
+    items = v if isinstance(v, (list, tuple)) else [v]
+    out = []
+    for x in items:
+        if isinstance(x, str):
+            out.append(x)
+        elif isinstance(x, dict) and (x.get("email") or x.get("address")):
+            out.append(str(x.get("email") or x.get("address")))
+    return out
+
+
+def _audit_call(name: str, kwargs: dict[str, Any], ok: bool, out: Any = None, error: str = "") -> None:
+    """One line in the activity log for a tool that changes something: who, which tool, the target, never a body or a password."""
+    if _audit is None or name not in _WRITE_TOOLS:
+        return
+    area, _, rest = name.partition("_")
+    verb, _, noun = rest.partition("_")
+    label = next((str(kwargs[k]) for k in _AUDIT_LABELS if kwargs.get(k)), "")
+    details: dict[str, Any] = {k: kwargs[k] for k in _AUDIT_KEEP if isinstance(kwargs.get(k), (str, int)) and k != "to"}
+    for k in _AUDIT_ADDRS:
+        if kwargs.get(k):
+            details[k] = _addresses(kwargs[k])
+    if isinstance(kwargs.get("uids"), list):
+        details["count"] = len(kwargs["uids"])
+    text = out if isinstance(out, str) else ""
+    queued = '"queued_for_owner_approval"' in text
+    drafted = '"draft_saved"' in text or '"saved_to_drafts' in text
+    if queued:
+        summary = f"Asked to {verb} {noun.replace('_', ' ')}" + (f" “{label}”" if label else "") + " (waiting for your approval)"
+    else:
+        summary = f"{_PAST.get(verb, verb).capitalize()} {noun.replace('_', ' ')}" + (f" “{label}”" if label else "")
+        summary += " as a draft" if drafted and verb in ("send", "reply", "forward") else ""
+    if details.get("count"):
+        summary += f" ({details['count']})"
+    if details.get("destination"):
+        summary += f" to {details['destination']}"
+    who, cid = _caller()
+    _audit.record("tool.queued" if queued else f"tool.{area}", actor=who, via=cid, ok=ok, summary=summary if ok else f"Tried: {summary[0].lower()}{summary[1:]}",
+                  tool=name, error=error[:200] if error else None, **details)
+
+
 def is_paused() -> bool:
     return bool(_pause_file) and os.path.exists(_pause_file)
 _DRIVE_PATH = "Path inside iCloud Drive, relative to its root, e.g. 'Documents/Tax'. '' or omitted = the root."
@@ -199,11 +264,15 @@ def _guard(fn=None, *, lane: str = "main"):
         if getattr(fn, "__name__", "") not in ALWAYS_KEPT and is_paused():      # checked per call: the owner can pause any time
             raise ToolError(PAUSED_MESSAGE)
         holder: dict[str, Any] = {"stage": None}
+        name = getattr(fn, "__name__", "")
         try:
             call = functools.partial(run, holder, *args, **kwargs)
             pool = _mac_executor if lane == "mac" else _executor
-            return await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(pool, call), timeout=_tool_timeout)
+            out = await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(pool, call), timeout=_tool_timeout)
+            _audit_call(name, kwargs, True, out)
+            return out
         except asyncio.TimeoutError as e:
+            _audit_call(name, kwargs, False, error="timed out; it may still have completed")
             slow = f" The slow step was: {holder['stage']}." if holder.get("stage") else ""
             raise ToolError(
                 f"{getattr(fn, '__name__', 'The tool')} took longer than {_tool_timeout:g}s and was abandoned.{slow} Try again once; if "
@@ -211,11 +280,15 @@ def _guard(fn=None, *, lane: str = "main"):
                 "write (for example look in Sent before sending again)."
             ) from e
         except (MailError, CalendarError, ContactsError, BridgeError, IMessageError) as e:
-            raise ToolError(scrub_error(str(e), _error_secrets)) from e
-        except ToolError:
+            msg = scrub_error(str(e), _error_secrets)
+            _audit_call(name, kwargs, False, error=redact_error(msg, _error_ids))
+            raise ToolError(msg) from e
+        except ToolError as e:
+            _audit_call(name, kwargs, False, error=redact_error(str(e), _error_secrets + _error_ids))
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("Unexpected error in %s", getattr(fn, "__name__", fn))
+            _audit_call(name, kwargs, False, error=f"Unexpected {type(e).__name__}")
             raise ToolError(redact_error(f"Unexpected {type(e).__name__}: {e}", _error_secrets + _error_ids)) from e
 
     return wrapper
@@ -359,7 +432,7 @@ def _protects_notes(s: Settings, *paths: str | None) -> None:
 def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
     """The MCP server with its tools. In local mode (stdio) there is no OAuth provider and no web pages: the desktop client that
     starts the process is the only one talking to it."""
-    global _tool_timeout, _structured_content, _error_secrets, _error_ids, _executor, _mac_executor, _pause_file
+    global _tool_timeout, _structured_content, _error_secrets, _error_ids, _executor, _mac_executor, _pause_file, _audit, _audit_provider
     _tool_timeout = float(s.effective_tool_timeout)
     _structured_content = s.structured_content
     _pause_file = None if s.local_mode else os.path.join(s.data_dir, "paused")
@@ -369,6 +442,7 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
         _mac_executor = ThreadPoolExecutor(max_workers=min(s.tool_workers, 6), thread_name_prefix="icloud-mac")
     _error_secrets = (s.app_password, s.owner_password, s.bridge_token)
     _error_ids = (s.username, s.email_address, s.imap_username, s.smtp_username, s.caldav_username, s.carddav_username)
+    _audit, _audit_provider = None, None
     if s.local_mode:
         mcp = MCPServer("iCloud", instructions=build_instructions(s))
         _register_tools(mcp, s)
@@ -376,6 +450,9 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
         _finish(mcp, s)
         return mcp, None
     provider = OwnerOAuthProvider(s)
+    _audit = AuditLog(s.data_dir, s.audit_keep_days, enabled=s.audit_log)
+    _audit_provider = provider
+    provider.audit = _audit                     # the connect page records which apps were approved
     auth = AuthSettings(
         issuer_url=s.public_url,
         resource_server_url=f"{s.public_url}/mcp",
@@ -448,6 +525,8 @@ def _finish(mcp: MCPServer, s: Settings) -> None:
         # The docstring's own indentation (12-16 spaces on every continuation line) is about 8% of the description text
         tool.description = inspect.cleandoc(tool.description) if tool.description else tool.description
     _register_prompts(mcp, s)
+    _WRITE_TOOLS.clear()
+    _WRITE_TOOLS.update(t.name for t in mcp._tool_manager.list_tools() if t.annotations is not None and t.annotations.read_only_hint is False)
     tools = {t.name for t in mcp._tool_manager.list_tools()}
     mcp._lowlevel_server.instructions = build_instructions(s, tools)
     if s.agent_notes_file:
@@ -2769,7 +2848,12 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     mcp._icloud_outboxes = {"mail": approval["mail"].outbox if approval["mail"] is not None else None,
                             "imessage": approval["imessage_outbox"]}                       # counts for the admin API
     if (approval["mail"] or approval["imessage_outbox"]) and provider is not None:
-        register_outbox_routes(mcp, provider, s, approval["mail"], approval["imessage"], approval["imessage_outbox"])
+        register_outbox_routes(mcp, provider, s, approval["mail"], approval["imessage"], approval["imessage_outbox"], audit=_audit)
+    if s.dashboard and provider is not None and _audit is not None:
+        from .dashboard import IMessageApprovals, MailApprovals, register_dashboard
+        sources = ([MailApprovals(approval["mail"])] if approval["mail"] is not None else []) + \
+                  ([IMessageApprovals(approval["imessage"], approval["imessage_outbox"])] if approval["imessage_outbox"] is not None else [])
+        mcp._icloud_dashboard = register_dashboard(mcp, provider, s, _audit, sources)
 
 def build_app(s: Settings, mcp: MCPServer):
     """The ASGI app exactly as served in production (used by main() and by the tests)."""
