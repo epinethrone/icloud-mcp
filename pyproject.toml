@@ -31,7 +31,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-asyncio>=0.23", "aiosmtpd>=1.4", "radicale>=3.2"]
+passkey = ["webauthn>=3.0,<4"]          # passkey sign-in on the dashboard (the Docker image has it)
+test = ["pytest>=8", "pytest-asyncio>=0.23", "aiosmtpd>=1.4", "radicale>=3.2", "webauthn>=3.0,<4"]
 
 [project.urls]
 Homepage = "https://github.com/epinethrone/icloud-mcp"

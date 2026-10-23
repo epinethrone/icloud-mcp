@@ -1,0 +1,1291 @@
+"""The owner's dashboard: one place in the browser for approvals, activity, connected apps, passkeys and the server's state.
+
+It replaces typing the owner password on every visit to /outbox with a signed-in session. Sign-in is a passkey (WebAuthn,
+see passkeys.py) or the owner password; the owner can turn the password off once a passkey exists. Steps that weaken
+protection (removing a passkey, changing the password, signing apps out) ask again when the last sign-in is more than five
+minutes old.
+
+Sessions: a random token in a cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` prefix on https), stored only as a
+SHA-256 hash in DATA_DIR/sessions.json (mode 600), so a restart keeps you signed in and a copy of the file signs nobody in.
+They end after DASHBOARD_SESSION_MINUTES without use (30) and after 12 hours in any case. Every form carries a per-session
+CSRF token and every POST must come from this server's own origin.
+
+Pages are rendered on the server. The only script is /dashboard/passkey.js, served from here (CSP `script-src 'self'`), which
+calls the browser's passkey API. Everything else works without it.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import html
+import importlib.metadata
+import json
+import logging
+import os
+import secrets
+import tempfile
+import threading
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable
+from urllib.parse import quote, urlsplit
+from zoneinfo import ZoneInfo
+
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+
+from . import passkeys as P
+from .approvals import flagged
+from .audit import AuditLog
+from .config import Settings, owner_password_problem
+
+log = logging.getLogger(__name__)
+
+SESSIONS_FILE = "sessions.json"
+_ABSOLUTE = 12 * 3600          # a session never lasts longer than this
+_STEP_UP = 300                 # seconds a sign-in counts as recent for sensitive steps
+_BODY_PREVIEW = 20000
+_STATIC = Path(__file__).parent / "static"
+
+_HEADERS = {
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "same-origin",       # browsers then send our own Origin on form posts (no-referrer makes it "null")
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": ("default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self'; "
+                                "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
+}
+
+
+def _h(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Sessions
+# ---------------------------------------------------------------------------------------------------------------------
+class Sessions:
+    def __init__(self, data_dir: str, idle_minutes: int):
+        self.path = Path(data_dir) / SESSIONS_FILE
+        self.idle = max(5, idle_minutes) * 60
+        self._lock = threading.Lock()
+        self._items: dict[str, dict[str, Any]] = {}
+        try:
+            data = json.loads(self.path.read_text())
+            self._items = {k: v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            pass
+        self._prune()
+
+    def _prune(self) -> None:
+        now = time.time()
+        self._items = {k: v for k, v in self._items.items()
+                       if now - v.get("last", 0) < self.idle and now - v.get("created", 0) < _ABSOLUTE}
+
+    def _save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".sessions-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(self._items, f)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def create(self, via: str) -> tuple[str, dict[str, Any]]:
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        rec = {"created": now, "last": now, "auth_at": now, "via": via, "csrf": secrets.token_urlsafe(24)}
+        with self._lock:
+            self._prune()
+            self._items[_h(token)] = rec
+            self._save()
+        return token, rec
+
+    def get(self, token: str) -> dict[str, Any] | None:
+        if not token:
+            return None
+        with self._lock:
+            self._prune()
+            rec = self._items.get(_h(token))
+            if rec is None:
+                return None
+            if time.time() - rec["last"] > 60:          # write at most once a minute while browsing
+                rec["last"] = time.time()
+                self._save()
+            return rec
+
+    def reauth(self, token: str, via: str) -> str | None:
+        """Confirming who is there issues a new session token; the old one stops working. The CSRF value stays, because a
+        change held for confirmation (settings.py) is filed under it."""
+        with self._lock:
+            rec = self._items.pop(_h(token), None)
+            if rec is None:
+                return None
+            rec["auth_at"], rec["via"] = time.time(), via
+            fresh = secrets.token_urlsafe(32)
+            self._items[_h(fresh)] = rec
+            self._save()
+            return fresh
+
+    def drop(self, token: str) -> None:
+        with self._lock:
+            if self._items.pop(_h(token), None) is not None:
+                self._save()
+
+    def drop_all(self) -> None:
+        with self._lock:
+            self._items.clear()
+            self._save()
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Approval sources: one interface for queued mail and iMessages
+# ---------------------------------------------------------------------------------------------------------------------
+class ApprovalSource:
+    kind = ""
+    badge = ""
+    approve_label = "Approve"
+
+    def pending(self) -> list[Any]:
+        raise NotImplementedError
+
+    def describe(self, q: Any, context: Any = None) -> dict[str, Any]:
+        """{'title', 'badge', 'rows': [(label, value)], 'text', 'notes': [str], 'warnings': [str], 'needs_override': bool}"""
+        raise NotImplementedError
+
+    def contexts(self, items: list[Any]) -> dict[str, Any]:
+        return {}
+
+    def release(self, q: Any) -> str:
+        """Do it; return a one-line result for the page. Raises on failure (and puts the item back)."""
+        raise NotImplementedError
+
+    def discard(self, q: Any) -> None:
+        raise NotImplementedError
+
+
+class MailApprovals(ApprovalSource):
+    kind, badge, approve_label = "mail", "Email", "Send"
+
+    def __init__(self, mail: Any):
+        self.mail = mail
+
+    def pending(self):
+        return self.mail.outbox.pending()
+
+    def contexts(self, items):
+        return self.mail.approval_contexts(items, prune=True) if items else {}
+
+    def describe(self, q, context=None):
+        d = self.mail.describe_queued(q, context)
+        body = d["body"] if len(d["body"]) <= _BODY_PREVIEW else d["body"][:_BODY_PREVIEW] + "\n\n[... preview truncated; the full message is sent]"
+        rows = [("From", d["from"]), ("To", d["to"]), ("Cc", d["cc"]), ("Bcc", d["bcc"]),
+                ("Will be delivered to", ", ".join(d["envelope_recipients"]))]
+        warnings = list((d.get("original") or {}).get("safety_warnings") or [])
+        if d.get("agent_added_recipients"):
+            warnings.append("A recipient's address was added to a contact by an agent, not by you: "
+                            + ", ".join(d["agent_added_recipients"]))
+        notes = []
+        if orig := d.get("original"):
+            frm = ", ".join(f"{a.get('name', '')} <{a.get('email', '')}>".strip() for a in orig.get("from") or [] if isinstance(a, dict))
+            notes.append("In reply to: " + ("(the original message could not be read)" if orig.get("unavailable")
+                                            else f"{orig.get('subject') or '(no subject)'} from {frm or '?'}"))
+        if d["attachments"]:
+            notes.append("Attachments: " + ", ".join(f"{a.get('filename')} ({a.get('size')} bytes)" for a in d["attachments"]))
+        return {"title": d["subject"] or "(no subject)", "badge": "Email reply" if d.get("original") else "Email",
+                "rows": [(k, v) for k, v in rows if v], "text": body, "notes": notes, "warnings": warnings,
+                "needs_override": bool(flagged(d))}
+
+    def release(self, q):
+        r = self.mail.release(q.id)
+        return f"Sent to {', '.join(r.get('recipients', []))}." + (f" {r['warning']}" if r.get("warning") else "")
+
+    def discard(self, q):
+        self.mail.outbox.claim(q.id)
+
+
+_AGENT_HINT = "Run icloud_check_health to see which service is failing."
+
+
+def for_owner(message: str) -> str:
+    """Service errors are written for agents. On the dashboard the owner has a button for the same check."""
+    return message.replace(_AGENT_HINT, "Check now on the Overview shows which service is failing.")
+
+
+class IMessageApprovals(ApprovalSource):
+    kind, badge, approve_label = "imessage", "iMessage", "Send"
+
+    def __init__(self, imessage: Any, box: Any):
+        self.imessage, self.box = imessage, box
+
+    def pending(self):
+        return self.box.pending()
+
+    def describe(self, q, context=None):
+        d = self.imessage.describe_queued(q)
+        warnings = ["A group conversation: everyone in it receives this."] if d["group"] else []
+        return {"title": f"iMessage to {d['to'] or d['chat_id'] or ''}", "badge": "iMessage",
+                "rows": [("Conversation", d["chat_id"] or "")] if d["chat_id"] else [], "text": d["text"],
+                "notes": ["Sent from your Mac once you approve."], "warnings": warnings, "needs_override": False}
+
+    def release(self, q):
+        r = self.imessage.release(self.box, q.id)
+        word = {"sent": "Sent", "failed": "Not delivered", "unconfirmed": "Handed to Messages (not yet confirmed)"}.get(r.get("status"), str(r.get("status")))
+        return f"{word}: iMessage to {r.get('to', '')}. {r.get('note', '')}".strip()
+
+    def discard(self, q):
+        self.box.claim(q.id)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Page frame and components
+#
+# Every page follows the same structure, so nothing floats:
+#   top bar and tab bar (phones), or from 860 px a tinted frame: the sidebar and a bar above the page with this server's
+#   address, its state and Sign out, around one white sheet that holds the page
+#   page head: title, one line of context (the finding that matters most) and at most the page's one primary action
+#   cards: a head (title, at most one status chip, never a button), a body (rows, text, fields), a foot (all of the
+#   card's buttons, right-aligned, the main action last; full width on phones)
+#   row actions (remove a passkey, sign out an app) sit at the right end of their row, all the same size
+# ---------------------------------------------------------------------------------------------------------------------
+_CSS = """
+:root{color-scheme:light dark;--bg:#eef2f6;--sheet:#fff;--card:#fff;--text:#131416;--muted:#5d5f60;--line:#e6e9ed;--quiet:#f0f1f3;--control:#cdced1;
+--fill:#ebedee;--active:#e2e7ed;--code:#f7f9fb;--primary:#131416;--on-primary:#fff;--accent:#0a66c9;--accent-text:#0a5cb5;--track:#e2edf9;
+--info:#e2edf9;--info-text:#0b4a8f;--ok-bg:#dcfae5;--ok:#1e7b4f;--ok-ink:#04250e;--warn-bg:#fffbeb;--warn:#92400e;--err-bg:#ffedea;--err:#c4242a;
+--err-ink:#831c1e;--knob:#fff;--knob-shadow:#0003;--seg-on:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--sheet:#141619;--card:#141619;--text:#f4f5f6;--muted:#b0b4b9;--line:#262a2f;--quiet:#1d2024;
+--control:#454a50;--fill:#23272c;--active:#23272c;--code:#1a1d21;--primary:#f4f5f6;--on-primary:#0b0d10;--accent:#58a2f5;--accent-text:#7ab5f7;
+--track:#15253a;--info:#15253a;--info-text:#9ecbff;--ok-bg:#172a1d;--ok:#3fc07a;--ok-ink:#3fc07a;--warn-bg:#2a2212;--warn:#f0b75a;--err-bg:#2c1a20;
+--err:#e5566f;--err-ink:#e5566f;--knob:#fff;--knob-shadow:#0008;--seg-on:#3a3f45}}
+*{box-sizing:border-box}
+body{font:16px/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:var(--sheet);color:var(--text);margin:0;-webkit-text-size-adjust:100%}
+a{color:var(--accent-text)}
+h1,h2,h3{margin:0;text-wrap:balance}
+p{margin:0}
+.num{font-variant-numeric:tabular-nums}
+.wrap{display:flex;min-height:100vh}
+.frame{flex:1;min-width:0;display:flex;flex-direction:column}
+main{flex:1;min-width:0;max-width:52rem;padding:0 16px calc(96px + env(safe-area-inset-bottom,0px))}
+.stack{display:flex;flex-direction:column;gap:12px}
+/* top bar (phones) */
+.topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;
+background:var(--bg);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.brand img{width:28px;height:28px;border-radius:7px;flex-shrink:0}
+.brand-text{display:flex;flex-direction:column;min-width:0;line-height:1.2}
+.brand-name{font-weight:600;font-size:15px}
+.brand-host{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the bar above the sheet (wide screens): this server, its state, who is signed in */
+.deskbar{display:none}
+/* page head */
+.page-head{padding:20px 0 16px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.page-head>.page-title{display:flex;flex-direction:column;gap:4px;flex:1 1 20rem;min-width:0}
+.page-head h1{font-size:24px;font-weight:600;letter-spacing:-.01em}
+.page-actions{display:flex;gap:8px;flex-wrap:wrap}
+.lede{color:var(--muted);font-size:15px}
+.lede b{color:var(--text);font-weight:500}
+/* cards: one 1px edge, no shadow */
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 0}
+.card-head h2{font-size:16px;font-weight:600}
+.head-link{font-size:14px;font-weight:500;color:var(--text);text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center;gap:4px}
+.head-link:hover{text-decoration:underline}
+.card-body{padding:10px 16px 14px;display:flex;flex-direction:column;gap:10px}
+.card-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--quiet)}
+.foot-hint{flex:1 1 12rem;margin:0;font-size:13px;color:var(--muted)}
+.card-foot .btn{flex:1 1 8rem}
+.card-foot form{display:contents}
+.list{display:flex;flex-direction:column}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:46px;padding:6px 0;border-bottom:1px solid var(--quiet)}
+.row:last-child{border-bottom:0}
+.row-main{display:flex;flex-direction:column;min-width:0}
+.row-sub{font-size:13px;color:var(--muted)}
+.row-value{text-align:right;flex-shrink:0;max-width:60%;font-variant-numeric:tabular-nums}
+.row-value.off{color:var(--muted)}
+.row form{flex-shrink:0}
+.hint{font-size:13px;color:var(--muted)}
+/* key figures: one container split by dividers */
+.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.kpis>div{padding:12px 16px;border-left:1px solid var(--line);border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpis>div:nth-child(odd){border-left:0}
+.kpis>div:nth-child(-n+2){border-top:0}
+.kpis span{font-size:13px;color:var(--muted)}
+.kpis b{font-size:26px;line-height:1.25;font-weight:400;font-variant-numeric:tabular-nums}
+.kpis .lead b{color:var(--accent);font-weight:500}
+/* time left before a waiting request is dropped */
+.ttl{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:9rem}
+.ttl-ends{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ttl-ends b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
+.track{height:6px;border-radius:3px;background:var(--track);overflow:hidden}
+.track i{display:block;height:100%;background:var(--accent);border-radius:3px}
+/* waiting list on the overview */
+.waits{width:100%;border-collapse:collapse;font-size:15px}
+.waits th{font-size:12px;font-weight:400;color:var(--muted);text-align:left;padding:4px 12px 6px 0}
+.waits td{padding:12px 12px 12px 0;border-top:1px solid var(--quiet);vertical-align:middle}
+.waits td:last-child{padding-right:0;text-align:right}
+.waits b{font-weight:500;display:block}
+.waits .row-sub{display:block}
+@media (max-width:639px){.waits thead,.waits td:nth-child(2){display:none}.waits tr{display:block;border-top:1px solid var(--quiet);padding:12px 0}
+.waits tr:first-child{border-top:0}.waits td{display:block;border:0;padding:0}.waits td+td{margin-top:8px}.waits td:last-child{text-align:left}}
+/* approvals: the list and the selected request */
+.split{display:grid;gap:12px;align-items:start}
+.queue{display:flex;flex-direction:column;padding:6px}
+.queue a{display:block;padding:12px;border-radius:8px;color:var(--text);text-decoration:none}
+.queue a:hover{background:var(--quiet)}
+.queue a[aria-current=true]{background:var(--active)}
+.q1{display:flex;gap:8px;align-items:center;min-width:0}
+.q1 b{font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.q1 .left{margin-left:auto;color:var(--muted);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.q2{color:var(--muted);font-size:13px;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* underline tabs inside a page (settings areas) */
+.subtabs{display:flex;gap:20px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;margin-bottom:4px}
+.subtabs a{padding:8px 0 10px;color:var(--muted);text-decoration:none;font-weight:500;font-size:14px;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.subtabs a[aria-current=page]{color:var(--text);border-bottom-color:var(--accent)}
+/* settings: the section's name beside its fields */
+.srow{display:grid;gap:10px}
+.srow-head h2{font-size:16px;font-weight:600}
+/* chips and banners */
+.chip{font-size:12px;font-weight:500;padding:2px 8px;border-radius:999px;white-space:nowrap;background:var(--fill);color:var(--text);flex:none}
+.chip.info{background:var(--fill);color:var(--text)}.chip.ok{background:var(--ok-bg);color:var(--ok-ink)}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.err{background:var(--err-bg);color:var(--err-ink)}
+.kind{border-radius:4px}
+.banner{border-radius:8px;padding:10px 14px;font-size:15px;background:var(--info);color:var(--info-text)}
+.banner.bad{background:var(--err-bg);color:var(--err-ink)}
+.field-error{font-size:13px;color:var(--err);font-weight:600}
+.field [aria-invalid=true]{border-color:var(--err)}
+.alert{border-radius:8px;padding:10px 12px;font-size:14px;background:var(--warn-bg);color:var(--warn)}
+.alert ul{margin:6px 0 0;padding-left:18px}
+/* content */
+.message{background:var(--code);padding:12px 14px;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font-size:15px;line-height:1.6}
+pre{background:var(--code);padding:10px 12px;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font:14px/1.45 ui-monospace,Menlo,monospace;margin:0}
+dl{display:grid;grid-template-columns:minmax(4.5rem,max-content) minmax(0,1fr);gap:6px 14px;margin:0;font-size:15px}
+dt{color:var(--muted)} dd{margin:0;word-break:break-word}
+.meta{font-size:13px;color:var(--muted)}
+/* buttons: one filled primary per screen, near-black; the rest outlined */
+.btn{font:inherit;font-size:15px;font-weight:500;min-height:44px;padding:0 18px;border-radius:8px;border:1px solid var(--control);cursor:pointer;
+background:var(--card);color:var(--text);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn:hover{background:var(--quiet)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.btn.primary:hover{opacity:.9}
+.btn.danger{color:var(--err)}
+.btn.text{background:none;border-color:transparent;color:var(--text);padding:0 4px;min-width:5.5rem;justify-content:flex-end}
+.btn.text:hover{text-decoration:underline}
+.btn.text.danger{color:var(--err)}
+.btn[disabled]{opacity:.5;cursor:default}
+.btn svg{width:20px;height:20px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* forms */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:14px;font-weight:500}
+.field input,.field select,.field textarea{width:100%;min-height:46px;padding:0 12px;font:inherit;font-size:16px;border:1px solid var(--control);border-radius:8px;background:var(--card);color:var(--text)}
+.field textarea{padding:10px 12px;min-height:5rem;resize:vertical}
+.field input[disabled],.field select[disabled],.field textarea[disabled]{opacity:.6}
+.field-label{font-size:14px;font-weight:500}
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:48px}
+.switch-row label{display:flex;flex-direction:column;gap:2px;font-size:15px}
+.switch{appearance:none;-webkit-appearance:none;flex-shrink:0;width:51px;height:31px;border-radius:16px;background:var(--control);position:relative;cursor:pointer;margin:0}
+.switch::before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:var(--knob);box-shadow:0 1px 3px var(--knob-shadow);transition:left .15s}
+.switch:checked{background:var(--ok)}
+.switch:checked::before{left:22px}
+.switch[disabled]{opacity:.5;cursor:default}
+.radio-seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--fill);border-radius:8px;padding:3px;gap:2px}
+.radio-seg label{position:relative;min-height:38px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;text-align:center;padding:0 6px;white-space:nowrap}
+.radio-seg input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.radio-seg label:has(input:checked){background:var(--seg-on);outline:1px solid var(--line)}
+.radio-seg label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
+.check input{width:20px;height:20px;margin:1px 0 0;flex-shrink:0}
+/* segmented filter */
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--fill);border-radius:8px;padding:3px;gap:2px}
+.seg a{min-height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:500;color:var(--text);text-decoration:none}
+.seg a[aria-current=page]{background:var(--seg-on);outline:1px solid var(--line)}
+/* activity: times in the text face, tabular */
+ol.log{list-style:none;margin:0;padding:0}
+ol.log li{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--quiet);font-size:15px}
+ol.log li:last-child{border-bottom:0}
+ol.log time{font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+/* tab bar (phones) */
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:2;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--bg);
+border-top:1px solid var(--line);padding:4px 4px calc(6px + env(safe-area-inset-bottom,0px))}
+.tabs a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:50px;text-decoration:none;color:var(--muted);font-size:11px;font-weight:500}
+.tabs a[aria-current=page]{color:var(--text);font-weight:600}
+.tabs svg{width:24px;height:24px}
+.ico{position:relative;display:inline-flex}
+.count{position:absolute;top:-4px;right:-11px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--text);color:var(--sheet);font-size:11px;font-weight:700;line-height:18px;text-align:center}
+/* sidebar (wide screens) */
+.side{display:none}
+/* sign-in */
+.auth{min-height:100vh;max-width:none;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.auth .card{width:100%;max-width:25rem}
+.auth .card-head{padding:18px 18px 0}
+.auth .card-body{padding:14px 18px 18px;gap:14px}
+.auth .card-foot{justify-content:flex-start}
+.auth h1{font-size:22px;font-weight:600}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.full{width:100%}
+@media (min-width:640px){.card-foot .btn{flex:0 0 auto}.auth .card-foot .btn{flex:1 1 auto}
+.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.kpis>div{border-top:0}.kpis>div:nth-child(odd){border-left:1px solid var(--line)}.kpis>div:first-child{border-left:0}}
+/* Mouse and trackpad: desktop sizes (buttons as wide as their label, about 32 px high). Touch keeps 44 px targets. */
+@media (pointer:fine) and (min-width:640px){
+body{font-size:14px}
+.btn{min-height:32px;padding:0 12px;font-size:14px;border-radius:6px}
+.btn svg{width:16px;height:16px}
+.btn.text{min-height:32px;min-width:0;padding:0 2px}
+.field input,.field select{min-height:36px;font-size:14px;border-radius:6px;padding:0 10px}
+.field textarea{font-size:14px;border-radius:6px}
+.row{min-height:40px}
+.switch{width:32px;height:18px;border-radius:9px}
+.switch::before{top:2px;left:2px;width:14px;height:14px}
+.switch:checked::before{left:16px}
+.switch-row{min-height:40px}
+.radio-seg label{min-height:28px}
+.seg a{min-height:28px}
+.auth .btn{min-height:36px}
+.waits,.message,dl,ol.log li,.switch-row label{font-size:14px}
+}
+@media (pointer:fine) and (min-width:860px){.field,.switch-row,.radio-seg{max-width:36rem}}
+/* From 860 px: a tinted frame (sidebar and the bar above) around one white sheet that holds the page */
+@media (min-width:860px){
+body{background:var(--bg)}
+.topbar,.tabs{display:none}
+.side{display:flex;flex-direction:column;gap:2px;width:228px;flex-shrink:0;padding:12px;position:sticky;top:0;height:100vh}
+.side .brand{padding:4px 8px 16px;flex:0 0 auto}
+.side nav{display:flex;flex-direction:column;gap:2px}
+.side nav a{display:flex;align-items:center;gap:10px;min-height:34px;padding:0 10px;border-radius:8px;color:var(--text);text-decoration:none;font-size:14px}
+.side nav a:hover{background:var(--quiet)}
+.side nav a[aria-current=page]{background:var(--active);font-weight:500}
+.side svg{width:16px;height:16px;color:var(--muted)}
+.side .num{margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--text);color:var(--sheet);font-size:12px;font-weight:600;line-height:20px;text-align:center;font-variant-numeric:tabular-nums}
+.deskbar{display:flex;align-items:center;gap:16px;min-height:48px;padding:0 20px 0 4px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.deskbar .host{color:var(--text);font-weight:500}
+.deskbar .who{margin-left:auto}
+.deskbar form{display:flex}
+.sheet{flex:1;background:var(--sheet);border:1px solid var(--line);border-radius:16px;margin:0 8px 8px 0;min-width:0}
+main{padding:0 24px 32px}
+.page-head{padding-top:24px}
+.page-head h1{font-size:22px}
+.split{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
+.srow{grid-template-columns:minmax(0,14rem) minmax(0,1fr);gap:24px;padding-top:8px}
+.srow-head h2{padding-top:14px}
+}
+.state-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px}
+.state-dot.paused{background:var(--warn)}
+.overview-grid{display:grid;gap:12px}
+.overview-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+@media (min-width:860px){.phone-only{display:none}}   /* the bar above the sheet carries Sign out from here on */
+@media (min-width:1100px){main.wide{max-width:76rem}.overview-grid{grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+"""
+
+_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{}</svg>'
+_ICONS = {
+    "overview": '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect>',
+    "approvals": '<path d="M4 13l2.2-8h11.6L20 13v6H4z"></path><path d="M4 13h5l1 2h4l1-2h5"></path>',
+    "activity": '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>',
+    "settings": '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle>',
+    "security": '<path d="M12 3l8 3v6c0 4.8-3.4 8-8 9-4.6-1-8-4.2-8-9V6z"></path>',
+    "key": '<circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9M17 6l3 3M14 9l2 2"></path>',
+}
+
+
+def _esc(v: Any) -> str:
+    return html.escape("" if v is None else str(v))
+
+
+# -- components (each returns HTML; arguments named *_html are already escaped) ----------------------------------------
+def card(title: str = "", body_html: str = "", foot_html: str = "", chip_html: str = "", form: str = "", hidden_html: str = "",
+         link: tuple[str, str] | None = None) -> str:
+    """One card. form='/dashboard/x' wraps the whole card in a POST form, so its fields and its foot buttons belong together.
+    Buttons act and sit in the foot; link=(label, href) navigates and sits at the right of the head."""
+    aside = chip_html + (f'<a class="head-link" href="{_esc(link[1])}">{_esc(link[0])} <span aria-hidden="true">›</span></a>' if link else "")
+    head = f'<div class="card-head"><h2>{_esc(title)}</h2>{aside}</div>' if title else ""
+    inner = (head + (f'<div class="card-body">{body_html}</div>' if body_html else "")
+             + (f'<div class="card-foot">{foot_html}</div>' if foot_html else ""))
+    if form:
+        return f'<form class="card" method="post" action="{_esc(form)}">{hidden_html}{inner}</form>'
+    return f'<section class="card">{inner}</section>'
+
+
+def chip(text: str, tone: str = "") -> str:
+    return f'<span class="chip {tone}">{_esc(text)}</span>'
+
+
+def row(label: str, value_html: str = "", sub: str = "") -> str:
+    main = f'<span class="row-main"><span>{_esc(label)}</span>' + (f'<span class="row-sub">{_esc(sub)}</span>' if sub else "") + "</span>"
+    return f'<div class="row">{main}{value_html}</div>'
+
+
+def value(text: str) -> str:
+    return f'<span class="row-value">{_esc(text)}</span>'
+
+
+def button(label: str, kind: str = "", **attrs: str) -> str:
+    extra = "".join(f' {k.replace("_", "-")}="{_esc(v)}"' for k, v in attrs.items())
+    if "type" not in attrs:
+        extra = ' type="submit"' + extra
+    return f'<button class="btn {kind}"{extra}>{label}</button>'
+
+
+def link_button(label: str, href: str, kind: str = "") -> str:
+    return f'<a class="btn {kind}" href="{_esc(href)}">{_esc(label)}</a>'
+
+
+def field(fid: str, label: str, input_attrs: str, hint: str = "") -> str:
+    return (f'<div class="field"><label for="{fid}">{_esc(label)}</label><input id="{fid}" {input_attrs}>'
+            + (f'<p class="hint">{_esc(hint)}</p>' if hint else "") + "</div>")
+
+
+def hint(text: str) -> str:
+    return f'<p class="hint">{_esc(text)}</p>'
+
+
+class Dashboard:
+    def __init__(self, mcp: Any, provider: Any, s: Settings, audit: AuditLog, sources: list[ApprovalSource],
+                 exit_fn: Callable[[], None] | None = None):
+        self.mcp, self.provider, self.s, self.audit = mcp, provider, s, audit
+        self.sources = {src.kind: src for src in sources}
+        self.sessions = Sessions(s.data_dir, s.dashboard_session_minutes)
+        self.passkeys = P.PasskeyStore(s.data_dir, s.public_url)
+        self.exit_fn = exit_fn or (lambda: os._exit(0))
+        self.secure = s.public_url.startswith("https://")
+        self.cookie = "__Host-icloud-dashboard" if self.secure else "icloud-dashboard"
+        self.origin = "{0.scheme}://{0.netloc}".format(urlsplit(s.public_url))
+        self.host = urlsplit(s.public_url).netloc
+        self.tz = self._tz()
+        self.last_health: dict[str, Any] | None = None
+        self.pause_file = os.path.join(s.data_dir, "paused")
+        self.extra_nav: list[tuple[str, str, str]] = []        # (key, label, path) added by other parts (settings)
+        self.has_icon = (_STATIC / "icon-32.png").is_file()
+
+    def _tz(self):
+        try:
+            return ZoneInfo(self.s.default_timezone)
+        except Exception:  # noqa: BLE001
+            return ZoneInfo("UTC")
+
+    # -- helpers ---------------------------------------------------------------------------
+    def waiting(self) -> int:
+        return sum(len(src.pending()) for src in self.sources.values())
+
+    def paused(self) -> bool:
+        return os.path.exists(self.pause_file)
+
+    def password_login(self) -> bool:
+        """The owner password signs in unless the owner turned it off, and never when that would leave no way in."""
+        return self.s.owner_password_login or not self.passkeys.list()
+
+    def session(self, request: Request) -> tuple[str, dict[str, Any] | None]:
+        token = request.cookies.get(self.cookie, "")
+        return token, self.sessions.get(token)
+
+    def same_origin(self, request: Request) -> bool:
+        origin = request.headers.get("origin")
+        if origin:
+            return origin == self.origin
+        ref = request.headers.get("referer")
+        return bool(ref) and ref.startswith(self.origin + "/")
+
+    @staticmethod
+    def csrf_input(rec: dict[str, Any]) -> str:
+        return f'<input type="hidden" name="csrf" value="{_esc(rec["csrf"])}">'
+
+    def brand(self) -> str:
+        icon = '<img src="/icon-32.png" alt="">' if self.has_icon else ""
+        return (f'<div class="brand">{icon}<span class="brand-text"><span class="brand-name">iCloud connector</span>'
+                f'<span class="brand-host">{_esc(self.host)}</span></span></div>')
+
+    def state_chip(self) -> str:
+        return chip("Paused", "warn") if self.paused() else chip("Running", "ok")
+
+    def deskbar(self, rec: dict[str, Any]) -> str:
+        """The bar above the sheet on wide screens: this server, whether its tools answer, and who is signed in."""
+        state = '<span><span class="state-dot paused"></span>Paused</span>' if self.paused() else '<span><span class="state-dot"></span>Running</span>'
+        via = str(rec.get("via", ""))
+        via = "the owner password" if via == "password" else via         # otherwise: passkey “name”, Cloudflare Access (who)
+        who = f'<span class="who">Signed in with {_esc(via)}</span>' if via else '<span class="who"></span>'
+        return (f'<header class="deskbar"><span class="host">{_esc(self.host)}</span>{state}{who}'
+                f'<form method="post" action="/dashboard/logout">{self.csrf_input(rec)}{button("Sign out", "text")}</form></header>')
+
+    def page(self, title: str, active: str, inner: str, rec: dict[str, Any], status: int = 200, flash: str = "",
+             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "") -> Response:
+        """A signed-in page: top bar or the frame, the page head (title, one line of context, the page's one primary
+        action), a banner for the last action, then the cards. lede_html is an already escaped lede."""
+        n = self.waiting()
+        items = [("overview", "Overview", "/dashboard"), ("approvals", "Approvals", "/dashboard/approvals"),
+                 ("activity", "Activity", "/dashboard/activity"), *self.extra_nav, ("security", "Security", "/dashboard/security")]
+        tabs, side = "", ""
+        for key, label, href in items:
+            cur = ' aria-current="page"' if key == active else ""
+            icon = _SVG.format(_ICONS[key])
+            badge = f'<span class="count" aria-label="{n} waiting">{n}</span>' if key == "approvals" and n else ""
+            tabs += f'<a href="{href}"{cur}><span class="ico">{icon}{badge}</span><span>{label}</span></a>'
+            side += f'<a href="{href}"{cur}>{icon}<span>{label}</span>' + (f'<span class="num">{n}</span>' if key == "approvals" and n else "") + "</a>"
+        sidebar = f'<aside class="side">{self.brand()}<nav aria-label="Sections">{side}</nav></aside>'
+        topbar = f'<header class="topbar">{self.brand()}{self.state_chip()}</header>'
+        banner = f'<p class="banner{" bad" if bad else ""}" role="status">{_esc(flash)}</p>' if flash else ""
+        lede_html = lede_html or (_esc(lede) if lede else "")
+        head = (f'<div class="page-head"><div class="page-title"><h1>{_esc(title)}</h1>' + (f'<p class="lede">{lede_html}</p>' if lede_html else "") + "</div>"
+                + (f'<div class="page-actions">{actions}</div>' if actions else "") + "</div>")
+        main = '<main class="wide">' if wide else "<main>"         # Python 3.11 cannot nest the same quote in an f-string
+        return self._doc(title, f'<div class="wrap">{sidebar}<div class="frame">{topbar}{self.deskbar(rec)}<div class="sheet">{main}{head}'
+                                f'<div class="stack">{banner}{inner}</div></main></div></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>', status)
+
+    def auth_page(self, title: str, body_html: str, foot_html: str = "", status: int = 200) -> Response:
+        """Sign-in and confirm: one card in the middle of the screen, nothing outside it."""
+        inner = (f'<main class="auth"><section class="card"><div class="card-head">{self.brand()}</div>'
+                 f'<div class="card-body">{body_html}</div>' + (f'<div class="card-foot">{foot_html}</div>' if foot_html else "")
+                 + "</section></main>")
+        return self._doc(title, inner, status)
+
+    def _doc(self, title: str, body: str, status: int) -> Response:
+        doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+               f'<meta name="color-scheme" content="light dark"><title>{_esc(title)} · iCloud connector</title>'
+               f'<link rel="icon" href="/favicon.ico"><style>{_CSS}</style></head><body>{body}'
+               '<script src="/dashboard/passkey.js" defer></script></body></html>')
+        return HTMLResponse(doc, status_code=status, headers=_HEADERS)
+
+    def message(self, rec: dict[str, Any], title: str, text: str, status: int) -> Response:
+        return self.page(title, "", card(body_html=f'<p>{_esc(text)}</p>', foot_html=link_button("Back to the overview", "/dashboard")), rec, status)
+
+    @staticmethod
+    def time_left(q: Any) -> str:
+        mins = max(1, round((q.expires_at - time.time()) / 60))
+        if mins >= 90:
+            return f"{round(mins / 60)} hours"
+        if mins >= 60:
+            return "1 hour"
+        return "1 minute" if mins == 1 else f"{mins} minutes"
+
+    def ttl(self, q: Any, detail: bool = False) -> str:
+        """Time left before a waiting request is dropped, on a track as long as its whole waiting time."""
+        span = max(1.0, q.expires_at - q.created_at)
+        pct = max(1, min(100, round(100 * (q.expires_at - time.time()) / span)))
+        ends = (f'<span>Requested {self.fmt_time(q.created_at)}</span><span>Expires in <b>{self.time_left(q)}</b>, on '
+                f'{self.fmt_time(q.expires_at, with_day=True)}</span>') if detail else f'<span>Expires in</span><b>{self.time_left(q)}</b>'
+        return (f'<div class="ttl"><div class="ttl-ends">{ends}</div>'
+                f'<div class="track" role="img" aria-label="{pct}% of the waiting time left"><i style="width:{pct}%"></i></div></div>')
+
+    def fmt_time(self, t: float | None, with_day: bool = False) -> str:
+        if not t:
+            return "never"
+        d = datetime.fromtimestamp(t, self.tz)
+        return d.strftime("%d %b, %H:%M") if with_day else d.strftime("%H:%M")
+
+    def ago(self, t: float | None) -> str:
+        if not t:
+            return "never"
+        s = max(0, time.time() - t)
+        for unit, n in (("day", 86400), ("hour", 3600), ("min", 60)):
+            if s >= n:
+                v = int(s // n)
+                return f"{v} {unit}{'s' if v != 1 and unit != 'min' else ''} ago"
+        return "just now"
+
+
+def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, sources: list[ApprovalSource],
+                       exit_fn: Callable[[], None] | None = None) -> Dashboard:
+    d = Dashboard(mcp, provider, s, audit, sources, exit_fn)
+    js = (_STATIC / "passkey.js").read_bytes()
+    host = (urlsplit(s.public_url).hostname or "").lower()
+    if not d.secure and host not in ("localhost", "127.0.0.1", "::1") and not host.endswith(".localhost"):
+        log.warning("MCP_PUBLIC_URL is plain http on %s: the dashboard cookie cannot be Secure or __Host-. Use https.", host)
+    failures: dict[str, list[float]] = {}               # action -> [window start, recorded, not recorded]
+
+    def record_failure_line(action: str, summary: str, **details: Any) -> None:
+        """Failed sign-ins from anyone: at most 5 lines per kind and 10 minutes, then one line that counts the rest."""
+        now = time.time()
+        start, written, dropped = failures.get(action, [now, 0, 0])
+        if now - start > 600:
+            if dropped:
+                audit.record(action, actor="unknown", ok=False, summary=f"{int(dropped)} more like this were not recorded")
+            start, written, dropped = now, 0, 0
+        if written < 5:
+            audit.record(action, actor="unknown", ok=False, summary=summary, **details)
+            written += 1
+        else:
+            dropped += 1
+        failures[action] = [start, written, dropped]
+
+    # -- guards --------------------------------------------------------------------------------------------------------
+    def signed_in(request: Request) -> tuple[str, dict[str, Any]] | None:
+        token, rec = d.session(request)
+        return (token, rec) if rec is not None else None
+
+    def to_signin(request: Request) -> Response:
+        nxt = request.url.path if request.url.path.startswith("/dashboard") else "/dashboard"
+        return RedirectResponse(f"/dashboard/signin?next={quote(nxt)}", status_code=303, headers=_HEADERS)
+
+    async def checked_form(request: Request) -> tuple[str, dict[str, Any], Any] | Response:
+        """A POST from a signed-in owner, from this origin, with the session's CSRF token."""
+        got = signed_in(request)
+        if got is None:
+            return to_signin(request)
+        if not d.same_origin(request):
+            return d.message(got[1], "Not allowed", "This request did not come from this page. Nothing was changed.", 403)
+        form = await request.form()
+        if not hmac.compare_digest(str(form.get("csrf", "")).encode(), got[1]["csrf"].encode()):
+            return d.message(got[1], "Expired", "This form has expired. Go back, reload the page and try again.", 403)
+        return got[0], got[1], form
+
+    def recent(rec: dict[str, Any]) -> bool:
+        return time.time() - rec.get("auth_at", 0) < _STEP_UP
+
+    def set_cookie(resp: Response, token: str) -> Response:
+        resp.set_cookie(d.cookie, token, max_age=_ABSOLUTE, httponly=True, secure=d.secure, samesite="strict", path="/")
+        return resp
+
+    def safe_next(value: str) -> str:
+        return value if value.startswith("/dashboard") and "//" not in value and "\\" not in value else "/dashboard"
+
+    def sign_in_body(heading: str, lede: str, nxt: str, error: str, rec: dict[str, Any] | None) -> tuple[str, str]:
+        """The shared body of the sign-in and the confirm card: passkey first, then the password, then any error."""
+        pk = bool(d.passkeys.list()) and P.available()
+        pw = d.password_login()
+        parts = [f'<div style="display:flex;flex-direction:column;gap:4px"><h1>{_esc(heading)}</h1><p class="lede">{_esc(lede)}</p></div>']
+        if error:
+            parts.append(f'<p class="banner bad" role="alert">{_esc(error)}</p>')
+        if pk:
+            parts.append(button(_SVG.format(_ICONS["key"]) + "<span>Sign in with a passkey</span>" if rec is None else
+                                _SVG.format(_ICONS["key"]) + "<span>Confirm with your passkey</span>", "primary full",
+                                type="button", data_passkey="signin", data_next=nxt))
+        if pk and pw:
+            parts.append('<div class="or">or use the owner password</div>')
+        if pw:
+            hidden = (d.csrf_input(rec) if rec else "") + f'<input type="hidden" name="next" value="{_esc(nxt)}">'
+            parts.append(f'<form method="post" action="/dashboard/signin" style="display:flex;flex-direction:column;gap:12px">{hidden}'
+                         + field("pw", "Owner password", 'type="password" name="password" autocomplete="current-password" required'
+                                 + ("" if pk else " autofocus"))
+                         + button("Sign in with password" if rec is None else "Confirm with password", "full" if pk else "primary full")
+                         + "</form>")
+        parts.append('<p class="banner bad" data-passkey-error hidden></p>')
+        return "".join(parts), ""
+
+    # -- static ----------------------------------------------------------------------------------------------------------
+    @mcp.custom_route("/dashboard/passkey.js", methods=["GET"])
+    async def passkey_js(_: Request) -> Response:
+        return Response(js, media_type="text/javascript", headers={**_HEADERS, "Cache-Control": "public, max-age=3600"})
+
+    # -- sign in and out -------------------------------------------------------------------------------------------------
+    def signin_page(error: str = "", nxt: str = "/dashboard", status: int = 200) -> Response:
+        body, _ = sign_in_body("Sign in", "Review what your agents want to send, see what they did, and manage this server.", nxt, error, None)
+        foot = ('<p class="hint">' + ("" if d.passkeys.list() else "After you sign in, you can add a passkey under Security. ")
+                + "Ten wrong passwords in 15 minutes lock password sign-in for everyone for a while.</p>")
+        return d.auth_page("Sign in", body, foot, status)
+
+    def confirm_page(rec: dict[str, Any], back: str,
+                     lede: str = "This step changes how your server is protected, so it asks you to sign in again.") -> Response:
+        body, _ = sign_in_body("Confirm it’s you", lede, back, "", rec)
+        return d.auth_page("Confirm", body, link_button("Cancel", back))
+
+    @mcp.custom_route("/dashboard/signin", methods=["GET"])
+    async def signin_get(request: Request) -> Response:
+        if signed_in(request):
+            return RedirectResponse(safe_next(request.query_params.get("next", "/dashboard")), status_code=303, headers=_HEADERS)
+        return signin_page(nxt=safe_next(request.query_params.get("next", "/dashboard")))
+
+    @mcp.custom_route("/dashboard/signin", methods=["POST"])
+    async def signin_post(request: Request) -> Response:
+        if not d.same_origin(request):
+            return signin_page("This request did not come from this page.", status=403)
+        form = await request.form()
+        nxt = safe_next(str(form.get("next", "/dashboard")))
+        if not d.password_login():
+            return signin_page("Sign-in with the owner password is turned off. Use your passkey.", nxt, 403)
+        if not provider.login_allowed():
+            return signin_page("Too many wrong passwords. Try again in 15 minutes" + (", or use your passkey." if d.passkeys.list() else "."),
+                               nxt, 429)
+        if not hmac.compare_digest(str(form.get("password", "")).encode(), s.owner_password.encode()):
+            provider.record_failure()
+            log.warning("Failed owner-password attempt on the dashboard")
+            record_failure_line("signin.password", "Entered a wrong owner password",
+                                details={"from": request.client.host if request.client else ""})
+            return signin_page("Incorrect password.", nxt, 401)
+        token, rec = d.session(request)
+        if rec is not None:                                  # confirming an existing session
+            if not hmac.compare_digest(str(form.get("csrf", "")).encode(), rec["csrf"].encode()):
+                return signin_page("This form has expired. Reload the page and try again.", nxt, 403)
+            fresh = d.sessions.reauth(token, "password")
+            audit.record("signin.confirm", actor="owner", via="password", summary="Confirmed with the owner password")
+            resp = RedirectResponse(nxt, status_code=303, headers=_HEADERS)
+            return set_cookie(resp, fresh) if fresh else resp
+        token, rec = d.sessions.create("password")
+        audit.record("signin.password", actor="owner", via="password", summary="Signed in with the owner password")
+        return set_cookie(RedirectResponse(nxt, status_code=303, headers=_HEADERS), token)
+
+    @mcp.custom_route("/dashboard/logout", methods=["POST"])
+    async def logout(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        d.sessions.drop(got[0])
+        audit.record("signin.signout", actor="owner", via=got[1].get("via", ""), summary="Signed out of the dashboard")
+        resp = RedirectResponse("/dashboard/signin", status_code=303, headers=_HEADERS)
+        resp.delete_cookie(d.cookie, path="/", secure=d.secure, httponly=True, samesite="strict")
+        return resp
+
+    # -- passkey JSON endpoints (passkey.js) ---------------------------------------------------------------------------
+    async def json_body(request: Request) -> dict[str, Any]:
+        try:
+            data = await request.json()
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @mcp.custom_route("/dashboard/passkey/options", methods=["POST"])
+    async def passkey_options(request: Request) -> Response:
+        if not d.same_origin(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403, headers=_HEADERS)
+        purpose = str((await json_body(request)).get("purpose", ""))
+        try:
+            if purpose == "signin":
+                # Not behind the password lock: a passkey cannot be guessed, and ten wrong passwords from anyone would lock the owner out
+                return JSONResponse(d.passkeys.authentication_options(), headers=_HEADERS)
+
+            if purpose == "register":
+                got = signed_in(request)
+                if got is None or not hmac.compare_digest(request.headers.get("x-csrf", "").encode(), got[1]["csrf"].encode()):
+                    return JSONResponse({"error": "Sign in first."}, status_code=401, headers=_HEADERS)
+                if not recent(got[1]):
+                    return JSONResponse({"error": "confirm", "confirm": "/dashboard/security/confirm"}, status_code=403, headers=_HEADERS)
+                return JSONResponse(d.passkeys.registration_options(), headers=_HEADERS)
+        except P.PasskeyError as e:
+            return JSONResponse({"error": str(e)}, status_code=400, headers=_HEADERS)
+        return JSONResponse({"error": "unknown purpose"}, status_code=400, headers=_HEADERS)
+
+    @mcp.custom_route("/dashboard/passkey/verify", methods=["POST"])
+    async def passkey_verify(request: Request) -> Response:
+        if not d.same_origin(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403, headers=_HEADERS)
+        data = await json_body(request)
+        purpose, ticket = str(data.get("purpose", "")), str(data.get("ticket", ""))
+        credential = data.get("credential") if isinstance(data.get("credential"), dict) else {}
+        nxt = safe_next(str(data.get("next", "/dashboard")))
+        if purpose == "signin":
+            try:
+                key = await asyncio.to_thread(d.passkeys.authenticate, ticket, credential)
+            except P.PasskeyError as e:
+                # not counted towards the password lockout: junk passkey requests must not lock the owner's password out
+                record_failure_line("signin.passkey", "Tried to sign in with a passkey that did not verify")
+                return JSONResponse({"error": str(e)}, status_code=401, headers=_HEADERS)
+            token, rec = d.session(request)
+            if rec is not None:
+                fresh = d.sessions.reauth(token, f"passkey “{key.name}”")
+                audit.record("signin.confirm", actor="owner", via=f"passkey “{key.name}”", summary=f"Confirmed with passkey “{key.name}”")
+                resp = JSONResponse({"next": nxt}, headers=_HEADERS)
+                return set_cookie(resp, fresh) if fresh else resp
+            token, rec = d.sessions.create(f"passkey “{key.name}”")
+            audit.record("signin.passkey", actor="owner", via=f"passkey “{key.name}”", summary=f"Signed in with passkey “{key.name}”")
+            return set_cookie(JSONResponse({"next": nxt}, headers=_HEADERS), token)
+        if purpose == "register":
+            got = signed_in(request)
+            if got is None or not hmac.compare_digest(request.headers.get("x-csrf", "").encode(), got[1]["csrf"].encode()) or not recent(got[1]):
+                return JSONResponse({"error": "Sign in again first."}, status_code=401, headers=_HEADERS)
+            try:
+                key = await asyncio.to_thread(d.passkeys.register, ticket, credential, str(data.get("name", "")))
+            except P.PasskeyError as e:
+                return JSONResponse({"error": str(e)}, status_code=400, headers=_HEADERS)
+            audit.record("passkey.added", actor="owner", via=got[1].get("via", ""), summary=f"Added passkey “{key.name}”")
+            return JSONResponse({"next": "/dashboard/security?m=passkey_added"}, headers=_HEADERS)
+        return JSONResponse({"error": "unknown purpose"}, status_code=400, headers=_HEADERS)
+
+    # -- overview ------------------------------------------------------------------------------------------------------
+    @mcp.custom_route("/dashboard", methods=["GET"])
+    async def overview(request: Request) -> Response:
+        got = signed_in(request)
+        if got is None:
+            return to_signin(request)
+        rec = got[1]
+        waiting = []                    # (source, request, description), oldest deadline first
+        for src in d.sources.values():
+            items = await asyncio.to_thread(src.pending)
+            ctx = await asyncio.to_thread(src.contexts, items) if items else {}
+            waiting += [(src, q, await asyncio.to_thread(src.describe, q, ctx.get(q.id))) for q in items]
+        waiting.sort(key=lambda w: w[1].expires_at)
+        n = len(waiting)
+        try:
+            version = importlib.metadata.version("icloud-mcp-server")
+        except importlib.metadata.PackageNotFoundError:
+            version = "unknown"
+        paused = d.paused()
+        csrf = d.csrf_input(rec)
+        apps = provider.connected_apps()
+        today = datetime.now(d.tz).date()
+        done_today = sum(1 for e in audit.entries(limit=300) if datetime.fromtimestamp(e.get("t", 0), d.tz).date() == today)
+        if n:
+            lede = (f'<b>{n} {"request is" if n == 1 else "requests are"} waiting for you.</b> Nothing has left the server; '
+                    f'the {"oldest" if n > 1 else "request"} is dropped in {d.time_left(waiting[0][1])}.')
+        else:
+            lede = "Nothing is waiting for you."
+        kpis = ('<div class="kpis">' + f'<div class="lead"><span>Waiting for you</span><b>{n}</b></div>'
+                + f'<div><span>Recorded today</span><b>{done_today}</b></div>'
+                + f'<div><span>Connected apps</span><b>{len(apps)}</b></div>'
+                + f'<div><span>Tools offered</span><b>{len(mcp._tool_manager.list_tools())}</b></div></div>')
+        if waiting:
+            trs = []
+            for src, q, v in waiting[:5]:
+                to = next((val for k, val in v["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
+                who = f" · by {q.requested_by}" if getattr(q, "requested_by", None) else ""
+                sub = (f"To {to}" if to else "") + who + f" · {d.ago(q.created_at)}"
+                trs.append(f'<tr><td><b>{_esc(v["title"])}</b><span class="row-sub">{_esc(sub.lstrip(" ·"))}</span></td>'
+                           f'<td>{chip(v["badge"], "kind")}</td><td>{d.ttl(q)}</td>'
+                           f'<td>{link_button("Open", f"/dashboard/approvals?item={src.kind}:{q.id}")}</td></tr>')
+            more = hint(f"{n - 5} more on Approvals.") if n > 5 else ""
+            wait_body = ('<table class="waits"><thead><tr><th>Request</th><th>Kind</th><th>Time left</th><th></th></tr></thead>'
+                         f'<tbody>{"".join(trs)}</tbody></table>{more}')
+        else:
+            wait_body = hint("When an agent sends mail or writes an iMessage, it waits here until you decide.")
+        left = [card("Waiting for your approval", wait_body, link=("Open Approvals", "/dashboard/approvals") if n else None)]
+        entries = audit.entries(limit=5)
+        acts = "".join(f'<li><time>{d.fmt_time(e.get("t"))}</time><span>{_entry_text(e)}</span></li>' for e in entries)
+        left.append(card("Recent activity", f'<ol class="log">{acts}</ol>' if acts else hint("Nothing recorded yet."),
+                         link=("All activity", "/dashboard/activity")))
+        if s.read_only:
+            sending = "Off (read-only)"
+        elif not s.allow_send:
+            sending = "Drafts only"
+        else:
+            sending = "After approval" if s.require_approval else "Directly"
+        invites = "Allowed" if s.allow_calendar_invites else "Off"
+        prot = ('<div class="list">' + row("Sending email", value(sending)) + row("Invitations to others", value(invites))
+                + row("Emptying Trash", value("Allowed" if s.allow_permanent_delete else "Off"))
+                + row("Time zone", value(s.default_timezone)) + "</div>")
+        has_settings = any(k == "settings" for k, _, _ in d.extra_nav)
+        right = [card("Protection", prot, link=("All settings", "/dashboard/settings") if has_settings else None)]
+        health = d.last_health
+        if health is None:
+            services = row("Services", value("Not checked yet"))
+            state = ""
+        else:
+            services = "".join(
+                row(area.replace("_", " ").capitalize(),
+                    chip(f'OK · {r.get("ms", 0) / 1000:.1f} s', "ok") if r.get("ok") else chip("Failed", "err"),
+                    "" if r.get("ok") else (r.get("error") or "")[:120])
+                for area, r in (health.get("areas") or {}).items())
+            state = chip("All working", "ok") if health.get("ok") else chip("Problem", "err")
+        checked_at = hint(f'Checked {d.ago(health.get("_at"))}.') if health else ""
+        server_rows = (f'<div class="list">{services}' + row("Version", value(version)) + "</div>" + checked_at
+                       + hint("Pausing makes every tool answer that the server is paused. Nobody is signed out."))
+        foot = (f'<form method="post" action="/dashboard/check">{csrf}{button("Check now")}</form>'
+                f'<form method="post" action="/dashboard/pause">{csrf}<input type="hidden" name="paused" value="{"0" if paused else "1"}">'
+                f'{button("Resume tools" if paused else "Pause tools", "primary" if paused else "")}</form>')
+        right.append(card("Server", server_rows, foot, state or d.state_chip()))
+        actions = link_button(f"Open Approvals ({n})", "/dashboard/approvals", "primary") if n else ""
+        grid = (f'{kpis}<div class="overview-grid"><div class="overview-col">{"".join(left)}</div>'
+                f'<div class="overview-col">{"".join(right)}</div></div>')
+        return d.page("Overview", "overview", grid, rec, flash=_flash(request), wide=True, actions=actions, lede_html=lede)
+
+    @mcp.custom_route("/dashboard/check", methods=["POST"])
+    async def check(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        fn = getattr(mcp, "_icloud_health", None)
+        if fn is not None:
+            try:
+                r = await asyncio.wait_for(asyncio.to_thread(fn), timeout=45)
+            except asyncio.TimeoutError:
+                r = {"ok": False, "areas": {"check": {"ok": False, "error": "took longer than 45 s"}}}
+            d.last_health = {**r, "_at": time.time()}
+        return RedirectResponse("/dashboard?m=checked", status_code=303, headers=_HEADERS)
+
+    @mcp.custom_route("/dashboard/pause", methods=["POST"])
+    async def pause(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        want = str(got[2].get("paused", "1")) == "1"
+        from .admin import _write_private
+        if want:
+            _write_private(d.pause_file, time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+        elif os.path.exists(d.pause_file):
+            os.unlink(d.pause_file)
+        log.warning("Owner %s the server from the dashboard", "paused" if want else "resumed")
+        audit.record("server.paused" if want else "server.resumed", actor="owner", via=got[1].get("via", ""),
+                     summary="Paused all tools" if want else "Resumed all tools")
+        return RedirectResponse("/dashboard?m=" + ("paused" if want else "resumed"), status_code=303, headers=_HEADERS)
+
+    # -- approvals -----------------------------------------------------------------------------------------------------
+    def approvals_page(rec: dict[str, Any], flash: str = "", bad: bool = False, status: int = 200, selected: str = "") -> Response:
+        """The waiting requests as a list, and the chosen one (or the one dropped soonest) exactly as it will be sent."""
+        waiting = []
+        for src in d.sources.values():
+            items = src.pending()
+            ctx = src.contexts(items)
+            waiting += [(src, q, src.describe(q, ctx.get(q.id))) for q in items]
+        waiting.sort(key=lambda w: w[1].expires_at)
+        total = len(waiting)
+        recent_n = sum(time.time() - q.created_at < 3600 for _, q, _ in waiting)
+        cards = []
+        if recent_n > 2:
+            cards.append(f'<p class="alert">Agents asked for {recent_n} of these in the last hour. Approve only what you asked for.</p>')
+        if not total:
+            cards.append(card("Nothing is waiting", hint("When an agent sends mail or an iMessage, it waits here until you decide.")))
+        else:
+            src, q, v = next((w for w in waiting if f"{w[0].kind}:{w[1].id}" == selected), waiting[0])
+            links = []
+            for s2, q2, v2 in waiting:
+                to = next((val for k, val in v2["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
+                cur = ' aria-current="true"' if q2 is q else ""
+                links.append(f'<a href="/dashboard/approvals?item={_esc(s2.kind)}:{_esc(q2.id)}"{cur}><span class="q1">{chip(v2["badge"], "kind")}'
+                             f'<b>{_esc(v2["title"])}</b><span class="left">expires in {d.time_left(q2)}</span></span>'
+                             + (f'<span class="q2">To {_esc(to)}</span>' if to else "") + "</a>")
+            queue = f'<nav class="card queue" aria-label="Waiting requests">{"".join(links)}</nav>'
+            body = [f'<dl>{"".join(f"<dt>{_esc(k)}</dt><dd>{_esc(val)}</dd>" for k, val in v["rows"])}</dl>']
+            if v["warnings"]:
+                body.append('<div class="alert" role="alert"><b>Check this first</b><ul>'
+                            + "".join(f"<li>{_esc(w)}</li>" for w in v["warnings"]) + "</ul></div>")
+            if v["text"]:
+                body.append(f'<div class="message">{_esc(v["text"])}</div>')
+            body += [hint(x) for x in v["notes"]]
+            body.append(d.ttl(q, detail=True))
+            who = f" by {q.requested_by}" if getattr(q, "requested_by", None) else ""
+            body.append(f'<p class="meta">Requested {d.ago(q.created_at)}{_esc(who)}. If you do nothing, it is dropped and never sent.</p>')
+            if v["needs_override"]:
+                body.append('<label class="check"><input type="checkbox" name="override" value="1">'
+                            '<span>I read the warning and still want this sent</span></label>')
+            hidden = (d.csrf_input(rec) + f'<input type="hidden" name="kind" value="{_esc(src.kind)}">'
+                      f'<input type="hidden" name="id" value="{_esc(q.id)}"><input type="hidden" name="sha" value="{_esc(q.sha256)}">')
+            label = src.approve_label
+            foot = button("Discard", name="action", value="discard") + button(_esc(label), "primary", name="action", value="approve")
+            detail = card(v["title"], "".join(body), foot, chip(v["badge"], "kind"), form="/dashboard/approvals/act", hidden_html=hidden)
+            cards.append(f'<div class="split">{queue}{detail}</div>')
+        lede = f"{total} waiting. Nothing has left the server yet; what you see is exactly what will be sent." if total else ""
+        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True)
+
+    flashes: dict[str, str] = {}      # one-shot result of an approval, keyed by session, so the result page is a plain GET
+
+    def after_action(rec: dict[str, Any], note: str) -> Response:
+        while len(flashes) > 200:
+            flashes.pop(next(iter(flashes)))
+        flashes[rec["csrf"]] = note
+        return RedirectResponse("/dashboard/approvals", status_code=303, headers=_HEADERS)
+
+    @mcp.custom_route("/dashboard/approvals", methods=["GET"])
+    async def approvals_get(request: Request) -> Response:
+        got = signed_in(request)
+        if got is None:
+            return to_signin(request)
+        return await asyncio.to_thread(approvals_page, got[1], flashes.pop(got[1]["csrf"], ""),
+                                     selected=request.query_params.get("item", ""))
+
+    @mcp.custom_route("/dashboard/approvals/act", methods=["POST"])
+    async def approvals_act(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        _, rec, form = got
+        src = d.sources.get(str(form.get("kind", "")))
+        action = str(form.get("action", ""))
+        q = next((x for x in src.pending() if x.id == str(form.get("id", ""))), None) if src else None
+        if q is None or action not in ("approve", "discard") or not hmac.compare_digest(str(form.get("sha", "")).encode(), q.sha256.encode()):
+            return await asyncio.to_thread(approvals_page, rec, "That item is no longer waiting or has changed. Nothing was done.", True, 409)
+        v = await asyncio.to_thread(src.describe, q, src.contexts([q]).get(q.id))
+        who = {"actor": "owner", "via": rec.get("via", "")}
+        if action == "discard":
+            await asyncio.to_thread(src.discard, q)
+            audit.record("approval.discarded", **who, summary=f"Discarded {v['badge'].lower()} “{v['title']}”", kind=src.kind)
+            return after_action(rec, "Discarded. Nothing was sent.")
+        if v["needs_override"] and str(form.get("override", "")) != "1":
+            return await asyncio.to_thread(approvals_page, rec, "Not sent: tick the box under the warning if you still want it sent.", True)
+        try:
+            note = await asyncio.to_thread(src.release, q)
+        except Exception as e:  # noqa: BLE001  -- release() puts the item back; the owner can retry or discard
+            log.warning("Release of %s %s failed: %s", src.kind, q.id, e)
+            audit.record("approval.failed", **who, ok=False, summary=f"Could not send {v['badge'].lower()} “{v['title']}”", kind=src.kind)
+            return await asyncio.to_thread(approvals_page, rec, f"Not sent (still waiting): {for_owner(str(e))}", True)
+        audit.record("approval.sent", **who, summary=f"Approved {v['badge'].lower()} “{v['title']}”", kind=src.kind,
+                     recipients=[val for k, val in v["rows"] if k in ("To", "Guests", "Will be delivered to")])
+        return after_action(rec, note)
+
+    # -- activity ------------------------------------------------------------------------------------------------------
+    _FILTERS = {"all": ("All", ()), "approvals": ("Approvals", ("approval.",)), "agents": ("Agents", ("tool.",)),
+                "signins": ("Sign-ins", ("signin.", "passkey.", "app."))}
+
+    @mcp.custom_route("/dashboard/activity", methods=["GET"])
+    async def activity(request: Request) -> Response:
+        got = signed_in(request)
+        if got is None:
+            return to_signin(request)
+        which = request.query_params.get("filter", "all")
+        which = which if which in _FILTERS else "all"
+        entries = await asyncio.to_thread(audit.entries, 300, _FILTERS[which][1])
+        chain = await asyncio.to_thread(audit.verify)
+        seg = "".join(f'<a href="/dashboard/activity?filter={k}"{" aria-current=page" if k == which else ""}>{label}</a>'
+                      for k, (label, _) in _FILTERS.items())
+        cards = [f'<nav class="seg" aria-label="Filter">{seg}</nav>']
+        if not s.audit_log:
+            cards.append('<p class="alert">The activity log is turned off on this server (AUDIT_LOG=false).</p>')
+        days: dict[Any, list[dict[str, Any]]] = {}
+        today = datetime.now(d.tz).date()
+        for e in entries:
+            days.setdefault(datetime.fromtimestamp(e.get("t", 0), d.tz).date(), []).append(e)
+        for day, items in days.items():
+            label = "Today" if day == today else "Yesterday" if day == today - timedelta(days=1) else day.strftime("%a %d %b %Y")
+            lis = "".join(f'<li><time>{d.fmt_time(e.get("t"))}</time><span>{_entry_text(e, full=True)}</span></li>' for e in items)
+            cards.append(card(label, f'<ol class="log">{lis}</ol>'))
+        if not entries:
+            cards.append(card("Nothing recorded yet", hint("Writes by agents, your approvals and every sign-in appear here.")))
+        since = d.fmt_time(chain.get("since"), with_day=True) if chain.get("since") else ""
+        if chain["ok"]:
+            state, text = chip("Verified", "ok"), f'{chain["entries"]} entries, none changed since they were written' + (f" (oldest kept: {since})." if since else ".")
+        else:
+            state, text = chip("Changed", "err"), f'The log was changed after it was written, at entry {chain.get("broken_at")}. Entries from there on cannot be trusted.'
+        cards.append(card("About this log", f"<p>{_esc(text)}</p>" + hint(f"Kept for {s.audit_keep_days} days. Names, addresses and subjects; "
+                                                                          "no message bodies, passwords or tokens."),
+                          link_button("Download as JSON", "/dashboard/activity.json"), state))
+        return d.page("Activity", "activity", "".join(cards), got[1], lede="What changed on this server, newest first.")
+
+    @mcp.custom_route("/dashboard/activity.json", methods=["GET"])
+    async def activity_json(request: Request) -> Response:
+        got = signed_in(request)
+        if got is None:
+            return to_signin(request)
+        entries = await asyncio.to_thread(audit.entries, 100000)
+        return Response(json.dumps(list(reversed(entries)), ensure_ascii=False, indent=1), media_type="application/json",
+                        headers={**_HEADERS, "Content-Disposition": 'attachment; filename="icloud-mcp-activity.json"'})
+
+    # -- security ------------------------------------------------------------------------------------------------------
+    def row_action(action: str, rec: dict[str, Any], hidden: dict[str, str], label: str, danger: bool = False) -> str:
+        fields = "".join(f'<input type="hidden" name="{k}" value="{_esc(v)}">' for k, v in hidden.items())
+        return f'<form method="post" action="{action}">{d.csrf_input(rec)}{fields}{button(_esc(label), "text danger" if danger else "text")}</form>'
+
+    def security_page(rec: dict[str, Any], flash: str = "", bad: bool = False, status: int = 200) -> Response:
+        keys = d.passkeys.list()
+        cards = []
+        key_list = ('<div class="list">' + "".join(
+            row(k.name, row_action("/dashboard/security/passkey/remove", rec, {"id": k.id}, "Remove", danger=True),
+                f"Added {d.fmt_time(k.created_at, True)} · last used {d.ago(k.last_used_at)}") for k in keys) + "</div>") if keys else \
+            hint("No passkey yet. A passkey signs you in with Face ID, Touch ID or a security key, and only on this address.")
+        if P.available():
+            body = key_list + field("pkname", "Name for a new passkey", 'type="text" maxlength="40" placeholder="For example: iPhone"') \
+                + '<p class="banner bad" data-passkey-error hidden></p>'
+            foot = button(_SVG.format(_ICONS["key"]) + "<span>Add a passkey</span>", "primary", type="button", data_passkey="register",
+                          data_csrf=rec["csrf"], data_name_from="pkname")
+        else:
+            body, foot = key_list + '<p class="alert">This server cannot use passkeys: the optional webauthn package is not installed.</p>', ""
+        cards.append(card("Passkeys", body, foot, chip(str(len(keys)), "info") if keys else ""))
+        apps = provider.connected_apps()
+        app_list = ('<div class="list">' + "".join(
+            row(a["name"], row_action("/dashboard/security/apps/sign-out", rec, {"id": a["id"]}, "Sign out"),
+                f'{a["host"]} · active {d.ago(a["last_used"])}' if a["host"] else f'active {d.ago(a["last_used"])}') for a in apps) + "</div>") \
+            if apps else hint("No app is signed in.")
+        foot = (f'<form method="post" action="/dashboard/security/apps/sign-out-all">{d.csrf_input(rec)}'
+                f'{button("Sign out all apps", "danger")}</form>') if apps else ""
+        cards.append(card("Connected apps", app_list + hint("A signed-out app has to connect again, and that needs you."),
+                          foot, chip(str(len(apps)), "info") if apps else ""))
+        pw_on = d.password_login()
+        cards.append(card("Owner password",
+                          '<div class="list">' + row("Sign-in with password", value("Allowed" if pw_on else "Off")) + "</div>"
+                          + field("np", "New owner password", 'type="password" name="password" autocomplete="new-password" minlength="12" required',
+                                  "At least 12 characters. It also approves new apps on the connect page and takes effect after the server restarts."),
+                          button("Change password"), form="/dashboard/security/password", hidden_html=d.csrf_input(rec)))
+        cards.append('<div class="phone-only">' + card("This browser", '<div class="list">' + row("Signed in", value(d.ago(rec.get("created"))), rec.get("via", "")) + "</div>"
+                          + hint("Removing a passkey, changing the password and signing out apps ask you to confirm when your sign-in is older than 5 minutes."),
+                          button("Sign out", "danger"), form="/dashboard/logout", hidden_html=d.csrf_input(rec)) + "</div>")
+        return d.page("Security", "security", "".join(cards), rec, status, flash, bad, "Who can sign in here, and which apps are connected.")
+
+    @mcp.custom_route("/dashboard/security", methods=["GET"])
+    async def security(request: Request) -> Response:
+        got = signed_in(request)
+        if got is None:
+            return to_signin(request)
+        return security_page(got[1], _flash(request))
+
+    @mcp.custom_route("/dashboard/security/confirm", methods=["GET"])
+    async def security_confirm(request: Request) -> Response:
+        got = signed_in(request)
+        if got is None:
+            return to_signin(request)
+        return confirm_page(got[1], "/dashboard/security")
+
+    @mcp.custom_route("/dashboard/security/passkey/remove", methods=["POST"])
+    async def passkey_remove(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        _, rec, form = got
+        if not recent(rec):
+            return confirm_page(rec, "/dashboard/security")
+        keys = d.passkeys.list()
+        if len(keys) == 1 and not s.owner_password_login:
+            return security_page(rec, "This is your only passkey and password sign-in is off. Add another passkey first.", True, 409)
+        key = d.passkeys.remove(str(form.get("id", "")))
+        if key:
+            audit.record("passkey.removed", actor="owner", via=rec.get("via", ""), summary=f"Removed passkey “{key.name}”")
+        return security_page(rec, f"Removed “{key.name}”." if key else "That passkey was already gone.")
+
+    @mcp.custom_route("/dashboard/security/apps/sign-out", methods=["POST"])
+    async def app_sign_out(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        _, rec, form = got
+        if not recent(rec):
+            return confirm_page(rec, "/dashboard/security")
+        cid = str(form.get("id", ""))
+        name = next((a["name"] for a in provider.connected_apps() if a["id"] == cid), "an app")
+        ok = provider.sign_out(cid) if cid else False
+        if ok:
+            audit.record("app.signed_out", actor="owner", via=rec.get("via", ""), summary=f"Signed out {name}")
+        return security_page(rec, f"Signed out {name}." if ok else "That app was not signed in.", not ok)
+
+    @mcp.custom_route("/dashboard/security/apps/sign-out-all", methods=["POST"])
+    async def app_sign_out_all(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        rec = got[1]
+        if not recent(rec):
+            return confirm_page(rec, "/dashboard/security")
+        n = provider.sign_out_all()
+        audit.record("app.signed_out_all", actor="owner", via=rec.get("via", ""), summary=f"Signed out all apps ({n})")
+        return security_page(rec, f"Signed out {n} app{'s' if n != 1 else ''}.")
+
+    @mcp.custom_route("/dashboard/security/password", methods=["POST"])
+    async def change_password(request: Request) -> Response:
+        got = await checked_form(request)
+        if isinstance(got, Response):
+            return got
+        _, rec, form = got
+        if not recent(rec):
+            return confirm_page(rec, "/dashboard/security")
+        value_ = str(form.get("password", ""))
+        if problem := owner_password_problem(value_, s.bridge_token):
+            return security_page(rec, problem, True, 400)
+        from .admin import save_override
+        save_override(s.data_dir, "owner_password", value_)
+        log.warning("Owner password changed from the dashboard; it applies after a restart")
+        audit.record("owner_password.changed", actor="owner", via=rec.get("via", ""), summary="Changed the owner password")
+        return security_page(rec, "Saved. The new password applies after the server restarts.")
+
+    # other parts (settings.py) build on the same guards
+    d.signed_in, d.to_signin, d.checked_form, d.recent, d.confirm = signed_in, to_signin, checked_form, recent, confirm_page
+    return d
+
+
+_MESSAGES = {"checked": "Checked.", "paused": "Paused. Tools now answer that the server is paused.", "resumed": "Resumed.",
+             "passkey_added": "Passkey added. You can now sign in with it.",
+             "settings_saved": "Saved. The change applies when the server restarts."}
+
+
+def _flash(request: Request) -> str:
+    return _MESSAGES.get(request.query_params.get("m", ""), "")
+
+
+def _entry_text(e: dict[str, Any], full: bool = False) -> str:
+    """'<b>You</b> signed in with a passkey', '<b>Claude</b> moved messages (14) to Archive'. Summaries start with a verb."""
+    actor = e.get("actor") or "?"
+    who = "You" if actor == "owner" else ("Someone" if actor == "unknown" else actor)
+    text = str(e.get("summary") or e.get("action", ""))
+    out = f"<b>{_esc(who)}</b> {_esc(text[:1].lower() + text[1:])}"
+    if not e.get("ok", True):
+        out = f'<span style="color:var(--warn)">{out}</span>'
+    if full and (e.get("details") or {}).get("error"):
+        out += f'<br><span class="meta">{_esc(e["details"]["error"])}</span>'
+    return out

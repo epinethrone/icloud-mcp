@@ -260,7 +260,16 @@ In a new chat, ask *"Check my iCloud connection."* Your AI runs `icloud_check_he
 
 ### Approving outgoing mail
 
-With the default `SEND_REQUIRES_APPROVAL=true`, `mail_send_message`, `mail_reply_to_message` and `mail_forward_message` return `queued_for_owner_approval` and nothing leaves. Open `https://<your-host>/outbox` (bookmark it, and only type the password there, never on a link an agent gives you), enter the owner password, review the exact recipients and text, then approve or discard. Queued messages expire after `OUTBOX_TTL_SECONDS` (24 hours by default) and are released at most once.
+With the default `SEND_REQUIRES_APPROVAL=true`, `mail_send_message`, `mail_reply_to_message` and `mail_forward_message` return `queued_for_owner_approval` and nothing leaves. Open `https://<your-host>/dashboard/approvals` (bookmark it, and only sign in there, never on a link an agent gives you), review the exact recipients and text, then approve or discard. Queued messages expire after `OUTBOX_TTL_SECONDS` (24 hours by default) and are released at most once. The older `https://<your-host>/outbox` page still works and asks for the owner password on every visit.
+
+### The dashboard
+
+`https://<your-host>/dashboard` is where you look after the server: what is waiting for your approval, what agents changed, which apps are connected, and whether mail, calendar and contacts answer. It works on a phone (tab bar) and on a computer (sidebar), in light and dark mode.
+
+- **Sign in with a passkey.** Sign in once with the owner password, then add a passkey under Security: Face ID, Touch ID or a security key from then on. A passkey only works on your server's own address, so a look-alike page cannot use it. Once you have one, `OWNER_PASSWORD_LOGIN=false` turns password sign-in off. Passkeys need the optional `webauthn` package (`pip install "icloud-mcp-server[passkey]"`); the Docker image has it.
+- **Activity.** Every write an agent makes (moving mail, changing an event, editing a contact), every approval and discard, every sign-in and failed attempt, and every app you connect or sign out is recorded in `DATA_DIR/audit.jsonl`, with names, addresses and subjects but never message bodies, passwords or tokens. Each entry carries the hash of the one before it, and the Activity page says whether the file was changed afterwards. Entries are kept for `AUDIT_KEEP_DAYS` (90). Turn it off with `AUDIT_LOG=false`.
+- **Settings.** Everything the server does can be changed under Settings: areas and tools, how mail is sent, invitations, contacts, the Mac helper, read-only mode and the dashboard itself. A value that comes from the environment says so at the field, and values set there are listed with a Reset button. Changes are stored in `DATA_DIR/settings.json`, win over the environment and apply after a restart (one button). The server checks that it could start with the new values before it saves them, and a change that weakens protection asks you to sign in again. Where the server listens, how apps sign in and what it connects to stay in the environment and are only shown. `DASHBOARD_SETTINGS=view` shows settings without changing them; `off` ignores `settings.json`.
+- **Sessions.** A sign-in lasts until `DASHBOARD_SESSION_MINUTES` (30) pass without use, and 12 hours at most. Removing a passkey, changing the password and signing out apps ask you to confirm when your sign-in is older than five minutes.
 
 ## Security
 
@@ -287,7 +296,7 @@ Most clients can also ask you before a tool runs (in Claude, "ask before use" pe
 <summary><b>The full security model</b></summary>
 
 - iCloud credentials exist only in the server environment or the macOS Keychain. Clients hold short-lived bearer tokens for *this* server.
-- Clients may register dynamically, but nothing is authorised without the owner password. Redirect hosts are restricted. Tokens are stored as SHA-256 hashes (file mode 600). The approval and outbox pages lock after 10 wrong passwords in 15 minutes (server-wide; existing tokens keep working).
+- Clients may register dynamically, but nothing is authorized without the owner password. Redirect hosts are restricted. Tokens are stored as SHA-256 hashes (file mode 600). The approval and outbox pages lock after 10 wrong passwords in 15 minutes (server-wide; existing tokens keep working). The lock covers the password only: a dashboard passkey still signs in, so wrong passwords from someone else cannot lock the owner out.
 - Every refused sign-in renewal is logged with its reason (already rotated, expired, wrong client, not recognised), never with token values, and unauthenticated callers cannot flood the log: `docker compose logs icloud-mcp | grep 'oauth:'`.
 - Text from mail, events, notes and files is stripped of invisible steering characters (Unicode tag characters, zero-width spaces, direction overrides; the marks Kurdish, Persian and Arabic text need are kept), and results carry `safety_warnings` when the text addresses an AI, asks for passwords or codes, or says bank details changed (English and Dutch).
 - Every tool error is scrubbed before it reaches the agent: passwords and tokens masked, URLs cut to their host (iCloud DAV paths carry the account id), invisible characters removed. Health-check and unexpected errors, which may quote a server response, also drop account addresses and long numbers.
@@ -563,6 +572,11 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `AGENT_NOTES_FILE` | (none) | Your own rules for agents, added to the instructions and served as `icloud://agent-notes` (see `docs/agent-notes.example.md`) |
 | `DATA_DIR` | `./data` (`/data` in Docker) | OAuth state and the outbox |
 | `ADMIN_PORT` | off | Loopback-only admin API for the menu bar app (its token is `admin-token` in `DATA_DIR`) |
+| `DASHBOARD` | true | The owner's dashboard at `/dashboard` (hosted mode only) |
+| `OWNER_PASSWORD_LOGIN` | true | `false` = the dashboard signs in with a passkey only, once one exists |
+| `DASHBOARD_SESSION_MINUTES` | 30 | A dashboard sign-in ends after this long without use (12 hours at most) |
+| `AUDIT_LOG`, `AUDIT_KEEP_DAYS` | true, 90 | The activity log in `DATA_DIR/audit.jsonl` and how many days it keeps |
+| `DASHBOARD_SETTINGS` | edit | `view` = settings are shown on the dashboard but not changed there; `off` = `DATA_DIR/settings.json` is ignored |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,chatgpt.com,chat.openai.com,localhost,127.0.0.1` | Where sign-in may return a client: Claude, ChatGPT, and local clients such as Codex. Every sign-in still needs the owner password |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
 | `LOG_LEVEL` | INFO | |

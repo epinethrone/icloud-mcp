@@ -7,6 +7,7 @@ is reachable by, or returns anything useful to, a caller who lacks the password.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import hmac
 import html
@@ -57,21 +58,35 @@ def _page(title: str, inner: str, status: int = 200) -> Response:
     return HTMLResponse(body, status_code=status, headers=_HEADERS)
 
 
-def _login_form(error: str = "", status: int = 200) -> Response:
+def _login_form(error: str = "", status: int = 200, dashboard: bool = False) -> Response:
     err = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return _page("Outgoing message approval", f"""<div class="card"><h1>Outgoing message approval</h1>
 <p>Enter the owner password to review messages your agents have queued. Nothing is sent until you approve it here.</p>{err}
 <form method="post" action="/outbox"><label for="pw">Owner password</label>
 <input id="pw" type="password" name="password" autocomplete="current-password" autofocus required>
-<button class="ok" type="submit">Review queue</button></form></div>""", status)
+<button class="ok" type="submit">Review queue</button></form>
+""" + ('<p class="muted">The <a href="/dashboard/approvals">dashboard</a> shows the same queue and signs in with a passkey.</p>' if dashboard else "")
+                 + "</div>", status)
 
 
 def _row(label: str, value: str) -> str:
     return f"<tr><th>{html.escape(label)}</th><td>{html.escape(value) if value else '<span class=muted>(none)</span>'}</td></tr>" if value or label in ("Cc", "Bcc") else ""
 
 
+def flagged(d: dict[str, Any]) -> str:
+    """The warnings the original message carried: a reply to a message that tried to steer an agent needs a deliberate yes."""
+    found = list((d.get("original") or {}).get("safety_warnings") or [])
+    if d.get("agent_added_recipients"):
+        found.append("A recipient's address was added to a contact by an agent, not by you.")
+    if not found:
+        return ""
+    return ('<p class="warn">The message this answers looked like an attempt to steer the agent:</p><ul>'
+            + "".join(f"<li>{html.escape(w)}</li>" for w in found) + "</ul>")
+
+
 def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Settings, mail: MailService | None,
-                           imessage: Any = None, imessage_outbox: Any = None) -> None:
+                           imessage: Any = None, imessage_outbox: Any = None, audit: Any = None) -> None:
+    login = functools.partial(_login_form, dashboard=settings.dashboard)
     key = secrets.token_bytes(32)  # per-process: buttons issued before a restart simply stop working
     outboxes = {k: o for k, o in (("mail", mail.outbox if mail is not None else None), ("imessage", imessage_outbox)) if o is not None}
 
@@ -91,15 +106,7 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
             rows += _row("Agent-added address", ", ".join(added) + " (an agent put this address on a contact card recently)")
         return rows
 
-    def _flagged(d: dict[str, Any]) -> str:
-        """The warnings the original message carried: a reply to a message that tried to steer an agent needs a deliberate yes."""
-        found = list((d.get("original") or {}).get("safety_warnings") or [])
-        if d.get("agent_added_recipients"):
-            found.append("A recipient's address was added to a contact by an agent, not by you.")
-        if not found:
-            return ""
-        return ('<p class="warn">The message this answers looked like an attempt to steer the agent:</p><ul>'
-                + "".join(f"<li>{html.escape(w)}</li>" for w in found) + "</ul>")
+    _flagged = flagged
 
     def _buttons(kind: str, q: Any, exp: int, send_label: str, override: bool = False) -> str:
         forms = ""
@@ -165,17 +172,17 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
 
     @mcp.custom_route("/outbox", methods=["GET"])
     async def outbox_get(_: Request) -> Response:
-        return _login_form()
+        return login()
 
     @mcp.custom_route("/outbox", methods=["POST"])
     async def outbox_post(request: Request) -> Response:
         form = await request.form()
         if not provider.login_allowed():
-            return _login_form("Too many failed attempts. Try again in 15 minutes.", 429)
+            return login("Too many failed attempts. Try again in 15 minutes.", 429)
         if not hmac.compare_digest(str(form.get("password", "")).encode(), settings.owner_password.encode()):
             provider.record_failure()
             log.warning("Failed owner-password attempt on /outbox")
-            return _login_form("Incorrect password.", 401)
+            return login("Incorrect password.", 401)
         return await asyncio.to_thread(_queue_page)
 
     @mcp.custom_route("/outbox/act", methods=["POST"])
@@ -203,6 +210,8 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
                     box.claim(x.id)
             await asyncio.to_thread(claim_all)
             log.info("Owner discarded all %d queued %s messages", len(shown), kind)
+            if audit is not None:
+                audit.record("approval.discarded", actor="owner", via="password (/outbox)", summary=f"Discarded {len(shown)} queued {kind} messages", kind=kind)
             return await asyncio.to_thread(_queue_page, f'<p class="ok-note">Discarded {len(shown)}.</p>')
         q = next((x for x in box.pending() if x.id == item_id), None) if box is not None else None
         if action not in ("approve", "discard") or exp < time.time() or q is None:
@@ -215,6 +224,8 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
         if action == "discard":
             await asyncio.to_thread(box.claim, q.id)
             log.info("Owner discarded queued message %s", q.id)
+            if audit is not None:
+                audit.record("approval.discarded", actor="owner", via="password (/outbox)", summary=f"Discarded a queued {kind} message", kind=kind)
             return await asyncio.to_thread(_queue_page, '<p class="ok-note">Discarded.</p>')
         if kind == "mail" and str(form.get("override", "")) != "1":
             d = await asyncio.to_thread(mail.describe_queued, q)          # the page's own source: the memo, else a fresh read
@@ -229,6 +240,9 @@ def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Set
             log.warning("Release of %s failed: %s", q.id, e)
             return await asyncio.to_thread(_queue_page, f'<p class="err">Not sent (still queued): {html.escape(str(e))}</p>')
         log.info("Owner approved queued %s %s", kind, q.id)
+        if audit is not None:
+            audit.record("approval.sent", actor="owner", via="password (/outbox)", summary=f"Approved a queued {kind} message", kind=kind,
+                         recipients=list(result.get("recipients") or [result.get("to")] if isinstance(result, dict) else []))
         if kind == "imessage":
             status = result.get("status")
             word = {"sent": "Sent", "failed": "Not delivered", "unconfirmed": "Handed to Messages (not yet confirmed)"}.get(status, str(status))

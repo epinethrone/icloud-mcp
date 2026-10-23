@@ -71,6 +71,7 @@ class OwnerOAuthProvider:
         self.codes: dict[str, AuthorizationCode] = {}
         self.pending: dict[str, dict[str, Any]] = {}
         self.failures: list[float] = []
+        self.audit: Any = None                        # the activity log, set by create_server
         # Diagnostics only, never persisted: fingerprints (hashes) of tokens that were rotated, and log rate limiting.
         self._rotated: dict[str, float] = {}
         self._last_used: dict[str, float] = {}         # client_id -> last accepted access token (memory only)
@@ -436,7 +437,10 @@ def register_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Settings) 
         pid = str(form.get("p", ""))
         action = str(form.get("action", "approve"))
         if action == "deny":
+            name = (provider.pending.get(pid) or {}).get("client_name") or "An app"
             url = provider.deny(pid)
+            if url and getattr(provider, "audit", None) is not None:
+                provider.audit.record("app.denied", actor="owner", via="password", summary=f"Refused to connect {name}")
             return RedirectResponse(url, status_code=302, headers=_HEADERS) if url else _page(provider, pid)
         if not provider.login_allowed():
             return _page(provider, pid, "Too many failed attempts. Try again in 15 minutes.", 429)
@@ -444,8 +448,13 @@ def register_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Settings) 
         if not hmac.compare_digest(supplied.encode(), settings.owner_password.encode()):
             provider.record_failure()
             log.warning("Failed owner-password attempt")
+            if getattr(provider, "audit", None) is not None:
+                provider.audit.record("signin.password", actor="unknown", ok=False, summary="Wrong owner password on the connect page")
             return _page(provider, pid, "Incorrect password.", 401)
+        name = (provider.pending.get(pid) or {}).get("client_name") or "An app"
         url = provider.approve(pid)
         if not url:
             return _page(provider, pid)
+        if getattr(provider, "audit", None) is not None:
+            provider.audit.record("app.connected", actor="owner", via="password", summary=f"Connected {name}")
         return RedirectResponse(url, status_code=302, headers=_HEADERS)
