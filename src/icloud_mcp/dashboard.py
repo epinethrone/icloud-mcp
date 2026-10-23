@@ -137,7 +137,7 @@ class Sessions:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Approval sources: one interface for queued mail, iMessages and (with ALLOW_CALENDAR_INVITES=approve) calendar changes
+# Approval sources: one interface for queued mail and iMessages
 # ---------------------------------------------------------------------------------------------------------------------
 class ApprovalSource:
     kind = ""
@@ -239,44 +239,54 @@ class IMessageApprovals(ApprovalSource):
 # Page frame and components
 #
 # Every page follows the same structure, so nothing floats:
-#   top bar (phones) or sidebar (from 860 px): the app, this server's address, its state
-#   page head: title and one line of context
+#   top bar and tab bar (phones), or from 860 px a tinted frame: the sidebar and a bar above the page with this server's
+#   address, its state and Sign out, around one white sheet that holds the page
+#   page head: title, one line of context (the finding that matters most) and at most the page's one primary action
 #   cards: a head (title, at most one status chip, never a button), a body (rows, text, fields), a foot (all of the
 #   card's buttons, right-aligned, the main action last; full width on phones)
 #   row actions (remove a passkey, sign out an app) sit at the right end of their row, all the same size
 # ---------------------------------------------------------------------------------------------------------------------
 _CSS = """
-:root{color-scheme:light dark;--bg:#f2f2f7;--card:#fff;--text:#1d1d1f;--muted:#636366;--line:#d1d1d6;--quiet:#e5e5ea;--code:#f2f2f7;
---accent:#0071e3;--accent-text:#0066cc;--info:#e8f0fe;--info-text:#0b4a8f;--ok-bg:#e3f5e8;--ok:#1a7f37;--warn-bg:#fdf1dc;--warn:#8a5300;
---err-bg:#fde8e8;--err:#c00;--badge:#d70015;--bar:#f9f9fb;--shadow:#0000000d;--knob:#fff;--knob-shadow:#0004;--seg-on:#fff}
-@media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--muted:#98989d;--line:#38383a;--quiet:#2c2c2e;--code:#2c2c2e;
---accent:#0a84ff;--accent-text:#4da3ff;--info:#0a2a4d;--info-text:#9ecbff;--ok-bg:#0f2e1a;--ok:#3fb950;--warn-bg:#33240a;--warn:#ffb340;
---err-bg:#3a1414;--err:#ff6961;--badge:#ff453a;--bar:#111113;--shadow:#0000;--knob:#fff;--knob-shadow:#0008;--seg-on:#636366}}
+:root{color-scheme:light dark;--bg:#eef2f6;--sheet:#fff;--card:#fff;--text:#131416;--muted:#5d5f60;--line:#e6e9ed;--quiet:#f0f1f3;--control:#cdced1;
+--fill:#ebedee;--active:#e2e7ed;--code:#f7f9fb;--primary:#131416;--on-primary:#fff;--accent:#0a66c9;--accent-text:#0a5cb5;--track:#e2edf9;
+--info:#e2edf9;--info-text:#0b4a8f;--ok-bg:#dcfae5;--ok:#1e7b4f;--ok-ink:#04250e;--warn-bg:#fffbeb;--warn:#92400e;--err-bg:#ffedea;--err:#c4242a;
+--err-ink:#831c1e;--knob:#fff;--knob-shadow:#0003;--seg-on:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--sheet:#141619;--card:#141619;--text:#f4f5f6;--muted:#b0b4b9;--line:#262a2f;--quiet:#1d2024;
+--control:#454a50;--fill:#23272c;--active:#23272c;--code:#1a1d21;--primary:#f4f5f6;--on-primary:#0b0d10;--accent:#58a2f5;--accent-text:#7ab5f7;
+--track:#15253a;--info:#15253a;--info-text:#9ecbff;--ok-bg:#172a1d;--ok:#3fc07a;--ok-ink:#3fc07a;--warn-bg:#2a2212;--warn:#f0b75a;--err-bg:#2c1a20;
+--err:#e5566f;--err-ink:#e5566f;--knob:#fff;--knob-shadow:#0008;--seg-on:#3a3f45}}
 *{box-sizing:border-box}
-body{font:16px/1.45 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;-webkit-text-size-adjust:100%}
+body{font:16px/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:var(--sheet);color:var(--text);margin:0;-webkit-text-size-adjust:100%}
 a{color:var(--accent-text)}
 h1,h2,h3{margin:0;text-wrap:balance}
 p{margin:0}
+.num{font-variant-numeric:tabular-nums}
 .wrap{display:flex;min-height:100vh}
+.frame{flex:1;min-width:0;display:flex;flex-direction:column}
 main{flex:1;min-width:0;max-width:52rem;padding:0 16px calc(96px + env(safe-area-inset-bottom,0px))}
 .stack{display:flex;flex-direction:column;gap:12px}
 /* top bar (phones) */
 .topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;
-background:var(--bar);border-bottom:1px solid var(--line)}
+background:var(--bg);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
 .brand img{width:28px;height:28px;border-radius:7px;flex-shrink:0}
 .brand-text{display:flex;flex-direction:column;min-width:0;line-height:1.2}
 .brand-name{font-weight:600;font-size:15px}
 .brand-host{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the bar above the sheet (wide screens): this server, its state, who is signed in */
+.deskbar{display:none}
 /* page head */
-.page-head{padding:20px 0 14px;display:flex;flex-direction:column;gap:4px}
-.page-head h1{font-size:30px;font-weight:700;letter-spacing:-.01em}
+.page-head{padding:20px 0 16px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.page-head>.page-title{display:flex;flex-direction:column;gap:4px;flex:1 1 20rem;min-width:0}
+.page-head h1{font-size:24px;font-weight:600;letter-spacing:-.01em}
+.page-actions{display:flex;gap:8px;flex-wrap:wrap}
 .lede{color:var(--muted);font-size:15px}
-/* cards */
-.card{background:var(--card);border-radius:14px;box-shadow:0 1px 4px var(--shadow);overflow:hidden}
+.lede b{color:var(--text);font-weight:500}
+/* cards: one 1px edge, no shadow */
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 0}
-.card-head h2{font-size:17px;font-weight:600}
-.head-link{font-size:14px;text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center;gap:4px}
+.card-head h2{font-size:16px;font-weight:600}
+.head-link{font-size:14px;font-weight:500;color:var(--text);text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center;gap:4px}
 .head-link:hover{text-decoration:underline}
 .card-body{padding:10px 16px 14px;display:flex;flex-direction:column;gap:10px}
 .card-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--quiet)}
@@ -288,73 +298,118 @@ background:var(--bar);border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
 .row-main{display:flex;flex-direction:column;min-width:0}
 .row-sub{font-size:13px;color:var(--muted)}
-.row-value{color:var(--muted);text-align:right;flex-shrink:0;max-width:60%}
+.row-value{text-align:right;flex-shrink:0;max-width:60%;font-variant-numeric:tabular-nums}
+.row-value.off{color:var(--muted)}
 .row form{flex-shrink:0}
 .hint{font-size:13px;color:var(--muted)}
+/* key figures: one container split by dividers */
+.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.kpis>div{padding:12px 16px;border-left:1px solid var(--line);border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpis>div:nth-child(odd){border-left:0}
+.kpis>div:nth-child(-n+2){border-top:0}
+.kpis span{font-size:13px;color:var(--muted)}
+.kpis b{font-size:26px;line-height:1.25;font-weight:400;font-variant-numeric:tabular-nums}
+.kpis .lead b{color:var(--accent);font-weight:500}
+/* time left before a waiting request is dropped */
+.ttl{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:9rem}
+.ttl-ends{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ttl-ends b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
+.track{height:6px;border-radius:3px;background:var(--track);overflow:hidden}
+.track i{display:block;height:100%;background:var(--accent);border-radius:3px}
+/* waiting list on the overview */
+.waits{width:100%;border-collapse:collapse;font-size:15px}
+.waits th{font-size:12px;font-weight:400;color:var(--muted);text-align:left;padding:4px 12px 6px 0}
+.waits td{padding:12px 12px 12px 0;border-top:1px solid var(--quiet);vertical-align:middle}
+.waits td:last-child{padding-right:0;text-align:right}
+.waits b{font-weight:500;display:block}
+.waits .row-sub{display:block}
+@media (max-width:639px){.waits thead,.waits td:nth-child(2){display:none}.waits tr{display:block;border-top:1px solid var(--quiet);padding:12px 0}
+.waits tr:first-child{border-top:0}.waits td{display:block;border:0;padding:0}.waits td+td{margin-top:8px}.waits td:last-child{text-align:left}}
+/* approvals: the list and the selected request */
+.split{display:grid;gap:12px;align-items:start}
+.queue{display:flex;flex-direction:column;padding:6px}
+.queue a{display:block;padding:12px;border-radius:8px;color:var(--text);text-decoration:none}
+.queue a:hover{background:var(--quiet)}
+.queue a[aria-current=true]{background:var(--active)}
+.q1{display:flex;gap:8px;align-items:center;min-width:0}
+.q1 b{font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.q1 .left{margin-left:auto;color:var(--muted);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.q2{color:var(--muted);font-size:13px;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* underline tabs inside a page (settings areas) */
+.subtabs{display:flex;gap:20px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;margin-bottom:4px}
+.subtabs a{padding:8px 0 10px;color:var(--muted);text-decoration:none;font-weight:500;font-size:14px;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.subtabs a[aria-current=page]{color:var(--text);border-bottom-color:var(--accent)}
+/* settings: the section's name beside its fields */
+.srow{display:grid;gap:10px}
+.srow-head h2{font-size:16px;font-weight:600}
 /* chips and banners */
-.chip{font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap;background:var(--quiet);color:var(--text)}
-.chip.info{background:var(--info);color:var(--info-text)}.chip.ok{background:var(--ok-bg);color:var(--ok)}
-.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.err{background:var(--err-bg);color:var(--err)}
-.banner{border-radius:12px;padding:12px 14px;font-size:15px;background:var(--info);color:var(--info-text)}
-.banner.bad{background:var(--err-bg);color:var(--err)}
+.chip{font-size:12px;font-weight:500;padding:2px 8px;border-radius:999px;white-space:nowrap;background:var(--fill);color:var(--text);flex:none}
+.chip.info{background:var(--fill);color:var(--text)}.chip.ok{background:var(--ok-bg);color:var(--ok-ink)}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.err{background:var(--err-bg);color:var(--err-ink)}
+.kind{border-radius:4px}
+.banner{border-radius:8px;padding:10px 14px;font-size:15px;background:var(--info);color:var(--info-text)}
+.banner.bad{background:var(--err-bg);color:var(--err-ink)}
 .field-error{font-size:13px;color:var(--err);font-weight:600}
 .field [aria-invalid=true]{border-color:var(--err)}
-.alert{border-radius:10px;padding:10px 12px;font-size:14px;background:var(--warn-bg);color:var(--warn)}
+.alert{border-radius:8px;padding:10px 12px;font-size:14px;background:var(--warn-bg);color:var(--warn)}
 .alert ul{margin:6px 0 0;padding-left:18px}
 /* content */
-.message{background:var(--code);padding:10px 12px;border-radius:10px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font-size:15px;line-height:1.5}
-pre{background:var(--code);padding:10px 12px;border-radius:10px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font:14px/1.45 ui-monospace,Menlo,monospace;margin:0}
+.message{background:var(--code);padding:12px 14px;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font-size:15px;line-height:1.6}
+pre{background:var(--code);padding:10px 12px;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font:14px/1.45 ui-monospace,Menlo,monospace;margin:0}
 dl{display:grid;grid-template-columns:minmax(4.5rem,max-content) minmax(0,1fr);gap:6px 14px;margin:0;font-size:15px}
 dt{color:var(--muted)} dd{margin:0;word-break:break-word}
 .meta{font-size:13px;color:var(--muted)}
-/* buttons */
-.btn{font:inherit;font-size:15px;font-weight:500;min-height:44px;padding:0 18px;border-radius:10px;border:0;cursor:pointer;
-background:var(--quiet);color:var(--text);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}
-.btn.primary{background:var(--accent);color:#fff;font-weight:600}
+/* buttons: one filled primary per screen, near-black; the rest outlined */
+.btn{font:inherit;font-size:15px;font-weight:500;min-height:44px;padding:0 18px;border-radius:8px;border:1px solid var(--control);cursor:pointer;
+background:var(--card);color:var(--text);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn:hover{background:var(--quiet)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.btn.primary:hover{opacity:.9}
 .btn.danger{color:var(--err)}
-.btn.text{background:none;color:var(--accent-text);padding:0 4px;min-width:5.5rem;justify-content:flex-end}
+.btn.text{background:none;border-color:transparent;color:var(--text);padding:0 4px;min-width:5.5rem;justify-content:flex-end}
+.btn.text:hover{text-decoration:underline}
 .btn.text.danger{color:var(--err)}
 .btn[disabled]{opacity:.5;cursor:default}
 .btn svg{width:20px;height:20px}
-:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* forms */
 .field{display:flex;flex-direction:column;gap:6px}
-.field label{font-size:14px;font-weight:600}
-.field input,.field select,.field textarea{width:100%;min-height:46px;padding:0 12px;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text)}
+.field label{font-size:14px;font-weight:500}
+.field input,.field select,.field textarea{width:100%;min-height:46px;padding:0 12px;font:inherit;font-size:16px;border:1px solid var(--control);border-radius:8px;background:var(--card);color:var(--text)}
 .field textarea{padding:10px 12px;min-height:5rem;resize:vertical}
 .field input[disabled],.field select[disabled],.field textarea[disabled]{opacity:.6}
-.field-label{font-size:14px;font-weight:600}
+.field-label{font-size:14px;font-weight:500}
 .switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:48px}
 .switch-row label{display:flex;flex-direction:column;gap:2px;font-size:15px}
-.switch{appearance:none;-webkit-appearance:none;flex-shrink:0;width:51px;height:31px;border-radius:16px;background:var(--line);position:relative;cursor:pointer;margin:0}
+.switch{appearance:none;-webkit-appearance:none;flex-shrink:0;width:51px;height:31px;border-radius:16px;background:var(--control);position:relative;cursor:pointer;margin:0}
 .switch::before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:var(--knob);box-shadow:0 1px 3px var(--knob-shadow);transition:left .15s}
 .switch:checked{background:var(--ok)}
 .switch:checked::before{left:22px}
 .switch[disabled]{opacity:.5;cursor:default}
-.radio-seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--quiet);border-radius:9px;padding:2px;gap:2px}
-.radio-seg label{position:relative;min-height:38px;display:flex;align-items:center;justify-content:center;border-radius:7px;font-size:13px;cursor:pointer;text-align:center;padding:0 4px;white-space:nowrap}
+.radio-seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--fill);border-radius:8px;padding:3px;gap:2px}
+.radio-seg label{position:relative;min-height:38px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;text-align:center;padding:0 6px;white-space:nowrap}
 .radio-seg input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
-.radio-seg label:has(input:checked){background:var(--seg-on);font-weight:600;box-shadow:0 1px 3px var(--knob-shadow)}
-.radio-seg label:has(input:focus-visible){outline:3px solid var(--accent);outline-offset:1px}
+.radio-seg label:has(input:checked){background:var(--seg-on);outline:1px solid var(--line)}
+.radio-seg label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
 .check input{width:20px;height:20px;margin:1px 0 0;flex-shrink:0}
 /* segmented filter */
-.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--quiet);border-radius:9px;padding:2px;gap:2px}
-.seg a{min-height:34px;display:flex;align-items:center;justify-content:center;border-radius:7px;font-size:13px;color:var(--text);text-decoration:none}
-.seg a[aria-current=page]{background:var(--seg-on);font-weight:600;box-shadow:0 1px 3px var(--knob-shadow)}
-/* activity */
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--fill);border-radius:8px;padding:3px;gap:2px}
+.seg a{min-height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:500;color:var(--text);text-decoration:none}
+.seg a[aria-current=page]{background:var(--seg-on);outline:1px solid var(--line)}
+/* activity: times in the text face, tabular */
 ol.log{list-style:none;margin:0;padding:0}
-ol.log li{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:10px;padding:10px 0;border-bottom:1px solid var(--quiet);font-size:15px}
+ol.log li{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--quiet);font-size:15px}
 ol.log li:last-child{border-bottom:0}
-ol.log time{font:12px/1.9 ui-monospace,Menlo,monospace;color:var(--muted);font-variant-numeric:tabular-nums}
+ol.log time{font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
 /* tab bar (phones) */
-.tabs{position:fixed;left:0;right:0;bottom:0;z-index:2;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--bar);
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:2;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--bg);
 border-top:1px solid var(--line);padding:4px 4px calc(6px + env(safe-area-inset-bottom,0px))}
 .tabs a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:50px;text-decoration:none;color:var(--muted);font-size:11px;font-weight:500}
-.tabs a[aria-current=page]{color:var(--accent);font-weight:600}
+.tabs a[aria-current=page]{color:var(--text);font-weight:600}
 .tabs svg{width:24px;height:24px}
 .ico{position:relative;display:inline-flex}
-.count{position:absolute;top:-4px;right:-11px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--badge);color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center}
+.count{position:absolute;top:-4px;right:-11px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--text);color:var(--sheet);font-size:11px;font-weight:700;line-height:18px;text-align:center}
 /* sidebar (wide screens) */
 .side{display:none}
 /* sign-in */
@@ -363,49 +418,61 @@ border-top:1px solid var(--line);padding:4px 4px calc(6px + env(safe-area-inset-
 .auth .card-head{padding:18px 18px 0}
 .auth .card-body{padding:14px 18px 18px;gap:14px}
 .auth .card-foot{justify-content:flex-start}
-.auth h1{font-size:24px;font-weight:700}
+.auth h1{font-size:22px;font-weight:600}
 .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
 .or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
 .full{width:100%}
-@media (min-width:640px){.card-foot .btn{flex:0 0 auto}.auth .card-foot .btn{flex:1 1 auto}}
+@media (min-width:640px){.card-foot .btn{flex:0 0 auto}.auth .card-foot .btn{flex:1 1 auto}
+.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.kpis>div{border-top:0}.kpis>div:nth-child(odd){border-left:1px solid var(--line)}.kpis>div:first-child{border-left:0}}
 /* Mouse and trackpad: desktop sizes (buttons as wide as their label, about 32 px high). Touch keeps 44 px targets. */
 @media (pointer:fine) and (min-width:640px){
-body{font-size:15px}
-.btn{min-height:32px;padding:0 14px;font-size:14px;border-radius:8px}
+body{font-size:14px}
+.btn{min-height:32px;padding:0 12px;font-size:14px;border-radius:6px}
 .btn svg{width:16px;height:16px}
 .btn.text{min-height:32px;min-width:0;padding:0 2px}
-.card-foot{padding:10px 16px;background:var(--bar)}
-.field input,.field select{min-height:34px;font-size:14px;border-radius:8px;padding:0 10px}
-.field textarea{font-size:14px;border-radius:8px}
-.field label,.field-label{font-size:13px}
+.field input,.field select{min-height:36px;font-size:14px;border-radius:6px;padding:0 10px}
+.field textarea{font-size:14px;border-radius:6px}
 .row{min-height:40px}
-.switch{width:38px;height:22px;border-radius:11px}
-.switch::before{top:2px;left:2px;width:18px;height:18px}
-.switch:checked::before{left:18px}
+.switch{width:32px;height:18px;border-radius:9px}
+.switch::before{top:2px;left:2px;width:14px;height:14px}
+.switch:checked::before{left:16px}
 .switch-row{min-height:40px}
 .radio-seg label{min-height:28px}
 .seg a{min-height:28px}
 .auth .btn{min-height:36px}
+.waits,.message,dl,ol.log li,.switch-row label{font-size:14px}
 }
 @media (pointer:fine) and (min-width:860px){.field,.switch-row,.radio-seg{max-width:36rem}}
+/* From 860 px: a tinted frame (sidebar and the bar above) around one white sheet that holds the page */
 @media (min-width:860px){
+body{background:var(--bg)}
 .topbar,.tabs{display:none}
-.side{display:flex;flex-direction:column;gap:2px;width:260px;flex-shrink:0;padding:20px 12px;border-right:1px solid var(--line);background:var(--bar);position:sticky;top:0;height:100vh}
-.side .brand{padding:0 8px 18px;flex:0 0 auto}
+.side{display:flex;flex-direction:column;gap:2px;width:228px;flex-shrink:0;padding:12px;position:sticky;top:0;height:100vh}
+.side .brand{padding:4px 8px 16px;flex:0 0 auto}
 .side nav{display:flex;flex-direction:column;gap:2px}
-.side nav a{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 10px;border-radius:8px;color:var(--text);text-decoration:none}
-.side nav a[aria-current=page]{background:var(--info);color:var(--info-text);font-weight:600}
-.side svg{width:20px;height:20px}
-.side .num{margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--badge);color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center}
-.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding:12px 8px 0;border-top:1px solid var(--line)}
-.side-foot .chip{align-self:flex-start}
-main{padding:0 40px 40px}
-.page-head{padding-top:32px}
+.side nav a{display:flex;align-items:center;gap:10px;min-height:34px;padding:0 10px;border-radius:8px;color:var(--text);text-decoration:none;font-size:14px}
+.side nav a:hover{background:var(--quiet)}
+.side nav a[aria-current=page]{background:var(--active);font-weight:500}
+.side svg{width:16px;height:16px;color:var(--muted)}
+.side .num{margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--text);color:var(--sheet);font-size:12px;font-weight:600;line-height:20px;text-align:center;font-variant-numeric:tabular-nums}
+.deskbar{display:flex;align-items:center;gap:16px;min-height:48px;padding:0 20px 0 4px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.deskbar .host{color:var(--text);font-weight:500}
+.deskbar .who{margin-left:auto}
+.deskbar form{display:flex}
+.sheet{flex:1;background:var(--sheet);border:1px solid var(--line);border-radius:16px;margin:0 8px 8px 0;min-width:0}
+main{padding:0 24px 32px}
+.page-head{padding-top:24px}
+.page-head h1{font-size:22px}
+.split{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
+.srow{grid-template-columns:minmax(0,14rem) minmax(0,1fr);gap:24px;padding-top:8px}
+.srow-head h2{padding-top:14px}
 }
+.state-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px}
+.state-dot.paused{background:var(--warn)}
 .overview-grid{display:grid;gap:12px}
-@media (min-width:860px){.phone-only{display:none}}   /* the sidebar carries Sign out from here on */
-@media (min-width:1100px){main.wide{max-width:72rem}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-grid>.span2{grid-column:1/-1}
-.overview-grid>.card{display:flex;flex-direction:column}.overview-grid>.card>.card-body{flex:1}}
+.overview-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+@media (min-width:860px){.phone-only{display:none}}   /* the bar above the sheet carries Sign out from here on */
+@media (min-width:1100px){main.wide{max-width:76rem}.overview-grid{grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 """
 
@@ -529,9 +596,19 @@ class Dashboard:
     def state_chip(self) -> str:
         return chip("Paused", "warn") if self.paused() else chip("Running", "ok")
 
+    def deskbar(self, rec: dict[str, Any]) -> str:
+        """The bar above the sheet on wide screens: this server, whether its tools answer, and who is signed in."""
+        state = '<span><span class="state-dot paused"></span>Paused</span>' if self.paused() else '<span><span class="state-dot"></span>Running</span>'
+        via = str(rec.get("via", ""))
+        via = "the owner password" if via == "password" else via         # otherwise: passkey “name”, Cloudflare Access (who)
+        who = f'<span class="who">Signed in with {_esc(via)}</span>' if via else '<span class="who"></span>'
+        return (f'<header class="deskbar"><span class="host">{_esc(self.host)}</span>{state}{who}'
+                f'<form method="post" action="/dashboard/logout">{self.csrf_input(rec)}{button("Sign out", "text")}</form></header>')
+
     def page(self, title: str, active: str, inner: str, rec: dict[str, Any], status: int = 200, flash: str = "",
-             bad: bool = False, lede: str = "", wide: bool = False) -> Response:
-        """A signed-in page: top bar or sidebar, the page head, a banner for the last action, then the cards."""
+             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "") -> Response:
+        """A signed-in page: top bar or the frame, the page head (title, one line of context, the page's one primary
+        action), a banner for the last action, then the cards. lede_html is an already escaped lede."""
         n = self.waiting()
         items = [("overview", "Overview", "/dashboard"), ("approvals", "Approvals", "/dashboard/approvals"),
                  ("activity", "Activity", "/dashboard/activity"), *self.extra_nav, ("security", "Security", "/dashboard/security")]
@@ -542,15 +619,15 @@ class Dashboard:
             badge = f'<span class="count" aria-label="{n} waiting">{n}</span>' if key == "approvals" and n else ""
             tabs += f'<a href="{href}"{cur}><span class="ico">{icon}{badge}</span><span>{label}</span></a>'
             side += f'<a href="{href}"{cur}>{icon}<span>{label}</span>' + (f'<span class="num">{n}</span>' if key == "approvals" and n else "") + "</a>"
-        sidebar = (f'<aside class="side">{self.brand()}<nav aria-label="Sections">{side}</nav>'
-                   f'<div class="side-foot">{self.state_chip()}<form method="post" action="/dashboard/logout">{self.csrf_input(rec)}'
-                   f'{button("Sign out", "full")}</form></div></aside>')
+        sidebar = f'<aside class="side">{self.brand()}<nav aria-label="Sections">{side}</nav></aside>'
         topbar = f'<header class="topbar">{self.brand()}{self.state_chip()}</header>'
         banner = f'<p class="banner{" bad" if bad else ""}" role="status">{_esc(flash)}</p>' if flash else ""
-        head = f'<div class="page-head"><h1>{_esc(title)}</h1>' + (f'<p class="lede">{_esc(lede)}</p>' if lede else "") + "</div>"
+        lede_html = lede_html or (_esc(lede) if lede else "")
+        head = (f'<div class="page-head"><div class="page-title"><h1>{_esc(title)}</h1>' + (f'<p class="lede">{lede_html}</p>' if lede_html else "") + "</div>"
+                + (f'<div class="page-actions">{actions}</div>' if actions else "") + "</div>")
         main = '<main class="wide">' if wide else "<main>"         # Python 3.11 cannot nest the same quote in an f-string
-        return self._doc(title, f'<div class="wrap">{sidebar}<div style="flex:1;min-width:0">{topbar}{main}{head}'
-                                f'<div class="stack">{banner}{inner}</div></main></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>', status)
+        return self._doc(title, f'<div class="wrap">{sidebar}<div class="frame">{topbar}{self.deskbar(rec)}<div class="sheet">{main}{head}'
+                                f'<div class="stack">{banner}{inner}</div></main></div></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>', status)
 
     def auth_page(self, title: str, body_html: str, foot_html: str = "", status: int = 200) -> Response:
         """Sign-in and confirm: one card in the middle of the screen, nothing outside it."""
@@ -568,6 +645,20 @@ class Dashboard:
 
     def message(self, rec: dict[str, Any], title: str, text: str, status: int) -> Response:
         return self.page(title, "", card(body_html=f'<p>{_esc(text)}</p>', foot_html=link_button("Back to the overview", "/dashboard")), rec, status)
+
+    @staticmethod
+    def time_left(q: Any) -> str:
+        mins = max(1, int((q.expires_at - time.time()) / 60))
+        return f"{mins // 60} h {mins % 60} m" if mins >= 60 else f"{mins} min"
+
+    def ttl(self, q: Any, detail: bool = False) -> str:
+        """Time left before a waiting request is dropped, on a track as long as its whole waiting time."""
+        span = max(1.0, q.expires_at - q.created_at)
+        pct = max(1, min(100, round(100 * (q.expires_at - time.time()) / span)))
+        ends = (f'<span>Requested {self.fmt_time(q.created_at)}</span><span><b>{self.time_left(q)}</b> left · dropped '
+                f'{self.fmt_time(q.expires_at, with_day=True)}</span>') if detail else f'<span>Dropped in</span><b>{self.time_left(q)}</b>'
+        return (f'<div class="ttl"><div class="ttl-ends">{ends}</div>'
+                f'<div class="track" role="img" aria-label="{pct}% of the waiting time left"><i style="width:{pct}%"></i></div></div>')
 
     def fmt_time(self, t: float | None, with_day: bool = False) -> str:
         if not t:
@@ -776,58 +867,84 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if got is None:
             return to_signin(request)
         rec = got[1]
-        kinds = {}
+        waiting = []                    # (source, request, description), oldest deadline first
         for src in d.sources.values():
-            if c := len(await asyncio.to_thread(src.pending)):
-                kinds[src.badge] = c
-        n = sum(kinds.values())
+            items = await asyncio.to_thread(src.pending)
+            ctx = await asyncio.to_thread(src.contexts, items) if items else {}
+            waiting += [(src, q, await asyncio.to_thread(src.describe, q, ctx.get(q.id))) for q in items]
+        waiting.sort(key=lambda w: w[1].expires_at)
+        n = len(waiting)
         try:
             version = importlib.metadata.version("icloud-mcp-server")
         except importlib.metadata.PackageNotFoundError:
             version = "unknown"
         paused = d.paused()
         csrf = d.csrf_input(rec)
-        cards = []
-        if n:
-            cards.append('<div class="span2">' + card("Waiting for your approval", f'<p>{_esc(", ".join(f"{c} {k.lower()}" for k, c in kinds.items()))}. '
-                              'Nothing has left the server yet.</p>', link_button("Review", "/dashboard/approvals", "primary"), chip(str(n), "info")) + "</div>")
-        health = d.last_health
-        if health is None:
-            services = hint("Not checked since the server started.")
-            state = ""
-        else:
-            services = '<div class="list">' + "".join(
-                row(area.replace("_", " ").capitalize(),
-                    chip(f'OK · {r.get("ms", 0) / 1000:.1f} s', "ok") if r.get("ok") else chip("Failed", "err"),
-                    "" if r.get("ok") else (r.get("error") or "")[:120])
-                for area, r in (health.get("areas") or {}).items()) + "</div>" + hint(f'Checked {d.ago(health.get("_at"))}.')
-            state = chip("All working", "ok") if health.get("ok") else chip("Problem", "err")
-        cards.append(card("Services", services, button("Check now"), state, form="/dashboard/check", hidden_html=csrf))
         apps = provider.connected_apps()
-        server_rows = ('<div class="list">'
-                       + row("Tools", value(f"{len(mcp._tool_manager.list_tools())} offered"))
-                       + row("Connected apps", value(str(len(apps))))
-                       + row("Version", value(version)) + "</div>"
-                       + hint("Pausing makes every tool answer that the server is paused. Nobody is signed out."))
-        cards.append(card("Server", server_rows, button("Resume tools" if paused else "Pause tools", "" if not paused else "primary"),
-                          d.state_chip(), form="/dashboard/pause", hidden_html=csrf + f'<input type="hidden" name="paused" value="{"0" if paused else "1"}">'))
+        today = datetime.now(d.tz).date()
+        done_today = sum(1 for e in audit.entries(limit=300) if datetime.fromtimestamp(e.get("t", 0), d.tz).date() == today)
+        if n:
+            lede = (f'<b>{n} {"request is" if n == 1 else "requests are"} waiting for you.</b> Nothing has left the server; '
+                    f'the {"oldest" if n > 1 else "request"} is dropped in {d.time_left(waiting[0][1])}.')
+        else:
+            lede = "Nothing is waiting for you."
+        kpis = ('<div class="kpis">' + f'<div class="lead"><span>Waiting for you</span><b>{n}</b></div>'
+                + f'<div><span>Recorded today</span><b>{done_today}</b></div>'
+                + f'<div><span>Connected apps</span><b>{len(apps)}</b></div>'
+                + f'<div><span>Tools offered</span><b>{len(mcp._tool_manager.list_tools())}</b></div></div>')
+        if waiting:
+            trs = []
+            for src, q, v in waiting[:5]:
+                to = next((val for k, val in v["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
+                who = f" · by {q.requested_by}" if getattr(q, "requested_by", None) else ""
+                sub = (f"To {to}" if to else "") + who + f" · {d.ago(q.created_at)}"
+                trs.append(f'<tr><td><b>{_esc(v["title"])}</b><span class="row-sub">{_esc(sub.lstrip(" ·"))}</span></td>'
+                           f'<td>{chip(v["badge"], "kind")}</td><td>{d.ttl(q)}</td>'
+                           f'<td>{link_button("Review", f"/dashboard/approvals?item={src.kind}:{q.id}")}</td></tr>')
+            more = hint(f"{n - 5} more on Approvals.") if n > 5 else ""
+            wait_body = ('<table class="waits"><thead><tr><th>Request</th><th>Kind</th><th>Time left</th><th></th></tr></thead>'
+                         f'<tbody>{"".join(trs)}</tbody></table>{more}')
+        else:
+            wait_body = hint("When an agent sends mail or writes an iMessage, it waits here until you decide.")
+        left = [card("Waiting for your approval", wait_body, link=("Open Approvals", "/dashboard/approvals") if n else None)]
+        entries = audit.entries(limit=5)
+        acts = "".join(f'<li><time>{d.fmt_time(e.get("t"))}</time><span>{_entry_text(e)}</span></li>' for e in entries)
+        left.append(card("Recent activity", f'<ol class="log">{acts}</ol>' if acts else hint("Nothing recorded yet."),
+                         link=("All activity", "/dashboard/activity")))
         if s.read_only:
             sending = "Off (read-only)"
         elif not s.allow_send:
             sending = "Drafts only"
         else:
             sending = "After approval" if s.require_approval else "Directly"
-        invites = "After approval" if getattr(s, "invites_require_approval", False) else ("Allowed" if s.allow_calendar_invites else "Off")
+        invites = "Allowed" if s.allow_calendar_invites else "Off"
         prot = ('<div class="list">' + row("Sending email", value(sending)) + row("Invitations to others", value(invites))
                 + row("Emptying Trash", value("Allowed" if s.allow_permanent_delete else "Off"))
                 + row("Time zone", value(s.default_timezone)) + "</div>")
         has_settings = any(k == "settings" for k, _, _ in d.extra_nav)
-        cards.append(card("Protection", prot, link=("All settings", "/dashboard/settings") if has_settings else None))
-        entries = audit.entries(limit=5)
-        acts = "".join(f'<li><time>{d.fmt_time(e.get("t"))}</time><span>{_entry_text(e)}</span></li>' for e in entries)
-        cards.append(card("Recent activity", f'<ol class="log">{acts}</ol>' if acts else hint("Nothing recorded yet."),
-                          link=("All activity", "/dashboard/activity")))
-        return d.page("Overview", "overview", f'<div class="overview-grid">{"".join(cards)}</div>', rec, flash=_flash(request), wide=True)
+        right = [card("Protection", prot, link=("All settings", "/dashboard/settings") if has_settings else None)]
+        health = d.last_health
+        if health is None:
+            services = row("Services", value("Not checked yet"))
+            state = ""
+        else:
+            services = "".join(
+                row(area.replace("_", " ").capitalize(),
+                    chip(f'OK · {r.get("ms", 0) / 1000:.1f} s', "ok") if r.get("ok") else chip("Failed", "err"),
+                    "" if r.get("ok") else (r.get("error") or "")[:120])
+                for area, r in (health.get("areas") or {}).items())
+            state = chip("All working", "ok") if health.get("ok") else chip("Problem", "err")
+        checked_at = hint(f'Checked {d.ago(health.get("_at"))}.') if health else ""
+        server_rows = (f'<div class="list">{services}' + row("Version", value(version)) + "</div>" + checked_at
+                       + hint("Pausing makes every tool answer that the server is paused. Nobody is signed out."))
+        foot = (f'<form method="post" action="/dashboard/check">{csrf}{button("Check now")}</form>'
+                f'<form method="post" action="/dashboard/pause">{csrf}<input type="hidden" name="paused" value="{"0" if paused else "1"}">'
+                f'{button("Resume tools" if paused else "Pause tools", "primary" if paused else "")}</form>')
+        right.append(card("Server", server_rows, foot, state or d.state_chip()))
+        actions = link_button(f"Review {n}", "/dashboard/approvals", "primary") if n else ""
+        grid = (f'{kpis}<div class="overview-grid"><div class="overview-col">{"".join(left)}</div>'
+                f'<div class="overview-col">{"".join(right)}</div></div>')
+        return d.page("Overview", "overview", grid, rec, flash=_flash(request), wide=True, actions=actions, lede_html=lede)
 
     @mcp.custom_route("/dashboard/check", methods=["POST"])
     async def check(request: Request) -> Response:
@@ -860,39 +977,52 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         return RedirectResponse("/dashboard?m=" + ("paused" if want else "resumed"), status_code=303, headers=_HEADERS)
 
     # -- approvals -----------------------------------------------------------------------------------------------------
-    def approvals_page(rec: dict[str, Any], flash: str = "", bad: bool = False, status: int = 200) -> Response:
-        cards, total, recent_n = [], 0, 0
+    def approvals_page(rec: dict[str, Any], flash: str = "", bad: bool = False, status: int = 200, selected: str = "") -> Response:
+        """The waiting requests as a list, and the chosen one (or the one dropped soonest) exactly as it will be sent."""
+        waiting = []
         for src in d.sources.values():
             items = src.pending()
             ctx = src.contexts(items)
-            for q in items:
-                total += 1
-                recent_n += time.time() - q.created_at < 3600
-                v = src.describe(q, ctx.get(q.id))
-                mins = max(1, int((q.expires_at - time.time()) / 60))
-                left = f"{mins // 60} h" if mins >= 120 else f"{mins} min"
-                body = [f'<dl>{"".join(f"<dt>{_esc(k)}</dt><dd>{_esc(val)}</dd>" for k, val in v["rows"])}</dl>']
-                if v["warnings"]:
-                    body.append('<div class="alert" role="alert"><b>Check this first</b><ul>'
-                                + "".join(f"<li>{_esc(w)}</li>" for w in v["warnings"]) + "</ul></div>")
-                if v["text"]:
-                    body.append(f'<div class="message">{_esc(v["text"])}</div>')
-                body += [hint(x) for x in v["notes"]]
-                who = f" by {q.requested_by}" if getattr(q, "requested_by", None) else ""
-                body.append(f'<p class="meta">Requested {d.ago(q.created_at)}{_esc(who)} · expires in about {left}</p>')
-                if v["needs_override"]:
-                    body.append('<label class="check"><input type="checkbox" name="override" value="1">'
-                                '<span>I read the warning and still want this sent</span></label>')
-                hidden = (d.csrf_input(rec) + f'<input type="hidden" name="kind" value="{_esc(src.kind)}">'
-                          f'<input type="hidden" name="id" value="{_esc(q.id)}"><input type="hidden" name="sha" value="{_esc(q.sha256)}">')
-                foot = button("Discard", name="action", value="discard") + button(_esc(src.approve_label), "primary", name="action", value="approve")
-                cards.append(card(v["title"], "".join(body), foot, chip(v["badge"], "info"), form="/dashboard/approvals/act", hidden_html=hidden))
-        if not total:
-            cards.append(card("Nothing is waiting", hint("When an agent sends mail or invites someone, it waits here until you decide.")))
+            waiting += [(src, q, src.describe(q, ctx.get(q.id))) for q in items]
+        waiting.sort(key=lambda w: w[1].expires_at)
+        total = len(waiting)
+        recent_n = sum(time.time() - q.created_at < 3600 for _, q, _ in waiting)
+        cards = []
         if recent_n > 2:
-            cards.insert(0, f'<p class="alert">Agents asked for {recent_n} of these in the last hour. Approve only what you asked for.</p>')
+            cards.append(f'<p class="alert">Agents asked for {recent_n} of these in the last hour. Approve only what you asked for.</p>')
+        if not total:
+            cards.append(card("Nothing is waiting", hint("When an agent sends mail or an iMessage, it waits here until you decide.")))
+        else:
+            src, q, v = next((w for w in waiting if f"{w[0].kind}:{w[1].id}" == selected), waiting[0])
+            links = []
+            for s2, q2, v2 in waiting:
+                to = next((val for k, val in v2["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
+                cur = ' aria-current="true"' if q2 is q else ""
+                links.append(f'<a href="/dashboard/approvals?item={_esc(s2.kind)}:{_esc(q2.id)}"{cur}><span class="q1">{chip(v2["badge"], "kind")}'
+                             f'<b>{_esc(v2["title"])}</b><span class="left">{d.time_left(q2)} left</span></span>'
+                             + (f'<span class="q2">To {_esc(to)}</span>' if to else "") + "</a>")
+            queue = f'<nav class="card queue" aria-label="Waiting requests">{"".join(links)}</nav>'
+            body = [f'<dl>{"".join(f"<dt>{_esc(k)}</dt><dd>{_esc(val)}</dd>" for k, val in v["rows"])}</dl>']
+            if v["warnings"]:
+                body.append('<div class="alert" role="alert"><b>Check this first</b><ul>'
+                            + "".join(f"<li>{_esc(w)}</li>" for w in v["warnings"]) + "</ul></div>")
+            if v["text"]:
+                body.append(f'<div class="message">{_esc(v["text"])}</div>')
+            body += [hint(x) for x in v["notes"]]
+            body.append(d.ttl(q, detail=True))
+            who = f" by {q.requested_by}" if getattr(q, "requested_by", None) else ""
+            body.append(f'<p class="meta">Requested {d.ago(q.created_at)}{_esc(who)}. If you do nothing, it is dropped and never sent.</p>')
+            if v["needs_override"]:
+                body.append('<label class="check"><input type="checkbox" name="override" value="1">'
+                            '<span>I read the warning and still want this sent</span></label>')
+            hidden = (d.csrf_input(rec) + f'<input type="hidden" name="kind" value="{_esc(src.kind)}">'
+                      f'<input type="hidden" name="id" value="{_esc(q.id)}"><input type="hidden" name="sha" value="{_esc(q.sha256)}">')
+            label = src.approve_label
+            foot = button("Discard", name="action", value="discard") + button(_esc(label), "primary", name="action", value="approve")
+            detail = card(v["title"], "".join(body), foot, chip(v["badge"], "kind"), form="/dashboard/approvals/act", hidden_html=hidden)
+            cards.append(f'<div class="split">{queue}{detail}</div>')
         lede = f"{total} waiting. Nothing has left the server yet; what you see is exactly what will be sent." if total else ""
-        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede)
+        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True)
 
     flashes: dict[str, str] = {}      # one-shot result of an approval, keyed by session, so the result page is a plain GET
 
@@ -907,7 +1037,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         got = signed_in(request)
         if got is None:
             return to_signin(request)
-        return await asyncio.to_thread(approvals_page, got[1], flashes.pop(got[1]["csrf"], ""))
+        return await asyncio.to_thread(approvals_page, got[1], flashes.pop(got[1]["csrf"], ""),
+                                     selected=request.query_params.get("item", ""))
 
     @mcp.custom_route("/dashboard/approvals/act", methods=["POST"])
     async def approvals_act(request: Request) -> Response:

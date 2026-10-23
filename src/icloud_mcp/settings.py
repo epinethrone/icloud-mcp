@@ -372,6 +372,13 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         return (f'<div class="field"><span class="field-label" id="sendmode">When agents send mail</span>'
                 f'<div class="radio-seg" role="radiogroup" aria-labelledby="sendmode">{opts}</div><p class="hint">{explain}{" · " + tag if tag else ""}</p></div>')
 
+    def area_tabs(current_slug: str) -> str:
+        """The settings areas as underline tabs, so the owner moves between them without going back to the list."""
+        areas = [(g.slug, g.title) for g in GROUPS] + [("server", "Server")]
+        links = "".join(f'<a href="/dashboard/settings/{slug}"{" aria-current=page" if slug == current_slug else ""}>{D._esc(title)}</a>'
+                        for slug, title in areas)
+        return f'<nav class="subtabs" aria-label="Settings areas">{links}</nav>'
+
     def index_page(rec: dict[str, Any], flash: str = "", bad: bool = False) -> Response:
         stored = store.read()
         cards = []
@@ -421,12 +428,14 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         foot = ('<p class="foot-hint">Saved changes apply after a restart.</p>' + D.button("Save", "primary")) if editable \
             else '<p class="foot-hint">These settings can only be viewed here.</p>' 
         names = list(sections)
-        inner = "".join('<section class="card">' + (f'<div class="card-head"><h2>{D._esc(name)}</h2></div>' if name else "")
+        # each section is a row: its name on the left, its fields on the right (stacked on a phone); one Save at the end
+        inner = "".join(f'<div class="srow"><div class="srow-head"><h2>{D._esc(name)}</h2></div><section class="card">'
                         + f'<div class="card-body">{"".join(items)}</div>'
-                        + (f'<div class="card-foot">{foot}</div>' if i == len(names) - 1 else "") + "</section>"
+                        + (f'<div class="card-foot">{foot}</div>' if i == len(names) - 1 else "") + "</section></div>"
                         for i, (name, items) in enumerate(sections.items()))
-        cards = [f'<form class="stack" method="post" action="/dashboard/settings/{g.slug}">{d.csrf_input(rec)}{inner}</form>' if editable
-                 else f'<div class="stack">{inner}</div>']
+        cards = [area_tabs(g.slug)]
+        cards.append(f'<form class="stack" method="post" action="/dashboard/settings/{g.slug}">{d.csrf_input(rec)}{inner}</form>' if editable
+                     else f'<div class="stack">{inner}</div>')
         changed = [sp for sp in g.specs if sp.key in stored]
         if changed and editable:
             rows = "".join(D.row(sp.label, f'<form method="post" action="/dashboard/settings/{g.slug}/reset">{d.csrf_input(rec)}'
@@ -442,7 +451,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         return d.page(g.title, "settings", "".join(cards), rec, status, flash, bad, g.lede)
 
     def server_page(rec: dict[str, Any]) -> Response:
-        cards = ['<p class="banner">These are set in the server’s environment by whoever runs it. A browser cannot change them.</p>']
+        cards = [area_tabs("server"), '<p class="banner">These are set in the server’s environment by whoever runs it. A browser cannot change them.</p>']
         for title, items in SERVER_VIEW:
             rows = []
             for label, key, how in items:
