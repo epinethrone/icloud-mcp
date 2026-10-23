@@ -896,6 +896,7 @@ class CalendarService:
         self._pool_lock = threading.Lock()
         self._pool: list[_Conn] = []
         self._tl = callctx.CallState()
+        self.outbox: Any = None            # ALLOW_CALENDAR_INVITES=approve: writes that email people wait here (set by the server)
         self._last_activity = 0.0
         self._ticking = False
 
@@ -1621,17 +1622,85 @@ class CalendarService:
             raise CalendarError("Blocked: these addresses are not on this server's INVITE_ALLOWLIST, so they cannot be invited: "
                                 + ", ".join(sorted(blocked)) + ". Ask the owner to add them or to invite them in the Calendar app.")
 
-    def _refuse_invites(self, *, attendees_given: bool = False, existing=None, addresses: list[str] | None = None) -> None:
-        """Attendee changes make iCloud email other people, which would bypass the mail approval gate."""
+    def _refuse_invites(self, *, attendees_given: bool = False, existing=None, addresses: list[str] | None = None) -> bool:
+        """Attendee changes make iCloud email other people, which would bypass the mail approval gate. Returns whether this
+        write would email someone; with ALLOW_CALENDAR_INVITES=approve such a write is then held for the owner (_hold)."""
+        emails = bool(attendees_given) or (existing is not None and bool(existing.get("attendee")))
         if self.s.allow_calendar_invites:
             if addresses:
                 self._check_guests(addresses)
-            return
-        if attendees_given or (existing is not None and existing.get("attendee")):
+            if emails and self.s.invites_require_approval and self.outbox is None:
+                raise CalendarError(
+                    "Blocked: this would make iCloud email attendees, and on this server that waits for the owner's approval, "
+                    "but there is no approval page here (local mode or DASHBOARD=false). Ask the owner to make this change in the Calendar app."
+                )
+            return emails
+        if emails:
             raise CalendarError(
                 "Blocked: this would make iCloud send invitations, updates or cancellations by email to attendees. "
                 "That is disabled on this server (ALLOW_CALENDAR_INVITES=false). Ask the owner to make this change in the Calendar app."
             )
+
+    @property
+    def _hold(self) -> bool:
+        return bool(self.s.invites_require_approval and self.outbox is not None)
+
+    def _queue(self, op: str, *, cal: Any, ics: Any, uid: str, ev: Any, obj: Any = None) -> dict[str, Any]:
+        """Hold a write that would email people until the owner approves it on the dashboard. What is stored is the exact
+        object that will be written, plus the version (ETag) it was based on, so an event changed in the meantime is never
+        overwritten."""
+        from .outbox import OutboxFull
+        etag = getattr(obj, "etag", None) if obj is not None else None
+        if obj is not None and not etag:
+            raise CalendarError("The server did not report this event's version, so the change cannot wait safely for approval. "
+                                "Ask the owner to make it in the Calendar app.")
+        own = self.s.own_addresses
+        guests = [a for a in (_attendee_email(x) for x in _as_list(ev.get("attendee"))) if a and a not in own]
+        org = _attendee_email(ev["organizer"]) if ev.get("organizer") is not None else None
+        end = None
+        with contextlib.suppress(Exception):
+            end = ev.end
+        meta = {"op": op, "calendar_url": str(cal.url), "calendar": self._cal_name(cal), "uid": uid,
+                "href": str(obj.url) if obj is not None else None, "etag": etag, "summary": _text(ev, "summary") or "",
+                "start": _iso(ev.get("dtstart").dt) if ev.get("dtstart") is not None else None, "end": _iso(end),
+                "location": _text(ev, "location") or "", "description": (_text(ev, "description") or "")[:4000],
+                "organizer": org if org and org not in own else None}
+        raw = ics.encode() if isinstance(ics, str) else bytes(ics)
+        try:
+            q = self.outbox.add(raw, guests if op != "reply" else [a for a in [meta["organizer"]] if a], meta)
+        except OutboxFull as e:
+            raise CalendarError(str(e).replace("/outbox page", "dashboard's Approvals page")) from e
+        who = meta["organizer"] if op == "reply" else ", ".join(guests) or "the attendees"
+        return {"status": "queued_for_owner_approval", "written": False, "outbox_id": q.id,
+                "approve_at": f"{self.s.public_url}/dashboard/approvals", "would_email": who,
+                "notice": f"NOT WRITTEN YET. This change makes iCloud email {who}, so it waits for the owner's approval on the dashboard. "
+                          "Tell the owner it is waiting; do not repeat the call."}
+
+    def release(self, q: Any) -> str:
+        """The owner approved a held change: write exactly what was stored, conditional on the version it was based on."""
+        m = q.followup or {}
+        body = q.raw.decode()
+        with self._principal() as p:
+            client = p.client
+            self._tl.mutated = True
+            if m["op"] == "create":
+                url = f"{m['calendar_url'].rstrip('/')}/{quote(m['uid'], safe='@')}.ics"
+                resp = client.request(url, "PUT", body, {"Content-Type": "text/calendar; charset=utf-8", "If-None-Match": "*"})
+            elif m["op"] == "delete":
+                resp = client.request(m["href"], "DELETE", "", {"If-Match": m["etag"]})
+            else:
+                resp = client.request(m["href"], "PUT", body, {"Content-Type": "text/calendar; charset=utf-8", "If-Match": m["etag"]})
+            status = int(getattr(resp, "status", 0) or 0)
+            self._uid_cache.pop(m["uid"], None)
+            if status == 412:
+                raise CalendarError("The event changed in the calendar after the agent asked, so nothing was written. "
+                                    "Discard this and ask again if it is still wanted.")
+            if not 200 <= status < 300 and not (m["op"] == "delete" and status == 404):
+                raise CalendarError(f"The calendar server refused the change (HTTP {status}). Nothing was written.")
+        verb = {"create": "Added", "update": "Updated", "delete": "Deleted", "cancel": "Cancelled one occurrence of",
+                "reply": "Answered"}.get(m["op"], "Changed")
+        tail = (f" iCloud now emails {', '.join(q.recipients)}." if q.recipients else "")
+        return f"{verb} “{m.get('summary') or 'the event'}”.{tail}"
 
     def _default_calendar(self, cals: list[Any]) -> Any:
         """Where new events go when no calendar is named: DEFAULT_CALENDAR, else 'Calendar' / 'Home', else the first."""
@@ -1653,7 +1722,7 @@ class CalendarService:
     ) -> dict[str, Any]:
         if on_conflict not in ("warn", "refuse") or on_duplicate not in ("warn", "refuse"):
             raise CalendarError("on_conflict and on_duplicate must be 'warn' or 'refuse'.")
-        self._refuse_invites(attendees_given=bool(attendees), addresses=[a for _, a in parse_attendees(attendees or [])])
+        held = self._refuse_invites(attendees_given=bool(attendees), addresses=[a for _, a in parse_attendees(attendees or [])])
         tz = get_tz(timezone_name or self.s.default_timezone)
         fixed_uid = retry_uid(self.s.username, request_id) if request_id else None
         uid, ical = build_event(
@@ -1688,6 +1757,9 @@ class CalendarService:
                 return {"created": False, "conflicts": check["conflicts"], "now": now_iso,
                         **({"not_read": check["not_read"]} if check["not_read"] else {}),
                         "note": "It overlaps the events in 'conflicts', so nothing was created. Ask the owner, or pass on_conflict='warn'."}
+            if held and self._hold:
+                return {**self._queue("create", cal=cal, ics=ical, uid=uid, ev=new), "created": False,
+                        "conflicts": check["conflicts"], "now": now_iso}
             self._tl.mutated = True                  # from here on a transport error must not be retried: the PUT may have landed
             cal.save_event(ical)
             name = self._cal_name(cal)
@@ -1764,8 +1836,8 @@ class CalendarService:
                 current = [a for a in (_attendee_email(x) for x in _as_list(ev.get("attendee")))
                            if a and a not in gone and a not in self.s.own_addresses]
                 attendees = list(dict.fromkeys(current + [a for _, a in parse_attendees(add_attendees or []) if a.lower() not in gone]))
-            self._refuse_invites(attendees_given=bool(attendees) or attendees == [], existing=self._guests(parsed, ev),
-                                 addresses=[a for _, a in parse_attendees(attendees or [])])
+            held = self._refuse_invites(attendees_given=bool(attendees) or attendees == [], existing=self._guests(parsed, ev),
+                                        addresses=[a for _, a in parse_attendees(attendees or [])])
 
             if start is not None or end is not None:
                 old_start = ev.get("dtstart").dt
@@ -1824,6 +1896,8 @@ class CalendarService:
             _replace(ev, "last-modified", datetime.now(timezone.utc))
             if new_override:
                 parsed.add_component(ev)
+            if held and self._hold:
+                return {**self._queue("update", cal=cal, ics=self._serialize(parsed), uid=uid, ev=ev, obj=obj), "updated": False}
             self._save(obj, parsed, uid)
             out = {"updated": True, "uid": uid, "calendar": self._cal_name(cal), "event": event_to_dict(ev, self._cal_name(cal))}
             if occurrence_start is not None:
@@ -1873,11 +1947,15 @@ class CalendarService:
         if not (200 <= status < 300 or status == 404):
             raise CalendarError(f"The server refused to delete the event (HTTP {status}). Nothing was deleted.")
 
-    def _save(self, obj: Any, parsed: icalendar.Calendar, uid: str) -> None:
-        """Write the whole stored object back, conditional on the version that was read."""
+    @staticmethod
+    def _serialize(parsed: icalendar.Calendar) -> str:
         if any(isinstance(e.get("dtstart").dt, datetime) for e in parsed.walk("VEVENT") if e.get("dtstart") is not None):
             parsed.add_missing_timezones()
-        obj.data = parsed.to_ical().decode()
+        return parsed.to_ical().decode()
+
+    def _save(self, obj: Any, parsed: icalendar.Calendar, uid: str) -> None:
+        """Write the whole stored object back, conditional on the version that was read."""
+        obj.data = self._serialize(parsed)
         self._tl.mutated = True
         try:
             # caldav sends If-Match/If-Schedule-Tag-Match from the etag cached when the object was read. SEQUENCE is managed here,
@@ -1970,6 +2048,8 @@ class CalendarService:
             _replace(ev, "dtstamp", datetime.now(timezone.utc))
             if new_override:
                 parsed.add_component(ev)
+            if self._hold:
+                return {**self._queue("reply", cal=cal, ics=self._serialize(parsed), uid=uid, ev=ev, obj=obj), "answered": None}
             self._save(obj, parsed, uid)
             name = self._cal_name(cal)
             return {"answered": partstat.lower(), "uid": uid, "calendar": name, "organizer": organizer,
@@ -2020,19 +2100,23 @@ class CalendarService:
             if occurrence_start is not None:
                 master = self._master(parsed)
                 rid, override = self._occurrence_id(parsed, occurrence_start, get_tz(timezone_name or self.s.default_timezone))
-                self._refuse_invites(existing=self._guests(parsed, override if override is not None else master))
+                held = self._refuse_invites(existing=self._guests(parsed, override if override is not None else master))
                 if override is not None:
                     parsed.subcomponents.remove(override)
                 master.add("exdate", rid)
                 _replace(master, "sequence", int(master.get("sequence", 0) or 0) + 1)
                 _replace(master, "dtstamp", datetime.now(timezone.utc))
+                if held and self._hold:
+                    return {**self._queue("cancel", cal=cal, ics=self._serialize(parsed), uid=uid, ev=master, obj=obj), "deleted": False}
                 self._save(obj, parsed, uid)
                 return {"deleted": True, "occurrence_only": True, "occurrence_start": occurrence_start, "uid": uid,
                         "summary": str(master.get("summary") or ""), "calendar": self._cal_name(cal),
                         "note": "Only this occurrence was cancelled; the rest of the series is unchanged."}
             master = self._master(parsed)
-            self._refuse_invites(existing=self._guests(parsed, master))
+            held = self._refuse_invites(existing=self._guests(parsed, master))
             summary = str(master.get("summary") or "")
+            if held and self._hold:
+                return {**self._queue("delete", cal=cal, ics=obj.data, uid=uid, ev=master, obj=obj), "deleted": False}
             self._tl.mutated = True
             self._delete_conditional(obj, uid)
             self._uid_cache.pop(uid, None)

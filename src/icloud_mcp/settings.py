@@ -86,6 +86,14 @@ def _changed(old: str, new: str) -> bool:
     return old.strip() != new.strip()
 
 
+_INVITE_LEVEL = {"false": 0, "": 0, "approve": 1, "true": 2}
+
+
+def _invites_open(old: str, new: str) -> bool:
+    """Off < after approval < allowed: each step up lets agents invite people more freely."""
+    return _INVITE_LEVEL.get(new.strip().lower(), 2) > _INVITE_LEVEL.get(old.strip().lower(), 2)
+
+
 def _entries(v: str) -> set[str]:
     return {x.strip().lower() for x in v.split(",") if x.strip()}
 
@@ -164,11 +172,11 @@ GROUPS: list[Group] = [
              section="General"),
         Spec("ALLOW_CALENDAR_INVITES", "Invitations to other people", "choice",
              "Events with guests make iCloud email them: invitations, updates and cancellations.", default="false",
-             choices=(("false", "Off"), ("true", "Allowed")), loosens=_to_true, section="Invitations"),
+             choices=(("false", "Off"), ("approve", "After my approval"), ("true", "Allowed")), loosens=_invites_open, section="Invitations"),
         Spec("INVITE_ALLOWLIST", "Only invite", "list", "Addresses or domains. Empty means anyone.", loosens=_wider, section="Invitations"),
         Spec("MAX_ATTENDEES", "Guests per event", "int", default="10", min=1, max=200, loosens=_higher, section="Invitations"),
     ], summary=lambda v: f"{v('DEFAULT_TIMEZONE') or 'UTC'} · invitations "
-                         + ("allowed" if _on(v("ALLOW_CALENDAR_INVITES")) else "off")),
+                         + {"approve": "after your approval", "true": "allowed"}.get(v("ALLOW_CALENDAR_INVITES").lower(), "off")),
     Group("contacts", "Contacts", "What agents may change on contact cards.", [
         Spec("CONTACTS_ALLOW_EMAIL_CHANGES", "Agents may add or change addresses and numbers", default="true",
              help="Off stops a planted address on a real contact.", loosens=_to_true),

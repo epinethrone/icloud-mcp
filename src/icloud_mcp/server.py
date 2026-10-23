@@ -1245,6 +1245,9 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
     # -------------------------------------------------------------- calendar
     if s.enable_calendar:
         cal = CalendarService(s)
+        if s.invites_require_approval and writable and provider is not None and s.dashboard:
+            cal.outbox = Outbox(s.data_dir, s.outbox_ttl, s.outbox_max, filename="calendar-outbox.json")
+            approval["calendar"] = cal
         health["calendar"] = lambda: {"calendars": len(cal.list_calendars())}
         warm["calendar"] = cal.prewarm                           # the calendar list, plus spare connections for parallel reads
         pools["calendar"] = lambda: {"warm": bool(cal._pool), "caldav_kept": len(cal._pool), "caldav_pool_size": s.caldav_pool_size,
@@ -2846,12 +2849,15 @@ def _register_tools(mcp: MCPServer, s: Settings, provider: OwnerOAuthProvider | 
         return health_report()
 
     mcp._icloud_outboxes = {"mail": approval["mail"].outbox if approval["mail"] is not None else None,
-                            "imessage": approval["imessage_outbox"]}                       # counts for the admin API
+                            "imessage": approval["imessage_outbox"],
+                            "calendar": approval["calendar"].outbox if approval.get("calendar") is not None else None}                       # counts for the admin API
     if (approval["mail"] or approval["imessage_outbox"]) and provider is not None:
         register_outbox_routes(mcp, provider, s, approval["mail"], approval["imessage"], approval["imessage_outbox"], audit=_audit)
     if s.dashboard and provider is not None and _audit is not None:
         from .dashboard import IMessageApprovals, MailApprovals, register_dashboard
+        from .dashboard import CalendarApprovals
         sources = ([MailApprovals(approval["mail"])] if approval["mail"] is not None else []) + \
+                  ([CalendarApprovals(approval["calendar"])] if approval.get("calendar") is not None else []) + \
                   ([IMessageApprovals(approval["imessage"], approval["imessage_outbox"])] if approval["imessage_outbox"] is not None else [])
         mcp._icloud_dashboard = register_dashboard(mcp, provider, s, _audit, sources)
         if s.dashboard_settings != "off":
