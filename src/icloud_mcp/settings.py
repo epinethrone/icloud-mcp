@@ -86,11 +86,27 @@ def _changed(old: str, new: str) -> bool:
     return old.strip() != new.strip()
 
 
-_INVITE_LEVEL = {"false": 0, "": 0, "approve": 1, "true": 2}
+def _entries(v: str) -> set[str]:
+    return {x.strip().lower() for x in v.split(",") if x.strip()}
 
 
-def _invites_open(old: str, new: str) -> bool:
-    return _INVITE_LEVEL.get(new.strip().lower(), 2) > _INVITE_LEVEL.get(old.strip().lower(), 2)
+def _removes_entry(old: str, new: str) -> bool:
+    """A blocklist (chats never shown, people never messaged) is weaker as soon as an entry leaves it."""
+    return not _entries(old) <= _entries(new)
+
+
+def _adds_entry(old: str, new: str) -> bool:
+    """A list that grants something (addresses that count as the owner's) is wider as soon as it gains an entry."""
+    return not _entries(new) <= _entries(old)
+
+
+def _more_history(old: str, new: str) -> bool:
+    """An age limit where 0 means everything: it widens when it goes to 0 or above a limit that was set."""
+    try:
+        o, n = int(old or 0), int(new or 0)
+    except ValueError:
+        return True
+    return o != 0 and (n == 0 or n > o)
 
 
 @dataclass
@@ -105,7 +121,8 @@ class Group:
 
 GROUPS: list[Group] = [
     Group("accounts", "Account", "The Apple Account this server signs in to, and how your mail is signed.", [
-        Spec("ICLOUD_EMAIL_ADDRESS", "From address", "text", "Your iCloud address or an alias; mail you send comes from it."),
+        Spec("ICLOUD_EMAIL_ADDRESS", "From address", "text", "Your iCloud address or an alias; mail you send comes from it.",
+             loosens=_changed),
         Spec("ICLOUD_DISPLAY_NAME", "Sender name", "text", "The name recipients see."),
         Spec("EMAIL_SIGNATURE", "Signature", "textarea", "Plain text added to the end of mail your agents send."),
     ], summary=lambda v: (f"Sends as {v('ICLOUD_DISPLAY_NAME')} " if v("ICLOUD_DISPLAY_NAME") else "Sends ")
@@ -129,11 +146,11 @@ GROUPS: list[Group] = [
              default="86400", unit=3600, unit_label="hours", min=1, max=720, section="Approval queue"),
         Spec("OUTBOX_MAX", "Messages waiting at most", "int", default="20", min=1, max=500, loosens=_higher, section="Approval queue"),
         Spec("MAX_ATTACHMENT_BYTES", "Largest attachment", "int", default=str(5 * 1024 * 1024), unit=1024 * 1024, unit_label="MiB",
-             min=1, max=100, section="Reading and cleanup"),
+             min=1, max=100, loosens=_higher, section="Reading and cleanup"),
         Spec("MAIL_MAX_AGE_DAYS", "Only mail from the last", "int", "0 means the whole mailbox.", default="0", min=0, max=36500,
-             unit_label="days", section="Reading and cleanup"),
+             unit_label="days", loosens=_more_history, section="Reading and cleanup"),
         Spec("MAX_BODY_CHARS", "Longest text shown to agents", "int", default="30000", min=1000, max=500000, unit_label="characters",
-             section="Reading and cleanup"),
+             loosens=_higher, section="Reading and cleanup"),
         Spec("ALLOW_PERMANENT_DELETE", "Allow emptying Trash", default="false",
              help="Mail deleted from Trash cannot be recovered.", loosens=_to_true, section="Reading and cleanup"),
     ], summary=lambda v: ("Off (read-only)" if _on(v("READ_ONLY")) else "Drafts only" if not _on(v("ALLOW_SEND"))
@@ -143,14 +160,15 @@ GROUPS: list[Group] = [
         Spec("DEFAULT_TIMEZONE", "Time zone", "text", "An IANA name such as Europe/Amsterdam, for times without an offset.", default="UTC",
              section="General"),
         Spec("DEFAULT_CALENDAR", "Calendar for new events", "text", "Empty: “Calendar” or “Home”, else the first.", section="General"),
-        Spec("OWNER_ADDRESSES", "My other addresses", "list", "Aliases, so invitations to them count as yours.", section="General"),
+        Spec("OWNER_ADDRESSES", "My other addresses", "list", "Aliases, so invitations to them count as yours.", loosens=_adds_entry,
+             section="General"),
         Spec("ALLOW_CALENDAR_INVITES", "Invitations to other people", "choice",
              "Events with guests make iCloud email them: invitations, updates and cancellations.", default="false",
-             choices=(("false", "Off"), ("true", "Allowed")), loosens=_invites_open, section="Invitations"),
+             choices=(("false", "Off"), ("true", "Allowed")), loosens=_to_true, section="Invitations"),
         Spec("INVITE_ALLOWLIST", "Only invite", "list", "Addresses or domains. Empty means anyone.", loosens=_wider, section="Invitations"),
         Spec("MAX_ATTENDEES", "Guests per event", "int", default="10", min=1, max=200, loosens=_higher, section="Invitations"),
     ], summary=lambda v: f"{v('DEFAULT_TIMEZONE') or 'UTC'} · invitations "
-                         + {"approve": "after your approval", "true": "allowed"}.get(v("ALLOW_CALENDAR_INVITES").lower(), "off")),
+                         + ("allowed" if _on(v("ALLOW_CALENDAR_INVITES")) else "off")),
     Group("contacts", "Contacts", "What agents may change on contact cards.", [
         Spec("CONTACTS_ALLOW_EMAIL_CHANGES", "Agents may add or change addresses and numbers", default="true",
              help="Off stops a planted address on a real contact.", loosens=_to_true),
@@ -165,10 +183,11 @@ GROUPS: list[Group] = [
         Spec("IMESSAGE_ALLOW_SEND", "Agents may send iMessages", default="false", loosens=_to_true, section="Messages"),
         Spec("IMESSAGE_SEND_REQUIRES_APPROVAL", "Send iMessages only after my approval", default="true", loosens=_to_false, section="Messages"),
         Spec("IMESSAGE_SEND_ALLOWLIST", "Who may receive an iMessage", "list", "Empty means nobody, * anyone.", loosens=_changed, section="Messages"),
-        Spec("IMESSAGE_NEVER_SEND", "Never send to", "list", section="Messages"),
-        Spec("IMESSAGE_HIDDEN_CHATS", "Chats agents never see", "list", section="Messages"),
+        Spec("IMESSAGE_NEVER_SEND", "Never send to", "list", loosens=_removes_entry, section="Messages"),
+        Spec("IMESSAGE_HIDDEN_CHATS", "Chats agents never see", "list", loosens=_removes_entry, section="Messages"),
         Spec("IMESSAGE_VISIBLE_CHATS", "Only these chats", "list", "Empty means every chat except the hidden ones.", loosens=_changed, section="Messages"),
-        Spec("IMESSAGE_MAX_AGE_DAYS", "Only messages from the last", "int", "0 means the whole history.", default="0", min=0, max=36500, unit_label="days", section="Messages"),
+        Spec("IMESSAGE_MAX_AGE_DAYS", "Only messages from the last", "int", "0 means the whole history.", default="0", min=0, max=36500, unit_label="days",
+             loosens=_more_history, section="Messages"),
         Spec("IMESSAGE_HIDE_SHORT_CODES", "Hide service senders", default="true", help="Banks, deliveries, one-time codes.", loosens=_to_false, section="Messages"),
         Spec("SHORTCUTS_ALLOW", "Shortcuts agents may run", "list", "Exact names; the Mac keeps its own list too.", loosens=_changed, section="Shortcuts and timing"),
         Spec("BRIDGE_JOB_TIMEOUT_SECONDS", "Wait for the Mac", "int", default="60", min=5, max=600, unit_label="seconds", section="Shortcuts and timing"),
@@ -224,6 +243,14 @@ class SettingsStore:
         from .admin import _write_private
         with self._lock:
             _write_private(self.path, json.dumps(dict(sorted(values.items())), indent=1) + "\n")
+
+    def update(self, set_: dict[str, str] | None = None, remove: tuple[str, ...] = ()) -> dict[str, str]:
+        """Apply only these keys to what is on disk now, read under the lock, so two saves at once cannot lose a change."""
+        from .admin import _write_private
+        with self._lock:
+            values = {k: v for k, v in {**self.read(), **(set_ or {})}.items() if k not in remove}
+            _write_private(self.path, json.dumps(dict(sorted(values.items())), indent=1) + "\n")
+            return values
 
 
 def current(key: str, stored: dict[str, str]) -> tuple[str, str]:
@@ -536,7 +563,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
         if problem := await asyncio.to_thread(validate, new, known_tools()):
             key, why = problem
             return group_page(rec, g, f"Not saved: {why}", True, 400, entered, errors={key: why} if key else None)
-        store.write(new)
+        store.update({sp.key: v for sp, _, v in changes})
         state["restart_needed"] = True
         d.audit.record("settings.changed", actor="owner", via=rec.get("via", ""), ok=True,
                        summary=f"Changed {g.title.lower()} settings: " + ", ".join(f"{sp.label} {display(sp, o)} → {display(sp, v)}" for sp, o, v in changes),
@@ -556,7 +583,7 @@ def register_settings(d: Any, mcp: Any, s: Settings) -> None:
                         "again. It is reset as soon as you have.")
         if problem := await asyncio.to_thread(validate, new, known_tools()):
             return group_page(rec, g, f"Not reset: {problem[1]}", True, 400)
-        store.write(new)
+        store.update(remove=(key,))
         state["restart_needed"] = True
         d.audit.record("settings.changed", actor="owner", via=rec.get("via", ""),
                        summary=f"Reset {sp.label} to {display(sp, back)}", keys=[key])

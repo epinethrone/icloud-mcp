@@ -67,3 +67,16 @@ def test_remove(tmp_path):
     store, _, key = registered(tmp_path)
     assert store.remove(key.id).name == "Test phone"
     assert store.list() == [] and store.remove(key.id) is None
+
+
+def test_open_challenges_are_capped(tmp_path):
+    from icloud_mcp import passkeys
+    store, dev, _ = registered(tmp_path)
+    first = store.authentication_options()
+    for _ in range(passkeys._MAX_CHALLENGES * 3):                 # anyone may ask for a challenge: memory stays bounded
+        store.authentication_options()
+    assert len(store._challenges) <= passkeys._MAX_CHALLENGES
+    with pytest.raises(PasskeyError):                            # the oldest made room
+        store.authenticate(first["ticket"], dev.get(first["publicKey"]))
+    latest = store.authentication_options()
+    assert store.authenticate(latest["ticket"], dev.get(latest["publicKey"]))

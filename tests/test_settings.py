@@ -213,3 +213,40 @@ async def test_restart_now_restarts_the_server(web):  # noqa: F811
         assert r.status_code == 200 and "Restarting" in r.text and "cannot be changed here" not in r.text
     assert done.wait(3)
     assert d.audit.entries()[0]["action"] == "server.restart"
+
+
+def test_every_weakening_change_is_recognised():
+    from icloud_mcp.settings import SPECS
+    weakens = {
+        "IMESSAGE_HIDDEN_CHATS": [("Family, Bank", "Family"), ("Family", "")],
+        "IMESSAGE_NEVER_SEND": [("+4930000000", "")],
+        "MAIL_MAX_AGE_DAYS": [("30", "0"), ("30", "90")],
+        "IMESSAGE_MAX_AGE_DAYS": [("7", "0"), ("7", "8")],
+        "OWNER_ADDRESSES": [("me@example.org", "me@example.org, other@example.net"), ("", "other@example.net")],
+        "MAX_BODY_CHARS": [("30000", "60000")],
+        "ICLOUD_EMAIL_ADDRESS": [("me@example.org", "you@example.org")],
+        "MAX_ATTACHMENT_BYTES": [("5", "20")],
+    }
+    keeps = {
+        "IMESSAGE_HIDDEN_CHATS": [("Family", "Family, Bank")],
+        "MAIL_MAX_AGE_DAYS": [("0", "30"), ("30", "7")],
+        "OWNER_ADDRESSES": [("me@example.org, other@example.net", "me@example.org")],
+        "MAX_BODY_CHARS": [("30000", "10000")],
+    }
+    for key, pairs in weakens.items():
+        for old, new in pairs:
+            assert SPECS[key].loosens(old, new), (key, old, new)
+    for key, pairs in keeps.items():
+        for old, new in pairs:
+            assert not SPECS[key].loosens(old, new), (key, old, new)
+
+
+def test_two_saves_at_once_keep_both_changes(tmp_path):
+    from icloud_mcp.settings import SettingsStore
+    store = SettingsStore(str(tmp_path))
+    first, second = store.read(), store.read()                   # both pages were opened before either was saved
+    store.update({"MAX_RECIPIENTS": "5"})
+    store.update({"OUTBOX_MAX": "3"})
+    assert store.read() == {"MAX_RECIPIENTS": "5", "OUTBOX_MAX": "3"} and first == second == {}
+    store.update(remove=("MAX_RECIPIENTS",))
+    assert store.read() == {"OUTBOX_MAX": "3"}

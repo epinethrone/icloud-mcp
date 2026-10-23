@@ -269,3 +269,30 @@ async def test_a_failed_release_points_the_owner_to_the_overview(web, monkeypatc
                          data={"csrf": token, "kind": "mail", "id": q.id, "sha": q.sha256, "action": "approve"})
         assert "Check now on the Overview shows which service is failing." in r.text and "icloud_check_health" not in r.text
         assert len(src.pending()) == 1 and sent == []                               # still waiting, can be retried
+
+
+async def test_junk_passkey_attempts_neither_lock_the_password_nor_fill_the_log(web):
+    pytest.importorskip("webauthn")
+    app, mcp, provider, _ = web()
+    d = mcp._icloud_dashboard
+    async with client(app) as c:
+        for _ in range(30):
+            r = await c.post("/dashboard/passkey/verify", headers=SAME, json={"purpose": "signin", "ticket": "junk", "credential": {}})
+            assert r.status_code == 401
+        assert provider.login_allowed()                                              # the password still works
+        assert (await c.post("/dashboard/signin", data={"password": PASSWORD}, headers=SAME)).status_code == 303
+    assert len([e for e in d.audit.entries(limit=1000) if e["action"] == "signin.passkey" and not e["ok"]]) == 5
+
+
+async def test_confirming_issues_a_new_session_token_and_needs_the_csrf_token(web, monkeypatch):
+    app, mcp, _, _ = web()
+    d = mcp._icloud_dashboard
+    async with client(app) as c:
+        token = await signed_in(c)
+        old = c.cookies.get(d.cookie)
+        r = await c.post("/dashboard/signin", headers=SAME, data={"password": PASSWORD, "next": "/dashboard"})
+        assert r.status_code == 403 and "This form has expired" in r.text                # a confirm without the form's CSRF token
+        r = await c.post("/dashboard/signin", headers=SAME, data={"csrf": token, "password": PASSWORD, "next": "/dashboard"})
+        assert r.status_code == 303 and d.cookie in r.headers["set-cookie"]
+        new = c.cookies.get(d.cookie)
+        assert new and new != old and d.sessions.get(old) is None and d.sessions.get(new) is not None

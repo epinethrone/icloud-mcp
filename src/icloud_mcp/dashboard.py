@@ -119,11 +119,18 @@ class Sessions:
                 self._save()
             return rec
 
-    def reauth(self, token: str, via: str) -> None:
+    def reauth(self, token: str, via: str) -> str | None:
+        """Confirming who is there issues a new session token; the old one stops working. The CSRF value stays, because a
+        change held for confirmation (settings.py) is filed under it."""
         with self._lock:
-            if rec := self._items.get(_h(token)):
-                rec["auth_at"], rec["via"] = time.time(), via
-                self._save()
+            rec = self._items.pop(_h(token), None)
+            if rec is None:
+                return None
+            rec["auth_at"], rec["via"] = time.time(), via
+            fresh = secrets.token_urlsafe(32)
+            self._items[_h(fresh)] = rec
+            self._save()
+            return fresh
 
     def drop(self, token: str) -> None:
         with self._lock:
@@ -648,15 +655,19 @@ class Dashboard:
 
     @staticmethod
     def time_left(q: Any) -> str:
-        mins = max(1, int((q.expires_at - time.time()) / 60))
-        return f"{mins // 60} h {mins % 60} m" if mins >= 60 else f"{mins} min"
+        mins = max(1, round((q.expires_at - time.time()) / 60))
+        if mins >= 90:
+            return f"{round(mins / 60)} hours"
+        if mins >= 60:
+            return "1 hour"
+        return "1 minute" if mins == 1 else f"{mins} minutes"
 
     def ttl(self, q: Any, detail: bool = False) -> str:
         """Time left before a waiting request is dropped, on a track as long as its whole waiting time."""
         span = max(1.0, q.expires_at - q.created_at)
         pct = max(1, min(100, round(100 * (q.expires_at - time.time()) / span)))
-        ends = (f'<span>Requested {self.fmt_time(q.created_at)}</span><span><b>{self.time_left(q)}</b> left · dropped '
-                f'{self.fmt_time(q.expires_at, with_day=True)}</span>') if detail else f'<span>Dropped in</span><b>{self.time_left(q)}</b>'
+        ends = (f'<span>Requested {self.fmt_time(q.created_at)}</span><span>Expires in <b>{self.time_left(q)}</b>, on '
+                f'{self.fmt_time(q.expires_at, with_day=True)}</span>') if detail else f'<span>Expires in</span><b>{self.time_left(q)}</b>'
         return (f'<div class="ttl"><div class="ttl-ends">{ends}</div>'
                 f'<div class="track" role="img" aria-label="{pct}% of the waiting time left"><i style="width:{pct}%"></i></div></div>')
 
@@ -681,6 +692,25 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                        exit_fn: Callable[[], None] | None = None) -> Dashboard:
     d = Dashboard(mcp, provider, s, audit, sources, exit_fn)
     js = (_STATIC / "passkey.js").read_bytes()
+    host = (urlsplit(s.public_url).hostname or "").lower()
+    if not d.secure and host not in ("localhost", "127.0.0.1", "::1") and not host.endswith(".localhost"):
+        log.warning("MCP_PUBLIC_URL is plain http on %s: the dashboard cookie cannot be Secure or __Host-. Use https.", host)
+    failures: dict[str, list[float]] = {}               # action -> [window start, recorded, not recorded]
+
+    def record_failure_line(action: str, summary: str, **details: Any) -> None:
+        """Failed sign-ins from anyone: at most 5 lines per kind and 10 minutes, then one line that counts the rest."""
+        now = time.time()
+        start, written, dropped = failures.get(action, [now, 0, 0])
+        if now - start > 600:
+            if dropped:
+                audit.record(action, actor="unknown", ok=False, summary=f"{int(dropped)} more like this were not recorded")
+            start, written, dropped = now, 0, 0
+        if written < 5:
+            audit.record(action, actor="unknown", ok=False, summary=summary, **details)
+            written += 1
+        else:
+            dropped += 1
+        failures[action] = [start, written, dropped]
 
     # -- guards --------------------------------------------------------------------------------------------------------
     def signed_in(request: Request) -> tuple[str, dict[str, Any]] | None:
@@ -773,14 +803,17 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if not hmac.compare_digest(str(form.get("password", "")).encode(), s.owner_password.encode()):
             provider.record_failure()
             log.warning("Failed owner-password attempt on the dashboard")
-            audit.record("signin.password", actor="unknown", ok=False, summary="Entered a wrong owner password",
-                         details={"from": request.client.host if request.client else ""})
+            record_failure_line("signin.password", "Entered a wrong owner password",
+                                details={"from": request.client.host if request.client else ""})
             return signin_page("Incorrect password.", nxt, 401)
         token, rec = d.session(request)
         if rec is not None:                                  # confirming an existing session
-            d.sessions.reauth(token, "password")
+            if not hmac.compare_digest(str(form.get("csrf", "")).encode(), rec["csrf"].encode()):
+                return signin_page("This form has expired. Reload the page and try again.", nxt, 403)
+            fresh = d.sessions.reauth(token, "password")
             audit.record("signin.confirm", actor="owner", via="password", summary="Confirmed with the owner password")
-            return RedirectResponse(nxt, status_code=303, headers=_HEADERS)
+            resp = RedirectResponse(nxt, status_code=303, headers=_HEADERS)
+            return set_cookie(resp, fresh) if fresh else resp
         token, rec = d.sessions.create("password")
         audit.record("signin.password", actor="owner", via="password", summary="Signed in with the owner password")
         return set_cookie(RedirectResponse(nxt, status_code=303, headers=_HEADERS), token)
@@ -837,14 +870,15 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
             try:
                 key = await asyncio.to_thread(d.passkeys.authenticate, ticket, credential)
             except P.PasskeyError as e:
-                provider.record_failure()
-                audit.record("signin.passkey", actor="unknown", ok=False, summary="Tried to sign in with a passkey that did not verify")
+                # not counted towards the password lockout: junk passkey requests must not lock the owner's password out
+                record_failure_line("signin.passkey", "Tried to sign in with a passkey that did not verify")
                 return JSONResponse({"error": str(e)}, status_code=401, headers=_HEADERS)
             token, rec = d.session(request)
             if rec is not None:
-                d.sessions.reauth(token, f"passkey “{key.name}”")
+                fresh = d.sessions.reauth(token, f"passkey “{key.name}”")
                 audit.record("signin.confirm", actor="owner", via=f"passkey “{key.name}”", summary=f"Confirmed with passkey “{key.name}”")
-                return JSONResponse({"next": nxt}, headers=_HEADERS)
+                resp = JSONResponse({"next": nxt}, headers=_HEADERS)
+                return set_cookie(resp, fresh) if fresh else resp
             token, rec = d.sessions.create(f"passkey “{key.name}”")
             audit.record("signin.passkey", actor="owner", via=f"passkey “{key.name}”", summary=f"Signed in with passkey “{key.name}”")
             return set_cookie(JSONResponse({"next": nxt}, headers=_HEADERS), token)
@@ -900,7 +934,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 sub = (f"To {to}" if to else "") + who + f" · {d.ago(q.created_at)}"
                 trs.append(f'<tr><td><b>{_esc(v["title"])}</b><span class="row-sub">{_esc(sub.lstrip(" ·"))}</span></td>'
                            f'<td>{chip(v["badge"], "kind")}</td><td>{d.ttl(q)}</td>'
-                           f'<td>{link_button("Review", f"/dashboard/approvals?item={src.kind}:{q.id}")}</td></tr>')
+                           f'<td>{link_button("Open", f"/dashboard/approvals?item={src.kind}:{q.id}")}</td></tr>')
             more = hint(f"{n - 5} more on Approvals.") if n > 5 else ""
             wait_body = ('<table class="waits"><thead><tr><th>Request</th><th>Kind</th><th>Time left</th><th></th></tr></thead>'
                          f'<tbody>{"".join(trs)}</tbody></table>{more}')
@@ -941,7 +975,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 f'<form method="post" action="/dashboard/pause">{csrf}<input type="hidden" name="paused" value="{"0" if paused else "1"}">'
                 f'{button("Resume tools" if paused else "Pause tools", "primary" if paused else "")}</form>')
         right.append(card("Server", server_rows, foot, state or d.state_chip()))
-        actions = link_button(f"Review {n}", "/dashboard/approvals", "primary") if n else ""
+        actions = link_button(f"Open Approvals ({n})", "/dashboard/approvals", "primary") if n else ""
         grid = (f'{kpis}<div class="overview-grid"><div class="overview-col">{"".join(left)}</div>'
                 f'<div class="overview-col">{"".join(right)}</div></div>')
         return d.page("Overview", "overview", grid, rec, flash=_flash(request), wide=True, actions=actions, lede_html=lede)
@@ -999,7 +1033,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 to = next((val for k, val in v2["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
                 cur = ' aria-current="true"' if q2 is q else ""
                 links.append(f'<a href="/dashboard/approvals?item={_esc(s2.kind)}:{_esc(q2.id)}"{cur}><span class="q1">{chip(v2["badge"], "kind")}'
-                             f'<b>{_esc(v2["title"])}</b><span class="left">{d.time_left(q2)} left</span></span>'
+                             f'<b>{_esc(v2["title"])}</b><span class="left">expires in {d.time_left(q2)}</span></span>'
                              + (f'<span class="q2">To {_esc(to)}</span>' if to else "") + "</a>")
             queue = f'<nav class="card queue" aria-label="Waiting requests">{"".join(links)}</nav>'
             body = [f'<dl>{"".join(f"<dt>{_esc(k)}</dt><dd>{_esc(val)}</dd>" for k, val in v["rows"])}</dl>']
@@ -1102,7 +1136,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
             state, text = chip("Verified", "ok"), f'{chain["entries"]} entries, none changed since they were written' + (f" (oldest kept: {since})." if since else ".")
         else:
             state, text = chip("Changed", "err"), f'The log was changed after it was written, at entry {chain.get("broken_at")}. Entries from there on cannot be trusted.'
-        cards.append(card("About this log", f"<p>{_esc(text)}</p>" + hint(f"Kept for {s.audit_keep_days} days. Names and addresses only; "
+        cards.append(card("About this log", f"<p>{_esc(text)}</p>" + hint(f"Kept for {s.audit_keep_days} days. Names, addresses and subjects; "
                                                                           "no message bodies, passwords or tokens."),
                           link_button("Download as JSON", "/dashboard/activity.json"), state))
         return d.page("Activity", "activity", "".join(cards), got[1], lede="What changed on this server, newest first.")

@@ -10,7 +10,7 @@ Update the Mac helper before the server whenever its version changes.
   in the Docker image) or the owner password, which `OWNER_PASSWORD_LOGIN=false` turns off once a passkey exists. Sessions
   are stored as hashes; every form carries a CSRF token and must come from the server's own address. `/outbox` still works.
 - **Activity log.** Writes by agents, approvals, sign-ins, connected and signed-out apps are recorded in
-  `DATA_DIR/audit.jsonl` (names and addresses only, hash-chained, `AUDIT_KEEP_DAYS`, `AUDIT_LOG`).
+  `DATA_DIR/audit.jsonl` (names, addresses and subjects, no message bodies, hash-chained, `AUDIT_KEEP_DAYS`, `AUDIT_LOG`).
 
 - **Settings in the browser.** The dashboard lists every setting with where its value comes from and can change what the
   server does (areas, mail, invitations, contacts, the Mac helper, read-only, the dashboard). Values go to

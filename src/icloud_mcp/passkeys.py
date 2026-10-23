@@ -31,6 +31,7 @@ except ImportError:                     # pragma: no cover - exercised only wher
 
 FILE = "passkeys.json"
 _CHALLENGE_TTL = 300
+_MAX_CHALLENGES = 64       # open sign-in requests at once; anyone can ask for one, so the oldest make room
 _MAX_KEYS = 10
 
 
@@ -108,6 +109,8 @@ class PasskeyStore:
     def _ticket(self, challenge: bytes, purpose: str) -> str:
         now = time.time()
         self._challenges = {t: c for t, c in self._challenges.items() if c[2] > now}
+        while len(self._challenges) >= _MAX_CHALLENGES:
+            del self._challenges[min(self._challenges, key=lambda t: self._challenges[t][2])]
         ticket = secrets.token_urlsafe(18)
         self._challenges[ticket] = (challenge, purpose, now + _CHALLENGE_TTL)
         return ticket
