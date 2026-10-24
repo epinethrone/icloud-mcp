@@ -15,6 +15,11 @@ Update the Mac helper before the server whenever its version changes.
   make iCloud email other people on the dashboard. Approving writes exactly the held object with `If-Match` (or
   `If-None-Match` for a new event), so an event changed in the meantime is never overwritten.
 
+- **The dashboard updates itself and installs as an app.** Overview and Approvals pick up new requests within 15 seconds;
+  Send and Discard work without reloading, a request can be opened and approved on the Overview, and a discard can be undone
+  for 5 seconds; the Overview's separate "Open Approvals" button is gone. Polling does not extend the session. A manifest and a service worker that caches nothing make it
+  installable; the stylesheet moved to `static/dashboard.css`.
+
 - **Settings in the browser.** The dashboard lists every setting with where its value comes from and can change what the
   server does (areas, mail, invitations, contacts, the Mac helper, read-only, the dashboard). Values go to
   `DATA_DIR/settings.json`, are checked before saving and apply after a restart; weakening protection asks for the owner again.
