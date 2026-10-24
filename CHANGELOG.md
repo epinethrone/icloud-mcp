@@ -20,6 +20,11 @@ Update the Mac helper before the server whenever its version changes.
   for 5 seconds; the Overview's separate "Open Approvals" button is gone. Polling does not extend the session. A manifest and a service worker that caches nothing make it
   installable; the stylesheet moved to `static/dashboard.css`.
 
+- **Sign-in noise: summarized, and the owner's passkey sign-in stays.** Failed sign-ins held back by the lock are counted
+  and written as one summary line when the ten-minute window ends, even if nothing follows. Sign-in tickets are signed with
+  a per-process key instead of being stored, count as used only after a sign-in with the passkey succeeds, and are voided by
+  a restart, so challenge floods cannot fill anything or evict the owner's sign-in.
+
 - **Settings in the browser.** The dashboard lists every setting with where its value comes from and can change what the
   server does (areas, mail, invitations, contacts, the Mac helper, read-only, the dashboard). Values go to
   `DATA_DIR/settings.json`, are checked before saving and apply after a restart; weakening protection asks for the owner again.
