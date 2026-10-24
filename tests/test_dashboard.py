@@ -296,3 +296,96 @@ async def test_confirming_issues_a_new_session_token_and_needs_the_csrf_token(we
         assert r.status_code == 303 and d.cookie in r.headers["set-cookie"]
         new = c.cookies.get(d.cookie)
         assert new and new != old and d.sessions.get(old) is None and d.sessions.get(new) is not None
+
+
+async def test_the_app_files_are_served_to_anyone_and_the_pages_link_them(web):
+    app, *_ = web()
+    async with client(app) as c:
+        for path, ctype in (("/dashboard/dashboard.css", "text/css"), ("/dashboard/dashboard.js", "text/javascript"),
+                            ("/dashboard/install-hint.js", "text/javascript"), ("/dashboard/sw.js", "text/javascript"),
+                            ("/dashboard/manifest.webmanifest", "application/manifest+json"), ("/icon-192.png", "image/png"),
+                            ("/icon-512.png", "image/png")):
+            r = await c.get(path)                                     # browsers fetch the manifest and the worker without the cookie
+            assert r.status_code == 200 and r.headers["content-type"].startswith(ctype), path
+        worker = (await c.get("/dashboard/sw.js")).headers
+        assert worker["cache-control"] == "no-cache" and worker["service-worker-allowed"] == "/dashboard"
+        assert "caches." not in (await c.get("/dashboard/sw.js")).text                         # the worker stores nothing
+        manifest = (await c.get("/dashboard/manifest.webmanifest")).json()
+        assert manifest["start_url"] == manifest["scope"] == "/dashboard" and manifest["display"] == "standalone"
+        assert {i["sizes"] for i in manifest["icons"]} == {"192x192", "512x512"}
+        await signed_in(c)
+        r = await c.get("/dashboard")
+        csp = r.headers["content-security-policy"]
+        assert "manifest-src 'self'" in csp and "worker-src 'self'" in csp and "style-src 'self'" in csp
+        assert '<link rel="manifest" href="/dashboard/manifest.webmanifest">' in r.text and "<style>" not in r.text
+        assert re.search(r'href="/dashboard/dashboard.css\?v=[0-9a-f]{10}"', r.text) and 'src="/dashboard/dashboard.js?v=' in r.text
+
+
+async def test_the_live_state_changes_when_a_request_arrives_and_does_not_keep_the_session_alive(web):
+    app, mcp, _, _ = web()
+    d = mcp._icloud_dashboard
+    async with client(app) as c:
+        assert (await c.get("/dashboard/state.json")).status_code == 401
+        await signed_in(c)
+        first = (await c.get("/dashboard/state.json", headers={"x-live": "1"})).json()
+        assert first["waiting"] == 0
+        queue(mcp)
+        second = (await c.get("/dashboard/state.json", headers={"x-live": "1"})).json()
+        assert second["waiting"] == 1 and second["v"] != first["v"]
+        assert "(1) Overview · iCloud connector" in (await c.get("/dashboard")).text
+        rec = next(iter(d.sessions._items.values()))
+        rec["last"] -= 120
+        stale = rec["last"]
+        await c.get("/dashboard/state.json", headers={"x-live": "1"})
+        await c.get("/dashboard", headers={"x-live": "1"})            # the page's own background refresh
+        assert rec["last"] == stale                                     # a page left open still signs out when idle
+        await c.get("/dashboard")
+        assert rec["last"] > stale
+
+
+async def test_a_request_is_approved_on_the_overview_and_the_result_shows_there(web):
+    app, mcp, _, sent = web()
+    qid = queue(mcp, subject="Kitchen quote", body="Thursday works for us.")
+    async with client(app) as c:
+        token = await signed_in(c)
+        page = (await c.get("/dashboard")).text
+        assert "Open Approvals (" not in page                                          # no second way to the same list
+        assert f'data-key="mail:{qid}"' in page and "<details>" in page and "Thursday works for us." in page
+        assert 'name="back" value="/dashboard"' in page
+        sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
+        form = {"csrf": token, "kind": "mail", "id": qid, "sha": sha, "action": "approve", "back": "/dashboard"}
+        r = await c.post("/dashboard/approvals/act", data=form, headers=SAME)
+        assert r.status_code == 303 and r.headers["location"] == "/dashboard" and len(sent) == 1
+        assert "Sent to bob@example.org" in (await c.get("/dashboard")).text
+        r = await c.post("/dashboard/approvals/act", data={**form, "back": "https://evil.example.net/"}, headers=SAME)
+        assert r.status_code == 409                                                     # nothing waiting any more
+
+
+async def test_a_request_with_a_warning_is_not_approved_from_the_overview(web, monkeypatch):
+    from icloud_mcp.dashboard import MailApprovals
+    real = MailApprovals.describe
+    monkeypatch.setattr(MailApprovals, "describe", lambda self, q, ctx=None: {**real(self, q, ctx), "warnings": ["Check the address"]})
+    app, mcp, _, _ = web()
+    qid = queue(mcp)
+    async with client(app) as c:
+        await signed_in(c)
+        page = (await c.get("/dashboard")).text
+        assert f'href="/dashboard/approvals?item=mail:{qid}">Review</a>' in page and 'value="approve"' not in page
+
+
+async def test_the_page_script_gets_json_answers(web):
+    app, mcp, _, sent = web()
+    qid = queue(mcp)
+    async with client(app) as c:
+        token = await signed_in(c)
+        sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
+        form = {"csrf": token, "kind": "mail", "id": qid, "sha": sha, "action": "approve"}
+        js = {**SAME, "accept": "application/json"}
+        r = await c.post("/dashboard/approvals/act", data=form, headers=js)
+        assert r.status_code == 200 and r.json() == {"ok": True, "note": "Sent to bob@example.org.", "waiting": 0} and len(sent) == 1
+        r = await c.post("/dashboard/approvals/act", data=form, headers=js)
+        assert r.status_code == 409 and r.json()["ok"] is False and len(sent) == 1
+        qid = queue(mcp)
+        sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
+        r = await c.post("/dashboard/approvals/act", data={**form, "id": qid, "sha": sha, "action": "discard"}, headers=js)
+        assert r.json() == {"ok": True, "note": "Discarded. Nothing was sent.", "waiting": 0} and len(sent) == 1
