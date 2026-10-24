@@ -2,6 +2,7 @@
 import contextlib
 import json
 import re
+import time
 
 import httpx
 import pytest
@@ -351,3 +352,16 @@ async def test_held_calendar_changes_show_up_and_are_released(web, monkeypatch):
         await c.post("/dashboard/approvals/act", headers=SAME,
                      data={"csrf": token, "kind": "calendar", "id": q.id, "sha": q.sha256, "action": "approve"})
         assert "Added “Autumn fair”." in (await c.get("/dashboard/approvals")).text and released == ["create"] and src.pending() == []
+
+
+async def test_the_count_of_unrecorded_failures_is_written_when_the_window_ends(web):
+    app, mcp, _, _ = web()
+    d = mcp._icloud_dashboard
+    async with client(app) as c:
+        for _ in range(12):
+            await c.post("/dashboard/passkey/verify", headers=SAME, json={"purpose": "signin", "ticket": "junk", "credential": {}})
+    lines = [e for e in d.audit.entries(limit=1000) if e["action"] == "signin.passkey"]
+    assert len(lines) == 5                                                           # the flood has stopped here
+    d.flush_failure_lines(time.time() + 601)                                         # what the timer does at the window's end
+    lines = [e for e in d.audit.entries(limit=1000) if e["action"] == "signin.passkey"]
+    assert len(lines) == 6 and lines[0]["summary"] == "7 more like this in 10 minutes were not recorded"

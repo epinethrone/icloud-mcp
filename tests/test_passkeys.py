@@ -69,14 +69,33 @@ def test_remove(tmp_path):
     assert store.list() == [] and store.remove(key.id) is None
 
 
-def test_open_challenges_are_capped(tmp_path):
-    from icloud_mcp import passkeys
+def test_nobody_can_push_out_the_owners_sign_in(tmp_path):
     store, dev, _ = registered(tmp_path)
     first = store.authentication_options()
-    for _ in range(passkeys._MAX_CHALLENGES * 3):                 # anyone may ask for a challenge: memory stays bounded
+    for _ in range(500):                                         # anyone may ask for a sign-in challenge
         store.authentication_options()
-    assert len(store._challenges) <= passkeys._MAX_CHALLENGES
-    with pytest.raises(PasskeyError):                            # the oldest made room
+    assert store._challenges == {}                               # sign-in tickets are signed, not stored
+    assert store.authenticate(first["ticket"], dev.get(first["publicKey"]))     # the first one still works
+    with pytest.raises(PasskeyError):                            # once used, never again
         store.authenticate(first["ticket"], dev.get(first["publicKey"]))
-    latest = store.authentication_options()
-    assert store.authenticate(latest["ticket"], dev.get(latest["publicKey"]))
+
+
+def test_a_forged_or_old_sign_in_ticket_is_refused(tmp_path, monkeypatch):
+    from icloud_mcp import passkeys
+    store, dev, _ = registered(tmp_path)
+    opts = store.authentication_options()
+    enc, exp, mac = opts["ticket"].split(".")
+    for forged in (f"{enc}.{int(exp) + 9999}.{mac}", f"{enc}.{exp}.{'0' * 64}", "junk"):
+        with pytest.raises(PasskeyError):
+            store.authenticate(forged, dev.get(opts["publicKey"]))
+    monkeypatch.setattr(passkeys.time, "time", lambda: int(exp) + 1)
+    with pytest.raises(PasskeyError):
+        store.authenticate(opts["ticket"], dev.get(opts["publicKey"]))
+
+
+def test_open_registrations_are_capped(tmp_path):
+    from icloud_mcp import passkeys
+    store = PasskeyStore(str(tmp_path), BASE)
+    for _ in range(passkeys._MAX_CHALLENGES * 3):
+        store.registration_options()
+    assert len(store._challenges) <= passkeys._MAX_CHALLENGES
