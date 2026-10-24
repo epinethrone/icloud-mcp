@@ -59,6 +59,8 @@ _ICON_ROUTES = {                       # path -> (file, content type); the addre
     "/apple-touch-icon-precomposed.png": ("icon-180.png", "image/png"),
     "/icon.png": ("icon-180.png", "image/png"),
     "/icon-32.png": ("icon-32.png", "image/png"),
+    "/icon-192.png": ("icon-192.png", "image/png"),          # the dashboard's app icons (manifest.webmanifest)
+    "/icon-512.png": ("icon-512.png", "image/png"),
 }
 
 
@@ -462,7 +464,7 @@ def create_server(s: Settings) -> tuple[MCPServer, OwnerOAuthProvider | None]:
         validate_token_resource=False,
     )
     # The project logo ships as favicon.ico / icon-180.png / icon-32.png in static/; replace them to use your own artwork.
-    have = {name for name in ("favicon.ico", "icon-180.png", "icon-32.png") if (_STATIC / name).is_file()}
+    have = {name for name in ("favicon.ico", "icon-180.png", "icon-32.png", "icon-192.png", "icon-512.png") if (_STATIC / name).is_file()}
     icons = ([Icon(src=f"{s.public_url}/icon.png", mime_type="image/png", sizes=["180x180"])] if "icon-180.png" in have else []) + \
             ([Icon(src=f"{s.public_url}/icon-32.png", mime_type="image/png", sizes=["32x32"])] if "icon-32.png" in have else [])
     mcp = MCPServer("iCloud", instructions=build_instructions(s), auth_server_provider=provider, auth=auth,

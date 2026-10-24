@@ -57,6 +57,13 @@
 !src/icloud_mcp/static/icon-180.png
 !src/icloud_mcp/static/icon-32.png
 !src/icloud_mcp/static/passkey.js
+!src/icloud_mcp/static/dashboard.css
+!src/icloud_mcp/static/dashboard.js
+!src/icloud_mcp/static/install-hint.js
+!src/icloud_mcp/static/manifest.webmanifest
+!src/icloud_mcp/static/sw.js
+!src/icloud_mcp/static/icon-192.png
+!src/icloud_mcp/static/icon-512.png
 !assets/
 !assets/logo.svg
 !assets/logo-512.png

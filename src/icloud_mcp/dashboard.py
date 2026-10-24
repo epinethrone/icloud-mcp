@@ -10,8 +10,12 @@ SHA-256 hash in DATA_DIR/sessions.json (mode 600), so a restart keeps you signed
 They end after DASHBOARD_SESSION_MINUTES without use (30) and after 12 hours in any case. Every form carries a per-session
 CSRF token and every POST must come from this server's own origin.
 
-Pages are rendered on the server. The only script is /dashboard/passkey.js, served from here (CSP `script-src 'self'`), which
-calls the browser's passkey API. Everything else works without it.
+Pages are rendered on the server and work without scripts. Three scripts are served from here (CSP `script-src 'self'`):
+/dashboard/passkey.js calls the browser's passkey API; /dashboard/dashboard.js keeps the pages current (it asks
+/dashboard/state.json what is waiting and, on Overview and Approvals, loads the page's own address again when that
+changes), sends and discards without reloading the page (a discard can be undone for 5 seconds before it is sent to the
+server), and registers a service worker so the dashboard can be installed as an app; /dashboard/install-hint.js shows
+the Overview's tip on how to install it. The worker caches nothing: every page comes from the server.
 """
 from __future__ import annotations
 
@@ -54,9 +58,10 @@ _HEADERS = {
     "Referrer-Policy": "same-origin",       # browsers then send our own Origin on form posts (no-referrer makes it "null")
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": ("default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self'; "
-                                "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
+    "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self'; "
+                                "manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
+_LIVE = "x-live"               # header of the page's own background refresh; it does not count as using the dashboard
 
 
 def _h(token: str) -> str:
@@ -106,7 +111,8 @@ class Sessions:
             self._save()
         return token, rec
 
-    def get(self, token: str) -> dict[str, Any] | None:
+    def get(self, token: str, touch: bool = True) -> dict[str, Any] | None:
+        """touch=False looks a session up without counting it as use, so a page left open does not stay signed in."""
         if not token:
             return None
         with self._lock:
@@ -114,7 +120,7 @@ class Sessions:
             rec = self._items.get(_h(token))
             if rec is None:
                 return None
-            if time.time() - rec["last"] > 60:          # write at most once a minute while browsing
+            if touch and time.time() - rec["last"] > 60:          # write at most once a minute while browsing
                 rec["last"] = time.time()
                 self._save()
             return rec
@@ -158,7 +164,8 @@ class ApprovalSource:
         """{'title', 'badge', 'rows': [(label, value)], 'text', 'notes': [str], 'warnings': [str], 'needs_override': bool}"""
         raise NotImplementedError
 
-    def contexts(self, items: list[Any]) -> dict[str, Any]:
+    def contexts(self, items: list[Any], prune: bool = True) -> dict[str, Any]:
+        """prune=True only with the whole queue: it forgets what is kept for requests not in items."""
         return {}
 
     def release(self, q: Any) -> str:
@@ -178,8 +185,8 @@ class MailApprovals(ApprovalSource):
     def pending(self):
         return self.mail.outbox.pending()
 
-    def contexts(self, items):
-        return self.mail.approval_contexts(items, prune=True) if items else {}
+    def contexts(self, items, prune=True):
+        return self.mail.approval_contexts(items, prune=prune) if items else {}
 
     def describe(self, q, context=None):
         d = self.mail.describe_queued(q, context)
@@ -253,235 +260,12 @@ class IMessageApprovals(ApprovalSource):
 #   card's buttons, right-aligned, the main action last; full width on phones)
 #   row actions (remove a passkey, sign out an app) sit at the right end of their row, all the same size
 # ---------------------------------------------------------------------------------------------------------------------
-_CSS = """
-:root{color-scheme:light dark;--bg:#eef2f6;--sheet:#fff;--card:#fff;--text:#131416;--muted:#5d5f60;--line:#e6e9ed;--quiet:#f0f1f3;--control:#cdced1;
---fill:#ebedee;--active:#e2e7ed;--code:#f7f9fb;--primary:#131416;--on-primary:#fff;--accent:#0a66c9;--accent-text:#0a5cb5;--track:#e2edf9;
---info:#e2edf9;--info-text:#0b4a8f;--ok-bg:#dcfae5;--ok:#1e7b4f;--ok-ink:#04250e;--warn-bg:#fffbeb;--warn:#92400e;--err-bg:#ffedea;--err:#c4242a;
---err-ink:#831c1e;--knob:#fff;--knob-shadow:#0003;--seg-on:#fff}
-@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--sheet:#141619;--card:#141619;--text:#f4f5f6;--muted:#b0b4b9;--line:#262a2f;--quiet:#1d2024;
---control:#454a50;--fill:#23272c;--active:#23272c;--code:#1a1d21;--primary:#f4f5f6;--on-primary:#0b0d10;--accent:#58a2f5;--accent-text:#7ab5f7;
---track:#15253a;--info:#15253a;--info-text:#9ecbff;--ok-bg:#172a1d;--ok:#3fc07a;--ok-ink:#3fc07a;--warn-bg:#2a2212;--warn:#f0b75a;--err-bg:#2c1a20;
---err:#e5566f;--err-ink:#e5566f;--knob:#fff;--knob-shadow:#0008;--seg-on:#3a3f45}}
-*{box-sizing:border-box}
-body{font:16px/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:var(--sheet);color:var(--text);margin:0;-webkit-text-size-adjust:100%}
-a{color:var(--accent-text)}
-h1,h2,h3{margin:0;text-wrap:balance}
-p{margin:0}
-.num{font-variant-numeric:tabular-nums}
-.wrap{display:flex;min-height:100vh}
-.frame{flex:1;min-width:0;display:flex;flex-direction:column}
-main{flex:1;min-width:0;max-width:52rem;padding:0 16px calc(96px + env(safe-area-inset-bottom,0px))}
-.stack{display:flex;flex-direction:column;gap:12px}
-/* top bar (phones) */
-.topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;
-background:var(--bg);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
-.brand img{width:28px;height:28px;border-radius:7px;flex-shrink:0}
-.brand-text{display:flex;flex-direction:column;min-width:0;line-height:1.2}
-.brand-name{font-weight:600;font-size:15px}
-.brand-host{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* the bar above the sheet (wide screens): this server, its state, who is signed in */
-.deskbar{display:none}
-/* page head */
-.page-head{padding:20px 0 16px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
-.page-head>.page-title{display:flex;flex-direction:column;gap:4px;flex:1 1 20rem;min-width:0}
-.page-head h1{font-size:24px;font-weight:600;letter-spacing:-.01em}
-.page-actions{display:flex;gap:8px;flex-wrap:wrap}
-.lede{color:var(--muted);font-size:15px}
-.lede b{color:var(--text);font-weight:500}
-/* cards: one 1px edge, no shadow */
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 0}
-.card-head h2{font-size:16px;font-weight:600}
-.head-link{font-size:14px;font-weight:500;color:var(--text);text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center;gap:4px}
-.head-link:hover{text-decoration:underline}
-.card-body{padding:10px 16px 14px;display:flex;flex-direction:column;gap:10px}
-.card-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--quiet)}
-.foot-hint{flex:1 1 12rem;margin:0;font-size:13px;color:var(--muted)}
-.card-foot .btn{flex:1 1 8rem}
-.card-foot form{display:contents}
-.list{display:flex;flex-direction:column}
-.row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:46px;padding:6px 0;border-bottom:1px solid var(--quiet)}
-.row:last-child{border-bottom:0}
-.row-main{display:flex;flex-direction:column;min-width:0}
-.row-sub{font-size:13px;color:var(--muted)}
-.row-value{text-align:right;flex-shrink:0;max-width:60%;font-variant-numeric:tabular-nums}
-.row-value.off{color:var(--muted)}
-.row form{flex-shrink:0}
-.hint{font-size:13px;color:var(--muted)}
-/* key figures: one container split by dividers */
-.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--line);border-radius:8px;background:var(--card)}
-.kpis>div{padding:12px 16px;border-left:1px solid var(--line);border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px;min-width:0}
-.kpis>div:nth-child(odd){border-left:0}
-.kpis>div:nth-child(-n+2){border-top:0}
-.kpis span{font-size:13px;color:var(--muted)}
-.kpis b{font-size:26px;line-height:1.25;font-weight:400;font-variant-numeric:tabular-nums}
-.kpis .lead b{color:var(--accent);font-weight:500}
-/* time left before a waiting request is dropped */
-.ttl{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:9rem}
-.ttl-ends{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.ttl-ends b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
-.track{height:6px;border-radius:3px;background:var(--track);overflow:hidden}
-.track i{display:block;height:100%;background:var(--accent);border-radius:3px}
-/* waiting list on the overview */
-.waits{width:100%;border-collapse:collapse;font-size:15px}
-.waits th{font-size:12px;font-weight:400;color:var(--muted);text-align:left;padding:4px 12px 6px 0}
-.waits td{padding:12px 12px 12px 0;border-top:1px solid var(--quiet);vertical-align:middle}
-.waits td:last-child{padding-right:0;text-align:right}
-.waits b{font-weight:500;display:block}
-.waits .row-sub{display:block}
-@media (max-width:639px){.waits thead,.waits td:nth-child(2){display:none}.waits tr{display:block;border-top:1px solid var(--quiet);padding:12px 0}
-.waits tr:first-child{border-top:0}.waits td{display:block;border:0;padding:0}.waits td+td{margin-top:8px}.waits td:last-child{text-align:left}}
-/* approvals: the list and the selected request */
-.split{display:grid;gap:12px;align-items:start}
-.queue{display:flex;flex-direction:column;padding:6px}
-.queue a{display:block;padding:12px;border-radius:8px;color:var(--text);text-decoration:none}
-.queue a:hover{background:var(--quiet)}
-.queue a[aria-current=true]{background:var(--active)}
-.q1{display:flex;gap:8px;align-items:center;min-width:0}
-.q1 b{font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.q1 .left{margin-left:auto;color:var(--muted);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.q2{color:var(--muted);font-size:13px;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-/* underline tabs inside a page (settings areas) */
-.subtabs{display:flex;gap:20px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;margin-bottom:4px}
-.subtabs a{padding:8px 0 10px;color:var(--muted);text-decoration:none;font-weight:500;font-size:14px;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
-.subtabs a[aria-current=page]{color:var(--text);border-bottom-color:var(--accent)}
-/* settings: the section's name beside its fields */
-.srow{display:grid;gap:10px}
-.srow-head h2{font-size:16px;font-weight:600}
-/* chips and banners */
-.chip{font-size:12px;font-weight:500;padding:2px 8px;border-radius:999px;white-space:nowrap;background:var(--fill);color:var(--text);flex:none}
-.chip.info{background:var(--fill);color:var(--text)}.chip.ok{background:var(--ok-bg);color:var(--ok-ink)}
-.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.err{background:var(--err-bg);color:var(--err-ink)}
-.kind{border-radius:4px}
-.banner{border-radius:8px;padding:10px 14px;font-size:15px;background:var(--info);color:var(--info-text)}
-.banner.bad{background:var(--err-bg);color:var(--err-ink)}
-.field-error{font-size:13px;color:var(--err);font-weight:600}
-.field [aria-invalid=true]{border-color:var(--err)}
-.alert{border-radius:8px;padding:10px 12px;font-size:14px;background:var(--warn-bg);color:var(--warn)}
-.alert ul{margin:6px 0 0;padding-left:18px}
-/* content */
-.message{background:var(--code);padding:12px 14px;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font-size:15px;line-height:1.6}
-pre{background:var(--code);padding:10px 12px;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto;font:14px/1.45 ui-monospace,Menlo,monospace;margin:0}
-dl{display:grid;grid-template-columns:minmax(4.5rem,max-content) minmax(0,1fr);gap:6px 14px;margin:0;font-size:15px}
-dt{color:var(--muted)} dd{margin:0;word-break:break-word}
-.meta{font-size:13px;color:var(--muted)}
-/* buttons: one filled primary per screen, near-black; the rest outlined */
-.btn{font:inherit;font-size:15px;font-weight:500;min-height:44px;padding:0 18px;border-radius:8px;border:1px solid var(--control);cursor:pointer;
-background:var(--card);color:var(--text);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}
-.btn:hover{background:var(--quiet)}
-.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
-.btn.primary:hover{opacity:.9}
-.btn.danger{color:var(--err)}
-.btn.text{background:none;border-color:transparent;color:var(--text);padding:0 4px;min-width:5.5rem;justify-content:flex-end}
-.btn.text:hover{text-decoration:underline}
-.btn.text.danger{color:var(--err)}
-.btn[disabled]{opacity:.5;cursor:default}
-.btn svg{width:20px;height:20px}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-/* forms */
-.field{display:flex;flex-direction:column;gap:6px}
-.field label{font-size:14px;font-weight:500}
-.field input,.field select,.field textarea{width:100%;min-height:46px;padding:0 12px;font:inherit;font-size:16px;border:1px solid var(--control);border-radius:8px;background:var(--card);color:var(--text)}
-.field textarea{padding:10px 12px;min-height:5rem;resize:vertical}
-.field input[disabled],.field select[disabled],.field textarea[disabled]{opacity:.6}
-.field-label{font-size:14px;font-weight:500}
-.switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:48px}
-.switch-row label{display:flex;flex-direction:column;gap:2px;font-size:15px}
-.switch{appearance:none;-webkit-appearance:none;flex-shrink:0;width:51px;height:31px;border-radius:16px;background:var(--control);position:relative;cursor:pointer;margin:0}
-.switch::before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:var(--knob);box-shadow:0 1px 3px var(--knob-shadow);transition:left .15s}
-.switch:checked{background:var(--ok)}
-.switch:checked::before{left:22px}
-.switch[disabled]{opacity:.5;cursor:default}
-.radio-seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--fill);border-radius:8px;padding:3px;gap:2px}
-.radio-seg label{position:relative;min-height:38px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;text-align:center;padding:0 6px;white-space:nowrap}
-.radio-seg input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
-.radio-seg label:has(input:checked){background:var(--seg-on);outline:1px solid var(--line)}
-.radio-seg label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
-.check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
-.check input{width:20px;height:20px;margin:1px 0 0;flex-shrink:0}
-/* segmented filter */
-.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--fill);border-radius:8px;padding:3px;gap:2px}
-.seg a{min-height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:500;color:var(--text);text-decoration:none}
-.seg a[aria-current=page]{background:var(--seg-on);outline:1px solid var(--line)}
-/* activity: times in the text face, tabular */
-ol.log{list-style:none;margin:0;padding:0}
-ol.log li{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--quiet);font-size:15px}
-ol.log li:last-child{border-bottom:0}
-ol.log time{font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
-/* tab bar (phones) */
-.tabs{position:fixed;left:0;right:0;bottom:0;z-index:2;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--bg);
-border-top:1px solid var(--line);padding:4px 4px calc(6px + env(safe-area-inset-bottom,0px))}
-.tabs a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:50px;text-decoration:none;color:var(--muted);font-size:11px;font-weight:500}
-.tabs a[aria-current=page]{color:var(--text);font-weight:600}
-.tabs svg{width:24px;height:24px}
-.ico{position:relative;display:inline-flex}
-.count{position:absolute;top:-4px;right:-11px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--text);color:var(--sheet);font-size:11px;font-weight:700;line-height:18px;text-align:center}
-/* sidebar (wide screens) */
-.side{display:none}
-/* sign-in */
-.auth{min-height:100vh;max-width:none;display:flex;align-items:center;justify-content:center;padding:24px 16px}
-.auth .card{width:100%;max-width:25rem}
-.auth .card-head{padding:18px 18px 0}
-.auth .card-body{padding:14px 18px 18px;gap:14px}
-.auth .card-foot{justify-content:flex-start}
-.auth h1{font-size:22px;font-weight:600}
-.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
-.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
-.full{width:100%}
-@media (min-width:640px){.card-foot .btn{flex:0 0 auto}.auth .card-foot .btn{flex:1 1 auto}
-.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.kpis>div{border-top:0}.kpis>div:nth-child(odd){border-left:1px solid var(--line)}.kpis>div:first-child{border-left:0}}
-/* Mouse and trackpad: desktop sizes (buttons as wide as their label, about 32 px high). Touch keeps 44 px targets. */
-@media (pointer:fine) and (min-width:640px){
-body{font-size:14px}
-.btn{min-height:32px;padding:0 12px;font-size:14px;border-radius:6px}
-.btn svg{width:16px;height:16px}
-.btn.text{min-height:32px;min-width:0;padding:0 2px}
-.field input,.field select{min-height:36px;font-size:14px;border-radius:6px;padding:0 10px}
-.field textarea{font-size:14px;border-radius:6px}
-.row{min-height:40px}
-.switch{width:32px;height:18px;border-radius:9px}
-.switch::before{top:2px;left:2px;width:14px;height:14px}
-.switch:checked::before{left:16px}
-.switch-row{min-height:40px}
-.radio-seg label{min-height:28px}
-.seg a{min-height:28px}
-.auth .btn{min-height:36px}
-.waits,.message,dl,ol.log li,.switch-row label{font-size:14px}
+_CSS = (_STATIC / "dashboard.css").read_text()
+_ASSETS = {     # served under /dashboard/ to anyone (the manifest and the worker are fetched without the session cookie)
+    "dashboard.css": "text/css", "dashboard.js": "text/javascript", "install-hint.js": "text/javascript",
+    "manifest.webmanifest": "application/manifest+json", "sw.js": "text/javascript",
 }
-@media (pointer:fine) and (min-width:860px){.field,.switch-row,.radio-seg{max-width:36rem}}
-/* From 860 px: a tinted frame (sidebar and the bar above) around one white sheet that holds the page */
-@media (min-width:860px){
-body{background:var(--bg)}
-.topbar,.tabs{display:none}
-.side{display:flex;flex-direction:column;gap:2px;width:228px;flex-shrink:0;padding:12px;position:sticky;top:0;height:100vh}
-.side .brand{padding:4px 8px 16px;flex:0 0 auto}
-.side nav{display:flex;flex-direction:column;gap:2px}
-.side nav a{display:flex;align-items:center;gap:10px;min-height:34px;padding:0 10px;border-radius:8px;color:var(--text);text-decoration:none;font-size:14px}
-.side nav a:hover{background:var(--quiet)}
-.side nav a[aria-current=page]{background:var(--active);font-weight:500}
-.side svg{width:16px;height:16px;color:var(--muted)}
-.side .num{margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--text);color:var(--sheet);font-size:12px;font-weight:600;line-height:20px;text-align:center;font-variant-numeric:tabular-nums}
-.deskbar{display:flex;align-items:center;gap:16px;min-height:48px;padding:0 20px 0 4px;font-size:13px;color:var(--muted);flex-wrap:wrap}
-.deskbar .host{color:var(--text);font-weight:500}
-.deskbar .who{margin-left:auto}
-.deskbar form{display:flex}
-.sheet{flex:1;background:var(--sheet);border:1px solid var(--line);border-radius:16px;margin:0 8px 8px 0;min-width:0}
-main{padding:0 24px 32px}
-.page-head{padding-top:24px}
-.page-head h1{font-size:22px}
-.split{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
-.srow{grid-template-columns:minmax(0,14rem) minmax(0,1fr);gap:24px;padding-top:8px}
-.srow-head h2{padding-top:14px}
-}
-.state-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px}
-.state-dot.paused{background:var(--warn)}
-.overview-grid{display:grid;gap:12px}
-.overview-col{display:flex;flex-direction:column;gap:12px;min-width:0}
-@media (min-width:860px){.phone-only{display:none}}   /* the bar above the sheet carries Sign out from here on */
-@media (min-width:1100px){main.wide{max-width:76rem}.overview-grid{grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start}}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
-"""
+_ASSET_VERSION = hashlib.sha256(b"".join((_STATIC / name).read_bytes() for name in sorted(_ASSETS))).hexdigest()[:10]
 
 _SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{}</svg>'
 _ICONS = {
@@ -500,7 +284,7 @@ def _esc(v: Any) -> str:
 
 # -- components (each returns HTML; arguments named *_html are already escaped) ----------------------------------------
 def card(title: str = "", body_html: str = "", foot_html: str = "", chip_html: str = "", form: str = "", hidden_html: str = "",
-         link: tuple[str, str] | None = None) -> str:
+         link: tuple[str, str] | None = None, attrs: dict[str, str] | None = None) -> str:
     """One card. form='/dashboard/x' wraps the whole card in a POST form, so its fields and its foot buttons belong together.
     Buttons act and sit in the foot; link=(label, href) navigates and sits at the right of the head."""
     aside = chip_html + (f'<a class="head-link" href="{_esc(link[1])}">{_esc(link[0])} <span aria-hidden="true">›</span></a>' if link else "")
@@ -508,7 +292,8 @@ def card(title: str = "", body_html: str = "", foot_html: str = "", chip_html: s
     inner = (head + (f'<div class="card-body">{body_html}</div>' if body_html else "")
              + (f'<div class="card-foot">{foot_html}</div>' if foot_html else ""))
     if form:
-        return f'<form class="card" method="post" action="{_esc(form)}">{hidden_html}{inner}</form>'
+        extra = "".join(f' {k}="{_esc(v)}"' for k, v in (attrs or {}).items())
+        return f'<form class="card"{extra} method="post" action="{_esc(form)}">{hidden_html}{inner}</form>'
     return f'<section class="card">{inner}</section>'
 
 
@@ -574,6 +359,11 @@ class Dashboard:
     def waiting(self) -> int:
         return sum(len(src.pending()) for src in self.sources.values())
 
+    def fingerprint(self) -> tuple[int, str]:
+        """How many requests wait, and a value that changes when any of them arrives, leaves or changes (state.json)."""
+        keys = [f"{src.kind}:{q.id}:{q.sha256}" for src in self.sources.values() for q in src.pending()]
+        return len(keys), hashlib.sha256("\n".join(sorted(keys) + [str(self.paused())]).encode()).hexdigest()[:16]
+
     def paused(self) -> bool:
         return os.path.exists(self.pause_file)
 
@@ -583,7 +373,7 @@ class Dashboard:
 
     def session(self, request: Request) -> tuple[str, dict[str, Any] | None]:
         token = request.cookies.get(self.cookie, "")
-        return token, self.sessions.get(token)
+        return token, self.sessions.get(token, touch=request.headers.get(_LIVE) != "1")
 
     def same_origin(self, request: Request) -> bool:
         origin = request.headers.get("origin")
@@ -607,6 +397,7 @@ class Dashboard:
     def deskbar(self, rec: dict[str, Any]) -> str:
         """The bar above the sheet on wide screens: this server, whether its tools answer, and who is signed in."""
         state = '<span><span class="state-dot paused"></span>Paused</span>' if self.paused() else '<span><span class="state-dot"></span>Running</span>'
+        state += '<span class="live" data-live-status hidden></span>'          # dashboard.js: “Live · updated just now”
         via = str(rec.get("via", ""))
         via = "the owner password" if via == "password" else via         # otherwise: passkey “name”, Cloudflare Access (who)
         who = f'<span class="who">Signed in with {_esc(via)}</span>' if via else '<span class="who"></span>'
@@ -614,10 +405,12 @@ class Dashboard:
                 f'<form method="post" action="/dashboard/logout">{self.csrf_input(rec)}{button("Sign out", "text")}</form></header>')
 
     def page(self, title: str, active: str, inner: str, rec: dict[str, Any], status: int = 200, flash: str = "",
-             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "") -> Response:
+             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "", live: str = "") -> Response:
         """A signed-in page: top bar or the frame, the page head (title, one line of context, the page's one primary
-        action), a banner for the last action, then the cards. lede_html is an already escaped lede."""
-        n = self.waiting()
+        action), a banner for the last action, then the cards. lede_html is an already escaped lede. live is the page's own
+        address: dashboard.js loads it again and swaps in the content when what is waiting changes (also after a form post,
+        whose address must not be requested again). Other pages only get their counts updated."""
+        n, v = self.fingerprint()
         items = [("overview", "Overview", "/dashboard"), ("approvals", "Approvals", "/dashboard/approvals"),
                  ("activity", "Activity", "/dashboard/activity"), *self.extra_nav, ("security", "Security", "/dashboard/security")]
         tabs, side = "", ""
@@ -633,9 +426,11 @@ class Dashboard:
         lede_html = lede_html or (_esc(lede) if lede else "")
         head = (f'<div class="page-head"><div class="page-title"><h1>{_esc(title)}</h1>' + (f'<p class="lede">{lede_html}</p>' if lede_html else "") + "</div>"
                 + (f'<div class="page-actions">{actions}</div>' if actions else "") + "</div>")
-        main = '<main class="wide">' if wide else "<main>"         # Python 3.11 cannot nest the same quote in an f-string
-        return self._doc(title, f'<div class="wrap">{sidebar}<div class="frame">{topbar}{self.deskbar(rec)}<div class="sheet">{main}{head}'
-                                f'<div class="stack">{banner}{inner}</div></main></div></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>', status)
+        main = "<main" + (' class="wide"' if wide else "") + (f' data-live="{_esc(live)}"' if live else "") + ">"
+        return self._doc(f"({n}) {title}" if n else title,
+                         f'<div class="wrap" data-v="{v}">{sidebar}<div class="frame">{topbar}{self.deskbar(rec)}<div class="sheet">{main}{head}'
+                         f'<div class="stack">{banner}{inner}</div></main></div></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>',
+                         status, app=True)
 
     def auth_page(self, title: str, body_html: str, foot_html: str = "", status: int = 200) -> Response:
         """Sign-in and confirm: one card in the middle of the screen, nothing outside it."""
@@ -644,11 +439,18 @@ class Dashboard:
                  + "</section></main>")
         return self._doc(title, inner, status)
 
-    def _doc(self, title: str, body: str, status: int) -> Response:
+    def _doc(self, title: str, body: str, status: int, app: bool = False) -> Response:
+        """app=True (signed-in pages) adds the script for live updates, actions without reloading and the install tip."""
+        v = _ASSET_VERSION
+        scripts = '<script src="/dashboard/passkey.js" defer></script>'
+        if app:
+            scripts += f'<script src="/dashboard/install-hint.js?v={v}" defer></script><script src="/dashboard/dashboard.js?v={v}" defer></script>'
         doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-               f'<meta name="color-scheme" content="light dark"><title>{_esc(title)} · iCloud connector</title>'
-               f'<link rel="icon" href="/favicon.ico"><style>{_CSS}</style></head><body>{body}'
-               '<script src="/dashboard/passkey.js" defer></script></body></html>')
+               f'<meta name="color-scheme" content="light dark"><meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)">'
+               f'<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)"><title>{_esc(title)} · iCloud connector</title>'
+               f'<link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png">'
+               f'<link rel="manifest" href="/dashboard/manifest.webmanifest"><link rel="stylesheet" href="/dashboard/dashboard.css?v={v}">'
+               f'</head><body>{body}{scripts}</body></html>')
         return HTMLResponse(doc, status_code=status, headers=_HEADERS)
 
     def message(self, rec: dict[str, Any], title: str, text: str, status: int) -> Response:
@@ -697,6 +499,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
     if not d.secure and host not in ("localhost", "127.0.0.1", "::1") and not host.endswith(".localhost"):
         log.warning("MCP_PUBLIC_URL is plain http on %s: the dashboard cookie cannot be Secure or __Host-. Use https.", host)
     failures: dict[str, list[float]] = {}               # action -> [window start, recorded, not recorded]
+    flashes: dict[str, str] = {}      # one-shot result of an approval, keyed by session, so the result page is a plain GET
     window = 600
 
     def flush_failure_lines(now: float | None = None) -> None:
@@ -786,6 +589,29 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
     @mcp.custom_route("/dashboard/passkey.js", methods=["GET"])
     async def passkey_js(_: Request) -> Response:
         return Response(js, media_type="text/javascript", headers={**_HEADERS, "Cache-Control": "public, max-age=3600"})
+
+    def _asset_route(name: str, ctype: str) -> None:
+        body = (_STATIC / name).read_bytes()
+        # Pages link the others with ?v=<content hash>, so they can be kept a day; the worker is always checked for changes.
+        headers = {**_HEADERS, "Cache-Control": "no-cache" if name in ("sw.js", "manifest.webmanifest") else "public, max-age=86400"}
+        if name == "sw.js":
+            headers["Service-Worker-Allowed"] = "/dashboard"        # its scope includes /dashboard itself, not only /dashboard/…
+
+        @mcp.custom_route(f"/dashboard/{name}", methods=["GET"])
+        async def serve_asset(_: Request) -> Response:
+            return Response(body, media_type=ctype, headers=headers)
+
+    for _name, _ctype in _ASSETS.items():
+        _asset_route(_name, _ctype)
+
+    @mcp.custom_route("/dashboard/state.json", methods=["GET"])
+    async def live_state(request: Request) -> Response:
+        """What the page asks every few seconds: how many requests wait, and a fingerprint that changes when any of them
+        arrives, leaves or changes. Asking does not keep the session alive (dashboard.js sends the x-live header)."""
+        if signed_in(request) is None:
+            return JSONResponse({"error": "signed out"}, status_code=401, headers=_HEADERS)
+        n, fingerprint = await asyncio.to_thread(d.fingerprint)
+        return JSONResponse({"waiting": n, "v": fingerprint}, headers=_HEADERS)
 
     # -- sign in and out -------------------------------------------------------------------------------------------------
     def signin_page(error: str = "", nxt: str = "/dashboard", status: int = 200) -> Response:
@@ -917,13 +743,17 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if got is None:
             return to_signin(request)
         rec = got[1]
-        waiting = []                    # (source, request, description), oldest deadline first
+        queued = []                     # (source, request), oldest deadline first; only the five shown are described
         for src in d.sources.values():
-            items = await asyncio.to_thread(src.pending)
-            ctx = await asyncio.to_thread(src.contexts, items) if items else {}
-            waiting += [(src, q, await asyncio.to_thread(src.describe, q, ctx.get(q.id))) for q in items]
+            queued += [(src, q) for q in await asyncio.to_thread(src.pending)]
+        queued.sort(key=lambda w: w[1].expires_at)
+        n = len(queued)
+        waiting = []                    # (source, request, description)
+        for src in d.sources.values():
+            shown = [q for s2, q in queued[:5] if s2 is src]
+            ctx = await asyncio.to_thread(src.contexts, shown, False) if shown else {}
+            waiting += [(src, q, await asyncio.to_thread(src.describe, q, ctx.get(q.id))) for q in shown]
         waiting.sort(key=lambda w: w[1].expires_at)
-        n = len(waiting)
         try:
             version = importlib.metadata.version("icloud-mcp-server")
         except importlib.metadata.PackageNotFoundError:
@@ -948,9 +778,21 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 to = next((val for k, val in v["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
                 who = f" · by {q.requested_by}" if getattr(q, "requested_by", None) else ""
                 sub = (f"To {to}" if to else "") + who + f" · {d.ago(q.created_at)}"
-                trs.append(f'<tr><td><b>{_esc(v["title"])}</b><span class="row-sub">{_esc(sub.lstrip(" ·"))}</span></td>'
-                           f'<td>{chip(v["badge"], "kind")}</td><td>{d.ttl(q)}</td>'
-                           f'<td>{link_button("Open", f"/dashboard/approvals?item={src.kind}:{q.id}")}</td></tr>')
+                key = f"{src.kind}:{q.id}"
+                # The full request opens in place, so it can be approved here; one with a warning needs the Approvals page
+                preview = (f'<dl>{"".join(f"<dt>{_esc(k)}</dt><dd>{_esc(val)}</dd>" for k, val in v["rows"])}</dl>'
+                           + (f'<div class="message">{_esc(v["text"])}</div>' if v["text"] else "") + "".join(hint(x) for x in v["notes"]))
+                if v["needs_override"] or v["warnings"]:
+                    act = link_button("Review", f"/dashboard/approvals?item={key}")
+                else:
+                    act = (f'<form class="acts" method="post" action="/dashboard/approvals/act" data-title="{_esc(v["title"])}">{csrf}'
+                           f'<input type="hidden" name="kind" value="{_esc(src.kind)}"><input type="hidden" name="id" value="{_esc(q.id)}">'
+                           f'<input type="hidden" name="sha" value="{_esc(q.sha256)}"><input type="hidden" name="back" value="/dashboard">'
+                           + button("Discard", name="action", value="discard") + button(_esc(src.approve_label), "primary", name="action", value="approve")
+                           + "</form>")
+                trs.append(f'<tr data-key="{_esc(key)}"><td><details><summary><b>{_esc(v["title"])}</b>'
+                           f'<span class="row-sub">{_esc(sub.lstrip(" ·"))}</span></summary><div class="preview">{preview}</div></details></td>'
+                           f'<td>{chip(v["badge"], "kind")}</td><td>{d.ttl(q)}</td><td>{act}</td></tr>')
             more = hint(f"{n - 5} more on Approvals.") if n > 5 else ""
             wait_body = ('<table class="waits"><thead><tr><th>Request</th><th>Kind</th><th>Time left</th><th></th></tr></thead>'
                          f'<tbody>{"".join(trs)}</tbody></table>{more}')
@@ -991,10 +833,11 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 f'<form method="post" action="/dashboard/pause">{csrf}<input type="hidden" name="paused" value="{"0" if paused else "1"}">'
                 f'{button("Resume tools" if paused else "Pause tools", "primary" if paused else "")}</form>')
         right.append(card("Server", server_rows, foot, state or d.state_chip()))
-        actions = link_button(f"Open Approvals ({n})", "/dashboard/approvals", "primary") if n else ""
-        grid = (f'{kpis}<div class="overview-grid"><div class="overview-col">{"".join(left)}</div>'
+        grid = (f'<div data-install-hint data-app="iCloud connector" data-lang="en" hidden></div>{kpis}'
+                f'<div class="overview-grid"><div class="overview-col">{"".join(left)}</div>'
                 f'<div class="overview-col">{"".join(right)}</div></div>')
-        return d.page("Overview", "overview", grid, rec, flash=_flash(request), wide=True, actions=actions, lede_html=lede)
+        note = "" if request.headers.get(_LIVE) == "1" else flashes.pop(rec["csrf"], "")     # a background refresh takes no result
+        return d.page("Overview", "overview", grid, rec, flash=note or _flash(request), wide=True, lede_html=lede, live="/dashboard")
 
     @mcp.custom_route("/dashboard/check", methods=["POST"])
     async def check(request: Request) -> Response:
@@ -1043,15 +886,22 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if not total:
             cards.append(card("Nothing is waiting", hint("When an agent sends mail or an iMessage, it waits here until you decide.")))
         else:
-            src, q, v = next((w for w in waiting if f"{w[0].kind}:{w[1].id}" == selected), waiting[0])
+            chosen = next((w for w in waiting if f"{w[0].kind}:{w[1].id}" == selected), None)
+            # A request picked from the list that has gone is not silently replaced by another one with a Send button in
+            # the same place (dashboard.js reloads this page while it is open)
+            src, q, v = (chosen or (None, None, None)) if selected else waiting[0]
             links = []
             for s2, q2, v2 in waiting:
                 to = next((val for k, val in v2["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
                 cur = ' aria-current="true"' if q2 is q else ""
-                links.append(f'<a href="/dashboard/approvals?item={_esc(s2.kind)}:{_esc(q2.id)}"{cur}><span class="q1">{chip(v2["badge"], "kind")}'
+                links.append(f'<a href="/dashboard/approvals?item={_esc(s2.kind)}:{_esc(q2.id)}" data-key="{_esc(s2.kind)}:{_esc(q2.id)}"{cur}><span class="q1">{chip(v2["badge"], "kind")}'
                              f'<b>{_esc(v2["title"])}</b><span class="left">expires in {d.time_left(q2)}</span></span>'
                              + (f'<span class="q2">To {_esc(to)}</span>' if to else "") + "</a>")
             queue = f'<nav class="card queue" aria-label="Waiting requests">{"".join(links)}</nav>'
+        if total and q is None:
+            cards.append(f'<div class="split">{queue}' + card("No longer waiting", hint(
+                "This request was sent, discarded or dropped, maybe in another window. Choose one from the list.")) + "</div>")
+        elif total:
             body = [f'<dl>{"".join(f"<dt>{_esc(k)}</dt><dd>{_esc(val)}</dd>" for k, val in v["rows"])}</dl>']
             if v["warnings"]:
                 body.append('<div class="alert" role="alert"><b>Check this first</b><ul>'
@@ -1069,26 +919,28 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                       f'<input type="hidden" name="id" value="{_esc(q.id)}"><input type="hidden" name="sha" value="{_esc(q.sha256)}">')
             label = src.approve_label
             foot = button("Discard", name="action", value="discard") + button(_esc(label), "primary", name="action", value="approve")
-            detail = card(v["title"], "".join(body), foot, chip(v["badge"], "kind"), form="/dashboard/approvals/act", hidden_html=hidden)
+            detail = card(v["title"], "".join(body), foot, chip(v["badge"], "kind"), form="/dashboard/approvals/act", hidden_html=hidden,
+                          attrs={"data-key": f"{src.kind}:{q.id}", "data-title": v["title"]})
             cards.append(f'<div class="split">{queue}{detail}</div>')
         lede = f"{total} waiting. Nothing has left the server yet; what you see is exactly what will be sent." if total else ""
-        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True)
+        # the request shown, also when none was picked: a refresh never puts another one in its place unasked
+        shown = selected or (f"{src.kind}:{q.id}" if total and q is not None else "")
+        live = "/dashboard/approvals" + (f"?item={quote(shown)}" if shown else "")
+        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True, live=live)
 
-    flashes: dict[str, str] = {}      # one-shot result of an approval, keyed by session, so the result page is a plain GET
-
-    def after_action(rec: dict[str, Any], note: str) -> Response:
+    def after_action(rec: dict[str, Any], note: str, back: str) -> Response:
         while len(flashes) > 200:
             flashes.pop(next(iter(flashes)))
         flashes[rec["csrf"]] = note
-        return RedirectResponse("/dashboard/approvals", status_code=303, headers=_HEADERS)
+        return RedirectResponse(back, status_code=303, headers=_HEADERS)
 
     @mcp.custom_route("/dashboard/approvals", methods=["GET"])
     async def approvals_get(request: Request) -> Response:
         got = signed_in(request)
         if got is None:
             return to_signin(request)
-        return await asyncio.to_thread(approvals_page, got[1], flashes.pop(got[1]["csrf"], ""),
-                                     selected=request.query_params.get("item", ""))
+        note = "" if request.headers.get(_LIVE) == "1" else flashes.pop(got[1]["csrf"], "")   # a background refresh takes no result
+        return await asyncio.to_thread(approvals_page, got[1], note, selected=request.query_params.get("item", ""))
 
     @mcp.custom_route("/dashboard/approvals/act", methods=["POST"])
     async def approvals_act(request: Request) -> Response:
@@ -1096,28 +948,43 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if isinstance(got, Response):
             return got
         _, rec, form = got
+        # dashboard.js asks for JSON and updates the page itself; a plain form post gets a page, as before
+        as_json = "application/json" in request.headers.get("accept", "")
+        back = "/dashboard" if str(form.get("back", "")) == "/dashboard" else "/dashboard/approvals"
+
+        async def failed(note: str, json_status: int, page_status: int = 200) -> Response:
+            if as_json:
+                return JSONResponse({"ok": False, "error": note}, status_code=json_status, headers=_HEADERS)
+            return await asyncio.to_thread(approvals_page, rec, note, True, page_status)
+
+        def done(note: str) -> Response:
+            if as_json:
+                return JSONResponse({"ok": True, "note": note}, headers=_HEADERS)
+            return after_action(rec, note, back)
+
         src = d.sources.get(str(form.get("kind", "")))
         action = str(form.get("action", ""))
         q = next((x for x in src.pending() if x.id == str(form.get("id", ""))), None) if src else None
         if q is None or action not in ("approve", "discard") or not hmac.compare_digest(str(form.get("sha", "")).encode(), q.sha256.encode()):
-            return await asyncio.to_thread(approvals_page, rec, "That item is no longer waiting or has changed. Nothing was done.", True, 409)
-        v = await asyncio.to_thread(src.describe, q, src.contexts([q]).get(q.id))
+            return await failed("That item is no longer waiting or has changed. Nothing was done.", 409, 409)
+        ctx = await asyncio.to_thread(src.contexts, [q], False)
+        v = await asyncio.to_thread(src.describe, q, ctx.get(q.id))
         who = {"actor": "owner", "via": rec.get("via", "")}
         if action == "discard":
             await asyncio.to_thread(src.discard, q)
             audit.record("approval.discarded", **who, summary=f"Discarded {v['badge'].lower()} “{v['title']}”", kind=src.kind)
-            return after_action(rec, "Discarded. Nothing was sent.")
+            return done("Discarded. Nothing was sent.")
         if v["needs_override"] and str(form.get("override", "")) != "1":
-            return await asyncio.to_thread(approvals_page, rec, "Not sent: tick the box under the warning if you still want it sent.", True)
+            return await failed("Not sent: tick the box under the warning if you still want it sent.", 422)
         try:
             note = await asyncio.to_thread(src.release, q)
         except Exception as e:  # noqa: BLE001  -- release() puts the item back; the owner can retry or discard
             log.warning("Release of %s %s failed: %s", src.kind, q.id, e)
             audit.record("approval.failed", **who, ok=False, summary=f"Could not send {v['badge'].lower()} “{v['title']}”", kind=src.kind)
-            return await asyncio.to_thread(approvals_page, rec, f"Not sent (still waiting): {for_owner(str(e))}", True)
+            return await failed(f"Not sent (still waiting): {for_owner(str(e))}", 502)
         audit.record("approval.sent", **who, summary=f"Approved {v['badge'].lower()} “{v['title']}”", kind=src.kind,
                      recipients=[val for k, val in v["rows"] if k in ("To", "Guests", "Will be delivered to")])
-        return after_action(rec, note)
+        return done(note)
 
     # -- activity ------------------------------------------------------------------------------------------------------
     _FILTERS = {"all": ("All", ()), "approvals": ("Approvals", ("approval.",)), "agents": ("Agents", ("tool.",)),
