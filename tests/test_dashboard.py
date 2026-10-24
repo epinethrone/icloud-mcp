@@ -253,6 +253,28 @@ async def test_dashboard_can_be_turned_off(web):
         assert (await c.get("/outbox")).status_code == 200          # the password page stays
 
 
+async def test_a_failed_calendar_release_points_the_owner_to_the_overview(web, monkeypatch):
+    from icloud_mcp.cal import CalendarError, CalendarService
+
+    def fail(self, q):
+        raise CalendarError("CalDAV authentication failed. Check ICLOUD_USERNAME and the app-specific password. "
+                            "Run icloud_check_health to see which service is failing.")
+    monkeypatch.setattr(CalendarService, "release", fail)
+    app, mcp, _, _ = web(ALLOW_CALENDAR_INVITES="approve")
+    src = mcp._icloud_dashboard.sources["calendar"]
+    src.cal.outbox.add(b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n", ["jana@example.org"],
+                       {"op": "create", "calendar_url": "https://caldav.example.com/cal/", "calendar": "Club", "uid": "u1",
+                        "summary": "Autumn fair", "start": "2026-10-22T18:00:00+02:00", "end": None, "location": "",
+                        "description": "", "organizer": None, "href": None, "etag": None})
+    async with client(app) as c:
+        token = await signed_in(c)
+        q = src.pending()[0]
+        r = await c.post("/dashboard/approvals/act", headers=SAME,
+                         data={"csrf": token, "kind": "calendar", "id": q.id, "sha": q.sha256, "action": "approve"})
+        assert "Check now on the Overview shows which service is failing." in r.text and "icloud_check_health" not in r.text
+        assert len(src.pending()) == 1                                              # still waiting, can be retried
+
+
 async def test_a_failed_release_points_the_owner_to_the_overview(web, monkeypatch):
     from icloud_mcp.dashboard import MailApprovals
 
@@ -297,6 +319,41 @@ async def test_confirming_issues_a_new_session_token_and_needs_the_csrf_token(we
         assert r.status_code == 303 and d.cookie in r.headers["set-cookie"]
         new = c.cookies.get(d.cookie)
         assert new and new != old and d.sessions.get(old) is None and d.sessions.get(new) is not None
+
+
+def test_event_times_read_like_a_calendar():
+    from icloud_mcp.dashboard import event_when
+    assert event_when("2026-11-20T18:00:00+00:00", "2026-11-20T20:00:00+00:00", "Europe/Berlin") == "Fri 20 Nov 2026, 19:00–21:00"
+    assert event_when("2026-11-20T23:00:00+01:00", "2026-11-21T01:00:00+01:00", "Europe/Berlin") == \
+        "Fri 20 Nov 2026, 23:00 – Sat 21 Nov 2026, 01:00"
+    assert event_when("2026-11-20", "2026-11-21", "Europe/Berlin") == "Fri 20 Nov 2026"                 # one all-day day
+    assert event_when("2026-11-20", "2026-11-23", "Europe/Berlin") == "Fri 20 Nov 2026 – Sun 22 Nov 2026"
+    assert event_when("2026-11-20T18:00:00", None, "Europe/Berlin") == "Fri 20 Nov 2026, 18:00"          # floating time stays as is
+    assert event_when("soon", None, "Europe/Berlin") == "soon"
+
+
+async def test_held_calendar_changes_show_up_and_are_released(web, monkeypatch):
+    from icloud_mcp.cal import CalendarService
+    released = []
+    monkeypatch.setattr(CalendarService, "release", lambda self, q: released.append(q.followup["op"]) or "Added “Autumn fair”.")
+    app, mcp, _, _ = web(ALLOW_CALENDAR_INVITES="approve")
+    src = mcp._icloud_dashboard.sources["calendar"]
+    src.cal.outbox.add(b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n", ["jana@example.org", "tom@example.net"],
+                       {"op": "create", "calendar_url": "https://caldav.example.com/cal/", "calendar": "Club", "uid": "u1",
+                        "summary": "Autumn fair", "start": "2026-10-22T18:00:00+02:00", "end": "2026-10-22T19:30:00+02:00",
+                        "location": "", "description": "Bring ideas", "organizer": None, "href": None, "etag": None})
+    async with client(app) as c:
+        token = await signed_in(c)
+        page = (await c.get("/dashboard/approvals")).text
+        assert "Autumn fair" in page and "Invitation" in page and "jana@example.org, tom@example.net" in page
+        assert "Add and invite" in page and "Nothing is in your calendar yet." in page
+        assert "Thu 22 Oct 2026, 18:00–19:30" in page and "T18:00" not in page          # the owner's clock, not ISO
+        overview = (await c.get("/dashboard")).text
+        assert "Autumn fair" in overview and ">Add and invite</button>" in overview        # the same words where it is approved in its row
+        q = src.pending()[0]
+        await c.post("/dashboard/approvals/act", headers=SAME,
+                     data={"csrf": token, "kind": "calendar", "id": q.id, "sha": q.sha256, "action": "approve"})
+        assert "Added “Autumn fair”." in (await c.get("/dashboard/approvals")).text and released == ["create"] and src.pending() == []
 
 
 async def test_the_app_files_are_served_to_anyone_and_the_pages_link_them(web):

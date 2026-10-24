@@ -150,7 +150,7 @@ class Sessions:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Approval sources: one interface for queued mail and iMessages
+# Approval sources: one interface for queued mail, iMessages and (with ALLOW_CALENDAR_INVITES=approve) calendar changes
 # ---------------------------------------------------------------------------------------------------------------------
 class ApprovalSource:
     kind = ""
@@ -222,6 +222,84 @@ _AGENT_HINT = "Run icloud_check_health to see which service is failing."
 def for_owner(message: str) -> str:
     """Service errors are written for agents. On the dashboard the owner has a button for the same check."""
     return message.replace(_AGENT_HINT, "Check now on the Overview shows which service is failing.")
+
+
+def event_when(start: str | None, end: str | None, tz_name: str) -> str:
+    """'Fri 20 Nov 2026, 19:00–21:00' in the server's time zone, from the ISO times stored with a held change. All-day events
+    show the date only; anything unparsable is shown as stored."""
+    def parse(v: str | None) -> datetime | None:
+        try:
+            return datetime.fromisoformat(v) if v else None
+        except ValueError:
+            return None
+    a, b = parse(start), parse(end)
+    if a is None:
+        return " – ".join(x for x in (start, end) if x)
+    if len(start or "") == 10:                                   # an all-day event: a date, no time
+        last = b - timedelta(days=1) if b and len(end or "") == 10 else None   # DTEND of an all-day event is exclusive
+        day = a.strftime("%a %d %b %Y")
+        return day if last is None or last <= a else f"{day} – {last.strftime('%a %d %b %Y')}"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:  # noqa: BLE001
+        tz = None
+    if tz is not None and a.tzinfo is not None:
+        a, b = a.astimezone(tz), (b.astimezone(tz) if b and b.tzinfo else b)
+    out = a.strftime("%a %d %b %Y, %H:%M")
+    if b is None:
+        return out
+    return out + ("–" + b.strftime("%H:%M") if b.date() == a.date() else " – " + b.strftime("%a %d %b %Y, %H:%M"))
+
+
+class CalendarApprovals(ApprovalSource):
+    """Calendar changes that make iCloud email other people (ALLOW_CALENDAR_INVITES=approve)."""
+    kind, badge = "calendar", "Calendar"
+    _LABELS = {"create": ("Invitation", "Add and invite"), "update": ("Event update", "Save and notify"),
+               "delete": ("Cancellation", "Delete and notify"), "cancel": ("Cancellation", "Cancel and notify"),
+               "reply": ("Reply", "Send answer")}
+
+    def __init__(self, cal: Any):
+        self.cal = cal
+
+    def pending(self):
+        return self.cal.outbox.pending()
+
+    def describe(self, q, context=None):
+        m = q.followup or {}
+        badge, _ = self._LABELS.get(m.get("op"), ("Calendar", "Approve"))
+        when = event_when(m.get("start"), m.get("end"), self.cal.s.default_timezone)
+        rows = [("When", when), ("Calendar", m.get("calendar") or ""), ("Where", m.get("location") or "")]
+        if m.get("op") == "reply":
+            rows.append(("To", m.get("organizer") or ""))
+        else:
+            rows.append(("Guests", ", ".join(q.recipients)))
+        effect = {"create": "Approving adds the event to your calendar, and iCloud emails an invitation to",
+                  "update": "Approving saves the change, and iCloud emails an update to",
+                  "delete": "Approving deletes the event, and iCloud emails a cancellation to",
+                  "cancel": "Approving cancels this occurrence, and iCloud emails a cancellation to",
+                  "reply": "Approving sends your answer to"}.get(m.get("op"), "Approving emails")
+        who = m.get("organizer") if m.get("op") == "reply" else f"{len(q.recipients)} people"
+        notes = [f"{effect} {who}.",
+                 "Nothing is in your calendar yet." if m.get("op") == "create" else
+                 "If the event changes in your calendar before you approve, nothing is written."]
+        return {"title": m.get("summary") or "(no title)", "badge": badge, "rows": [(k, v) for k, v in rows if v],
+                "text": m.get("description") or "", "notes": notes, "warnings": [], "needs_override": False}
+
+    def approve_label_for(self, q) -> str:
+        return self._LABELS.get((q.followup or {}).get("op"), ("", "Approve"))[1]
+
+    def release(self, q):
+        claimed = self.cal.outbox.claim(q.id)
+        if claimed is None:
+            raise RuntimeError("It is no longer waiting.")
+        try:
+            return self.cal.release(claimed)
+        except Exception:
+            self.cal.outbox.restore(claimed)
+            raise
+
+    def discard(self, q):
+        self.cal.outbox.claim(q.id)
 
 
 class IMessageApprovals(ApprovalSource):
@@ -788,7 +866,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                     act = (f'<form class="acts" method="post" action="/dashboard/approvals/act" data-title="{_esc(v["title"])}">{csrf}'
                            f'<input type="hidden" name="kind" value="{_esc(src.kind)}"><input type="hidden" name="id" value="{_esc(q.id)}">'
                            f'<input type="hidden" name="sha" value="{_esc(q.sha256)}"><input type="hidden" name="back" value="/dashboard">'
-                           + button("Discard", name="action", value="discard") + button(_esc(src.approve_label), "primary", name="action", value="approve")
+                           + button("Discard", name="action", value="discard") + button(_esc(src.approve_label_for(q) if hasattr(src, "approve_label_for") else src.approve_label), "primary", name="action", value="approve")
                            + "</form>")
                 trs.append(f'<tr data-key="{_esc(key)}"><td><details><summary><b>{_esc(v["title"])}</b>'
                            f'<span class="row-sub">{_esc(sub.lstrip(" ·"))}</span></summary><div class="preview">{preview}</div></details></td>'
@@ -797,7 +875,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
             wait_body = ('<table class="waits"><thead><tr><th>Request</th><th>Kind</th><th>Time left</th><th></th></tr></thead>'
                          f'<tbody>{"".join(trs)}</tbody></table>{more}')
         else:
-            wait_body = hint("When an agent sends mail or writes an iMessage, it waits here until you decide.")
+            wait_body = hint("When an agent sends mail, invites someone or writes an iMessage, it waits here until you decide.")
         left = [card("Waiting for your approval", wait_body, link=("Open Approvals", "/dashboard/approvals") if n else None)]
         entries = audit.entries(limit=5)
         acts = "".join(f'<li><time>{d.fmt_time(e.get("t"))}</time><span>{_entry_text(e)}</span></li>' for e in entries)
@@ -809,7 +887,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
             sending = "Drafts only"
         else:
             sending = "After approval" if s.require_approval else "Directly"
-        invites = "Allowed" if s.allow_calendar_invites else "Off"
+        invites = "After approval" if getattr(s, "invites_require_approval", False) else ("Allowed" if s.allow_calendar_invites else "Off")
         prot = ('<div class="list">' + row("Sending email", value(sending)) + row("Invitations to others", value(invites))
                 + row("Emptying Trash", value("Allowed" if s.allow_permanent_delete else "Off"))
                 + row("Time zone", value(s.default_timezone)) + "</div>")
@@ -884,7 +962,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if recent_n > 2:
             cards.append(f'<p class="alert">Agents asked for {recent_n} of these in the last hour. Approve only what you asked for.</p>')
         if not total:
-            cards.append(card("Nothing is waiting", hint("When an agent sends mail or an iMessage, it waits here until you decide.")))
+            cards.append(card("Nothing is waiting", hint("When an agent sends mail or invites someone, it waits here until you decide.")))
         else:
             chosen = next((w for w in waiting if f"{w[0].kind}:{w[1].id}" == selected), None)
             # A request picked from the list that has gone is not silently replaced by another one with a Send button in
@@ -917,7 +995,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                             '<span>I read the warning and still want this sent</span></label>')
             hidden = (d.csrf_input(rec) + f'<input type="hidden" name="kind" value="{_esc(src.kind)}">'
                       f'<input type="hidden" name="id" value="{_esc(q.id)}"><input type="hidden" name="sha" value="{_esc(q.sha256)}">')
-            label = src.approve_label
+            label = src.approve_label_for(q) if hasattr(src, "approve_label_for") else src.approve_label
             foot = button("Discard", name="action", value="discard") + button(_esc(label), "primary", name="action", value="approve")
             detail = card(v["title"], "".join(body), foot, chip(v["badge"], "kind"), form="/dashboard/approvals/act", hidden_html=hidden,
                           attrs={"data-key": f"{src.kind}:{q.id}", "data-title": v["title"]})

@@ -11,6 +11,9 @@ Update the Mac helper before the server whenever its version changes.
   are stored as hashes; every form carries a CSRF token and must come from the server's own address. `/outbox` still works.
 - **Activity log.** Writes by agents, approvals, sign-ins, connected and signed-out apps are recorded in
   `DATA_DIR/audit.jsonl` (names, addresses and subjects, no message bodies, hash-chained, `AUDIT_KEEP_DAYS`, `AUDIT_LOG`).
+- **Calendar invitations can wait for approval.** `ALLOW_CALENDAR_INVITES=approve` holds every calendar change that would
+  make iCloud email other people on the dashboard. Approving writes exactly the held object with `If-Match` (or
+  `If-None-Match` for a new event), so an event changed in the meantime is never overwritten.
 
 - **The dashboard updates itself and installs as an app.** Overview and Approvals pick up new requests within 15 seconds;
   Send and Discard work without reloading, a request can be opened and approved on the Overview, and a discard can be undone
