@@ -437,7 +437,7 @@ async def test_live_pages_name_their_own_address_and_a_background_refresh_takes_
         sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
         r = await c.post("/dashboard/approvals/act", headers=SAME,
                          data={"csrf": token, "kind": "mail", "id": qid, "sha": "0" * 64, "action": "approve"})
-        assert r.status_code == 409 and 'data-live="/dashboard/approvals"' in r.text  # a page answering a post names a GET address
+        assert r.status_code == 409 and f'data-live="/dashboard/approvals?item=mail%3A{qid}"' in r.text  # a GET address, pinned to what it shows
         await c.post("/dashboard/approvals/act", headers=SAME,
                      data={"csrf": token, "kind": "mail", "id": qid, "sha": sha, "action": "discard", "back": "/dashboard"})
         assert "Discarded" not in (await c.get("/dashboard", headers={"x-live": "1"})).text
@@ -453,3 +453,25 @@ async def test_a_request_that_has_gone_is_not_replaced_by_another(web):
         await signed_in(c)
         page = (await c.get(f"/dashboard/approvals?item=mail:{gone}")).text
         assert "No longer waiting" in page and 'value="approve"' not in page and "Second" in page
+
+
+async def test_only_the_whole_queue_prunes_what_is_kept_for_the_approve_check(web, monkeypatch):
+    from icloud_mcp.mail import MailService
+    calls = []
+    real = MailService.approval_contexts
+    monkeypatch.setattr(MailService, "approval_contexts", lambda self, qs, prune=False: calls.append((len(qs), prune)) or real(self, qs, prune=prune))
+    app, mcp, _, _ = web()
+    for i in range(7):
+        queue(mcp, subject=f"Request {i}")
+    async with client(app) as c:
+        token = await signed_in(c)
+        calls.clear()
+        await c.get("/dashboard")
+        assert calls == [(5, False)]                                     # the Overview describes the five it shows
+        calls.clear()
+        await c.get("/dashboard/approvals")
+        assert calls == [(7, True)]
+        calls.clear()
+        q = mcp._icloud_dashboard.sources["mail"].pending()[0]
+        await c.post("/dashboard/approvals/act", headers=SAME, data={"csrf": token, "kind": "mail", "id": q.id, "sha": q.sha256, "action": "discard"})
+        assert (1, True) not in calls

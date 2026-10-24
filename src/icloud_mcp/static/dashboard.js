@@ -12,7 +12,7 @@
   var wrap = document.querySelector(".wrap[data-v]");
   var version = wrap ? wrap.getAttribute("data-v") : null;     // what the page was rendered with
   var lastOk = 0, online = true, timer = null, busyRetry = false, flushed = false, lastPointer = 0;
-  var notice = null;             // the result of the last Send, kept across content swaps
+  var notice = null, noticeAt = 0;  // the result of the last action, kept across content swaps for a minute
   var pending = null;            // a discard waiting for its 5 seconds: {data, row, timer}
 
   if ("serviceWorker" in navigator) {
@@ -62,7 +62,7 @@
     var a = document.activeElement, main = $("main");
     if (pending) return true;
     if (a && main && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== "submit") return true;
-    if ($("main input[name=override]:checked")) return true;
+    if ($("main [data-key]:not(.gone) input[name=override]:checked")) return true;
     return !force && Date.now() - lastPointer < HANDS_OFF;
   }
   ["pointermove", "pointerdown", "touchstart", "wheel"].forEach(function (t) {
@@ -77,7 +77,7 @@
     return { key: holder.getAttribute("data-key"), sel: a.tagName === "SUMMARY" ? "summary" : a.tagName === "BUTTON" ? 'button[value="' + a.value + '"]' : null };
   }
 
-  function swap(doc) {
+  function swap(doc, settle) {
     var main = $("main"), next = $("main", doc);
     if (!main || !next || !main.hasAttribute("data-live")) return;
     var before = keys(main), mark = focusMark(), open = $$("details[open]", main).map(function (d) {
@@ -96,6 +96,11 @@
       if (mark && mark.sel && k === mark.key) { var f = $(mark.sel, n); if (f) f.focus(); }
     });
     putNotice();
+    if (settle) {                        // after the owner's own action the next request moves up: no Send by the same tap
+      var fresh = $$("button[value=approve]", next);
+      fresh.forEach(function (b) { b.disabled = true; });
+      setTimeout(function () { fresh.forEach(function (b) { if (!b.closest(".gone")) b.disabled = false; }); }, 1500);
+    }
     if (window.InstallHint) $$("[data-install-hint]", next).forEach(function (n) { window.InstallHint.mount(n); });
   }
 
@@ -104,13 +109,14 @@
     if (busy(force)) { busyRetry = true; return Promise.resolve(); }
     busyRetry = false;
     return fetch(home(), { headers: { "x-live": "1" }, credentials: "same-origin", cache: "no-store" }).then(function (r) {
-      if (r.redirected || !r.ok) { location.assign(home()); return; }   // signed out: a plain GET of this page lets the server decide
+      if (r.redirected || r.status === 401 || r.status === 403) { location.assign(home()); return; }   // signed out: let the server show sign-in
+      if (!r.ok) throw new Error(String(r.status));
       return r.text().then(function (html) {
         var doc = new DOMParser().parseFromString(html, "text/html");
-        swap(doc);
+        swap(doc, force);
         document.title = doc.title;
       });
-    }).catch(function () { online = false; showStatus(); });
+    }).catch(function () { online = false; busyRetry = true; showStatus(); });
   }
 
   function poll() {
@@ -142,14 +148,14 @@
   // -- results of an action ------------------------------------------------------------------------------------------
   function putNotice() {
     var stack = $("main .stack");
-    if (!notice || !stack) return;
+    if (!notice || !stack || Date.now() - noticeAt > 60000) return;
     var old = $("main .stack > .banner");
     if (old && old !== notice) old.remove();
     stack.insertBefore(notice, stack.firstChild);
   }
 
   function say(text, bad) {
-    notice = document.createElement("p");
+    notice = document.createElement("p"); noticeAt = Date.now();
     notice.className = "banner " + (bad ? "bad" : "ok");
     notice.setAttribute("role", bad ? "alert" : "status");
     var t = document.createElement("span"); t.textContent = text; notice.appendChild(t);
@@ -165,11 +171,13 @@
     return fetch(ACT, { method: "POST", body: new URLSearchParams(data), credentials: "same-origin", keepalive: !!keepalive,
                         headers: { "accept": "application/json" } }).then(function (r) {
       if ((r.headers.get("content-type") || "").indexOf("application/json") >= 0) return r.json();
-      if (!keepalive) {
+      if (keepalive) return null;
+      if (r.redirected || r.status === 403) {                 // signed out or an expired form: refused before anything was done
         say("Nothing was done: this page has expired. Loading it again…", true);
         setTimeout(function () { location.assign(home()); }, 2500);
+        return null;
       }
-      return null;
+      throw new Error(String(r.status));                     // a proxy or server error: the outcome is unknown
     });
   }
 
@@ -225,12 +233,12 @@
     pending = null;
     hideToast();
     var sent = post(p.data, keepalive);
-    if (keepalive) { flushed = true; return; }               // the next poll shows what the server did with it
+    if (keepalive) { flushed = true; sent.catch(function () {}); return; }   // the next poll shows what the server did with it
     sent.then(function (res) {
       if (res && !res.ok) { setGone(p.row, false); say(res.error, true); }
       if (res && res.ok) leave(p.row);
       if (res) refresh(true);
-    }, function () { setGone(p.row, false); say("Could not reach the server. Nothing was discarded.", true); });
+    }, function () { setGone(p.row, false); say("The server did not answer. The list below shows whether it is still waiting.", true); refresh(true); });
   }
 
   function flushDiscard() { if (pending) commitDiscard(true); }
@@ -263,6 +271,7 @@
     }, function () {
       again();
       say("Could not reach the server. It may or may not have been sent: check Activity before you try again.", true);
+      refresh(true);
     });
   }, true);
 

@@ -164,7 +164,8 @@ class ApprovalSource:
         """{'title', 'badge', 'rows': [(label, value)], 'text', 'notes': [str], 'warnings': [str], 'needs_override': bool}"""
         raise NotImplementedError
 
-    def contexts(self, items: list[Any]) -> dict[str, Any]:
+    def contexts(self, items: list[Any], prune: bool = True) -> dict[str, Any]:
+        """prune=True only with the whole queue: it forgets what is kept for requests not in items."""
         return {}
 
     def release(self, q: Any) -> str:
@@ -184,8 +185,8 @@ class MailApprovals(ApprovalSource):
     def pending(self):
         return self.mail.outbox.pending()
 
-    def contexts(self, items):
-        return self.mail.approval_contexts(items, prune=True) if items else {}
+    def contexts(self, items, prune=True):
+        return self.mail.approval_contexts(items, prune=prune) if items else {}
 
     def describe(self, q, context=None):
         d = self.mail.describe_queued(q, context)
@@ -734,7 +735,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         waiting = []                    # (source, request, description)
         for src in d.sources.values():
             shown = [q for s2, q in queued[:5] if s2 is src]
-            ctx = await asyncio.to_thread(src.contexts, shown) if shown else {}
+            ctx = await asyncio.to_thread(src.contexts, shown, False) if shown else {}
             waiting += [(src, q, await asyncio.to_thread(src.describe, q, ctx.get(q.id))) for q in shown]
         waiting.sort(key=lambda w: w[1].expires_at)
         try:
@@ -906,7 +907,9 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                           attrs={"data-key": f"{src.kind}:{q.id}", "data-title": v["title"]})
             cards.append(f'<div class="split">{queue}{detail}</div>')
         lede = f"{total} waiting. Nothing has left the server yet; what you see is exactly what will be sent." if total else ""
-        live = "/dashboard/approvals" + (f"?item={quote(selected)}" if selected else "")
+        # the request shown, also when none was picked: a refresh never puts another one in its place unasked
+        shown = selected or (f"{src.kind}:{q.id}" if total and q is not None else "")
+        live = "/dashboard/approvals" + (f"?item={quote(shown)}" if shown else "")
         return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True, live=live)
 
     def after_action(rec: dict[str, Any], note: str, back: str) -> Response:
@@ -948,7 +951,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         q = next((x for x in src.pending() if x.id == str(form.get("id", ""))), None) if src else None
         if q is None or action not in ("approve", "discard") or not hmac.compare_digest(str(form.get("sha", "")).encode(), q.sha256.encode()):
             return await failed("That item is no longer waiting or has changed. Nothing was done.", 409, 409)
-        v = await asyncio.to_thread(src.describe, q, src.contexts([q]).get(q.id))
+        ctx = await asyncio.to_thread(src.contexts, [q], False)
+        v = await asyncio.to_thread(src.describe, q, ctx.get(q.id))
         who = {"actor": "owner", "via": rec.get("via", "")}
         if action == "discard":
             await asyncio.to_thread(src.discard, q)
