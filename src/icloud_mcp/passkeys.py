@@ -10,6 +10,9 @@ dashboard offers the owner password only.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -31,7 +34,7 @@ except ImportError:                     # pragma: no cover - exercised only wher
 
 FILE = "passkeys.json"
 _CHALLENGE_TTL = 300
-_MAX_CHALLENGES = 64       # open sign-in requests at once; anyone can ask for one, so the oldest make room
+_MAX_CHALLENGES = 64       # open registrations at once (signed-in owner only); sign-in tickets keep no state
 _MAX_KEYS = 10
 
 
@@ -61,7 +64,9 @@ class PasskeyStore:
         self.rp_name = rp_name
         self.path = Path(data_dir) / FILE
         self._lock = threading.Lock()
-        self._challenges: dict[str, tuple[bytes, str, float]] = {}    # ticket -> (challenge, purpose, expires)
+        self._challenges: dict[str, tuple[bytes, str, float]] = {}    # registration ticket -> (challenge, purpose, expires)
+        self._ticket_key = secrets.token_bytes(32)                      # signs sign-in tickets; a restart voids open ones
+        self._used: dict[str, float] = {}                               # sign-in tickets already used -> their expiry
         self._user_id = b""
         self._keys: list[Passkey] = []
         self._load()
@@ -121,6 +126,28 @@ class PasskeyStore:
             raise PasskeyError("This passkey request has expired. Try again.")
         return c[0]
 
+    # Sign-in tickets are signed instead of stored, because anyone may ask for one: nothing grows, and nobody can push the
+    # owner's open sign-in out. A ticket counts as used only after a sign-in with it succeeded, which needs the passkey.
+    def _signed_ticket(self, challenge: bytes) -> str:
+        body = f"{base64.urlsafe_b64encode(challenge).decode().rstrip('=')}.{int(time.time()) + _CHALLENGE_TTL}"
+        mac = hmac.new(self._ticket_key, b"authenticate|" + body.encode(), hashlib.sha256).hexdigest()
+        return f"{body}.{mac}"
+
+    def _check_signed(self, ticket: str) -> bytes:
+        try:
+            enc, exp, mac = ticket.split(".")
+            good = hmac.new(self._ticket_key, f"authenticate|{enc}.{exp}".encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(mac, good) or int(exp) < time.time() or ticket in self._used:
+                raise ValueError
+            return base64.urlsafe_b64decode(enc + "=" * (-len(enc) % 4))
+        except ValueError:
+            raise PasskeyError("This passkey request has expired. Try again.") from None
+
+    def _mark_used(self, ticket: str) -> None:
+        now = time.time()
+        self._used = {t: e for t, e in self._used.items() if e > now}
+        self._used[ticket] = float(ticket.split(".")[1])
+
     # -- registration ----------------------------------------------------------------------
     def registration_options(self) -> dict[str, Any]:
         if not available():
@@ -163,11 +190,11 @@ class PasskeyStore:
             opts = webauthn.generate_authentication_options(
                 rp_id=self.rp_id, user_verification=UserVerificationRequirement.REQUIRED,
                 allow_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(k.id)) for k in self._keys])
-            return {"ticket": self._ticket(opts.challenge, "authenticate"), "publicKey": json.loads(webauthn.options_to_json(opts))}
+            return {"ticket": self._signed_ticket(opts.challenge), "publicKey": json.loads(webauthn.options_to_json(opts))}
 
     def authenticate(self, ticket: str, credential: dict[str, Any]) -> Passkey:
         with self._lock:
-            challenge = self._take(ticket, "authenticate")
+            challenge = self._check_signed(ticket)
             key = next((k for k in self._keys if k.id == str(credential.get("id", ""))), None)
             if key is None:
                 raise PasskeyError("This passkey is not registered on this server.")
@@ -179,5 +206,6 @@ class PasskeyStore:
             except Exception as e:  # noqa: BLE001
                 raise PasskeyError("The passkey could not be verified.") from e
             key.sign_count, key.last_used_at = v.new_sign_count, time.time()
+            self._mark_used(ticket)
             self._save()
             return key
