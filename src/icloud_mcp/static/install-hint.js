@@ -167,7 +167,7 @@
     if (s === "none") return;
 
     var card = el("div", "ih-card");
-    card.appendChild(el("h3", "ih-title", t.title.replace("{app}", opts.app)));
+    card.appendChild(el("h2", "ih-title", t.title.replace("{app}", opts.app)));
     card.appendChild(el("p", "ih-body", s === "button" ? t.bodyButton : t.bodyIos));
     if (s === "button") {
       var b = el("button", "ih-install", t.button);
@@ -190,6 +190,7 @@
 
   function mount(target) {
     if (!target) return;
+    mounts = mounts.filter(function (n) { return n.isConnected; });   // the page may have replaced earlier ones
     mounts.push(target);
     render(target);
   }

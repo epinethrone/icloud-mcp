@@ -14,7 +14,7 @@ Update the Mac helper before the server whenever its version changes.
 
 - **The dashboard updates itself and installs as an app.** Overview and Approvals pick up new requests within 15 seconds;
   Send and Discard work without reloading, a request can be opened and approved on the Overview, and a discard can be undone
-  for 5 seconds. Polling does not extend the session. A manifest and a service worker that caches nothing make it
+  for 5 seconds; the Overview's separate "Open Approvals" button is gone. Polling does not extend the session. A manifest and a service worker that caches nothing make it
   installable; the stylesheet moved to `static/dashboard.css`.
 
 - **Settings in the browser.** The dashboard lists every setting with where its value comes from and can change what the

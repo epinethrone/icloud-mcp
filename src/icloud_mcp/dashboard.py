@@ -10,11 +10,12 @@ SHA-256 hash in DATA_DIR/sessions.json (mode 600), so a restart keeps you signed
 They end after DASHBOARD_SESSION_MINUTES without use (30) and after 12 hours in any case. Every form carries a per-session
 CSRF token and every POST must come from this server's own origin.
 
-Pages are rendered on the server and work without scripts. Two scripts are served from here (CSP `script-src 'self'`):
-/dashboard/passkey.js calls the browser's passkey API, and /dashboard/dashboard.js keeps the pages current (it asks
-/dashboard/state.json what is waiting and reloads the page's content when that changes), sends and discards without
-reloading the page (a discard can be undone for 5 seconds before it is sent to the server), and registers a service
-worker so the dashboard can be installed as an app. The worker caches nothing: every page comes from the server.
+Pages are rendered on the server and work without scripts. Three scripts are served from here (CSP `script-src 'self'`):
+/dashboard/passkey.js calls the browser's passkey API; /dashboard/dashboard.js keeps the pages current (it asks
+/dashboard/state.json what is waiting and, on Overview and Approvals, loads the page's own address again when that
+changes), sends and discards without reloading the page (a discard can be undone for 5 seconds before it is sent to the
+server), and registers a service worker so the dashboard can be installed as an app; /dashboard/install-hint.js shows
+the Overview's tip on how to install it. The worker caches nothing: every page comes from the server.
 """
 from __future__ import annotations
 
@@ -282,7 +283,7 @@ def _esc(v: Any) -> str:
 
 # -- components (each returns HTML; arguments named *_html are already escaped) ----------------------------------------
 def card(title: str = "", body_html: str = "", foot_html: str = "", chip_html: str = "", form: str = "", hidden_html: str = "",
-         link: tuple[str, str] | None = None) -> str:
+         link: tuple[str, str] | None = None, attrs: dict[str, str] | None = None) -> str:
     """One card. form='/dashboard/x' wraps the whole card in a POST form, so its fields and its foot buttons belong together.
     Buttons act and sit in the foot; link=(label, href) navigates and sits at the right of the head."""
     aside = chip_html + (f'<a class="head-link" href="{_esc(link[1])}">{_esc(link[0])} <span aria-hidden="true">›</span></a>' if link else "")
@@ -290,7 +291,8 @@ def card(title: str = "", body_html: str = "", foot_html: str = "", chip_html: s
     inner = (head + (f'<div class="card-body">{body_html}</div>' if body_html else "")
              + (f'<div class="card-foot">{foot_html}</div>' if foot_html else ""))
     if form:
-        return f'<form class="card" method="post" action="{_esc(form)}">{hidden_html}{inner}</form>'
+        extra = "".join(f' {k}="{_esc(v)}"' for k, v in (attrs or {}).items())
+        return f'<form class="card"{extra} method="post" action="{_esc(form)}">{hidden_html}{inner}</form>'
     return f'<section class="card">{inner}</section>'
 
 
@@ -355,6 +357,11 @@ class Dashboard:
     def waiting(self) -> int:
         return sum(len(src.pending()) for src in self.sources.values())
 
+    def fingerprint(self) -> tuple[int, str]:
+        """How many requests wait, and a value that changes when any of them arrives, leaves or changes (state.json)."""
+        keys = [f"{src.kind}:{q.id}:{q.sha256}" for src in self.sources.values() for q in src.pending()]
+        return len(keys), hashlib.sha256("\n".join(sorted(keys) + [str(self.paused())]).encode()).hexdigest()[:16]
+
     def paused(self) -> bool:
         return os.path.exists(self.pause_file)
 
@@ -396,11 +403,12 @@ class Dashboard:
                 f'<form method="post" action="/dashboard/logout">{self.csrf_input(rec)}{button("Sign out", "text")}</form></header>')
 
     def page(self, title: str, active: str, inner: str, rec: dict[str, Any], status: int = 200, flash: str = "",
-             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "", live: bool = False) -> Response:
+             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "", live: str = "") -> Response:
         """A signed-in page: top bar or the frame, the page head (title, one line of context, the page's one primary
-        action), a banner for the last action, then the cards. lede_html is an already escaped lede. live=True lets
-        dashboard.js replace the page's content when what is waiting changes; on other pages it updates only the counts."""
-        n = self.waiting()
+        action), a banner for the last action, then the cards. lede_html is an already escaped lede. live is the page's own
+        address: dashboard.js loads it again and swaps in the content when what is waiting changes (also after a form post,
+        whose address must not be requested again). Other pages only get their counts updated."""
+        n, v = self.fingerprint()
         items = [("overview", "Overview", "/dashboard"), ("approvals", "Approvals", "/dashboard/approvals"),
                  ("activity", "Activity", "/dashboard/activity"), *self.extra_nav, ("security", "Security", "/dashboard/security")]
         tabs, side = "", ""
@@ -416,9 +424,9 @@ class Dashboard:
         lede_html = lede_html or (_esc(lede) if lede else "")
         head = (f'<div class="page-head"><div class="page-title"><h1>{_esc(title)}</h1>' + (f'<p class="lede">{lede_html}</p>' if lede_html else "") + "</div>"
                 + (f'<div class="page-actions">{actions}</div>' if actions else "") + "</div>")
-        main = "<main" + (' class="wide"' if wide else "") + (" data-live" if live else "") + ">"
+        main = "<main" + (' class="wide"' if wide else "") + (f' data-live="{_esc(live)}"' if live else "") + ">"
         return self._doc(f"({n}) {title}" if n else title,
-                         f'<div class="wrap">{sidebar}<div class="frame">{topbar}{self.deskbar(rec)}<div class="sheet">{main}{head}'
+                         f'<div class="wrap" data-v="{v}">{sidebar}<div class="frame">{topbar}{self.deskbar(rec)}<div class="sheet">{main}{head}'
                          f'<div class="stack">{banner}{inner}</div></main></div></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>',
                          status, app=True)
 
@@ -585,11 +593,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         arrives, leaves or changes. Asking does not keep the session alive (dashboard.js sends the x-live header)."""
         if signed_in(request) is None:
             return JSONResponse({"error": "signed out"}, status_code=401, headers=_HEADERS)
-        keys = []
-        for src in d.sources.values():
-            keys += [f"{src.kind}:{q.id}:{q.sha256}" for q in await asyncio.to_thread(src.pending)]
-        fingerprint = hashlib.sha256("\n".join(sorted(keys) + [str(d.paused())]).encode()).hexdigest()[:16]
-        return JSONResponse({"waiting": len(keys), "v": fingerprint}, headers=_HEADERS)
+        n, fingerprint = await asyncio.to_thread(d.fingerprint)
+        return JSONResponse({"waiting": n, "v": fingerprint}, headers=_HEADERS)
 
     # -- sign in and out -------------------------------------------------------------------------------------------------
     def signin_page(error: str = "", nxt: str = "/dashboard", status: int = 200) -> Response:
@@ -721,13 +726,17 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if got is None:
             return to_signin(request)
         rec = got[1]
-        waiting = []                    # (source, request, description), oldest deadline first
+        queued = []                     # (source, request), oldest deadline first; only the five shown are described
         for src in d.sources.values():
-            items = await asyncio.to_thread(src.pending)
-            ctx = await asyncio.to_thread(src.contexts, items) if items else {}
-            waiting += [(src, q, await asyncio.to_thread(src.describe, q, ctx.get(q.id))) for q in items]
+            queued += [(src, q) for q in await asyncio.to_thread(src.pending)]
+        queued.sort(key=lambda w: w[1].expires_at)
+        n = len(queued)
+        waiting = []                    # (source, request, description)
+        for src in d.sources.values():
+            shown = [q for s2, q in queued[:5] if s2 is src]
+            ctx = await asyncio.to_thread(src.contexts, shown) if shown else {}
+            waiting += [(src, q, await asyncio.to_thread(src.describe, q, ctx.get(q.id))) for q in shown]
         waiting.sort(key=lambda w: w[1].expires_at)
-        n = len(waiting)
         try:
             version = importlib.metadata.version("icloud-mcp-server")
         except importlib.metadata.PackageNotFoundError:
@@ -810,8 +819,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         grid = (f'<div data-install-hint data-app="iCloud connector" data-lang="en" hidden></div>{kpis}'
                 f'<div class="overview-grid"><div class="overview-col">{"".join(left)}</div>'
                 f'<div class="overview-col">{"".join(right)}</div></div>')
-        note = flashes.pop(rec["csrf"], "")
-        return d.page("Overview", "overview", grid, rec, flash=note or _flash(request), wide=True, lede_html=lede, live=True)
+        note = "" if request.headers.get(_LIVE) == "1" else flashes.pop(rec["csrf"], "")     # a background refresh takes no result
+        return d.page("Overview", "overview", grid, rec, flash=note or _flash(request), wide=True, lede_html=lede, live="/dashboard")
 
     @mcp.custom_route("/dashboard/check", methods=["POST"])
     async def check(request: Request) -> Response:
@@ -860,7 +869,10 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if not total:
             cards.append(card("Nothing is waiting", hint("When an agent sends mail or an iMessage, it waits here until you decide.")))
         else:
-            src, q, v = next((w for w in waiting if f"{w[0].kind}:{w[1].id}" == selected), waiting[0])
+            chosen = next((w for w in waiting if f"{w[0].kind}:{w[1].id}" == selected), None)
+            # A request picked from the list that has gone is not silently replaced by another one with a Send button in
+            # the same place (dashboard.js reloads this page while it is open)
+            src, q, v = (chosen or (None, None, None)) if selected else waiting[0]
             links = []
             for s2, q2, v2 in waiting:
                 to = next((val for k, val in v2["rows"] if k in ("To", "Will be delivered to", "Guests", "Conversation")), "")
@@ -869,6 +881,10 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                              f'<b>{_esc(v2["title"])}</b><span class="left">expires in {d.time_left(q2)}</span></span>'
                              + (f'<span class="q2">To {_esc(to)}</span>' if to else "") + "</a>")
             queue = f'<nav class="card queue" aria-label="Waiting requests">{"".join(links)}</nav>'
+        if total and q is None:
+            cards.append(f'<div class="split">{queue}' + card("No longer waiting", hint(
+                "This request was sent, discarded or dropped, maybe in another window. Choose one from the list.")) + "</div>")
+        elif total:
             body = [f'<dl>{"".join(f"<dt>{_esc(k)}</dt><dd>{_esc(val)}</dd>" for k, val in v["rows"])}</dl>']
             if v["warnings"]:
                 body.append('<div class="alert" role="alert"><b>Check this first</b><ul>'
@@ -886,11 +902,12 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                       f'<input type="hidden" name="id" value="{_esc(q.id)}"><input type="hidden" name="sha" value="{_esc(q.sha256)}">')
             label = src.approve_label
             foot = button("Discard", name="action", value="discard") + button(_esc(label), "primary", name="action", value="approve")
-            detail = card(v["title"], "".join(body), foot, chip(v["badge"], "kind"), form="/dashboard/approvals/act", hidden_html=hidden)
-            detail = detail.replace('<form class="card"', f'<form class="card" data-key="{_esc(src.kind)}:{_esc(q.id)}" data-title="{_esc(v["title"])}"', 1)
+            detail = card(v["title"], "".join(body), foot, chip(v["badge"], "kind"), form="/dashboard/approvals/act", hidden_html=hidden,
+                          attrs={"data-key": f"{src.kind}:{q.id}", "data-title": v["title"]})
             cards.append(f'<div class="split">{queue}{detail}</div>')
         lede = f"{total} waiting. Nothing has left the server yet; what you see is exactly what will be sent." if total else ""
-        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True, live=True)
+        live = "/dashboard/approvals" + (f"?item={quote(selected)}" if selected else "")
+        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True, live=live)
 
     def after_action(rec: dict[str, Any], note: str, back: str) -> Response:
         while len(flashes) > 200:
@@ -903,8 +920,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         got = signed_in(request)
         if got is None:
             return to_signin(request)
-        return await asyncio.to_thread(approvals_page, got[1], flashes.pop(got[1]["csrf"], ""),
-                                     selected=request.query_params.get("item", ""))
+        note = "" if request.headers.get(_LIVE) == "1" else flashes.pop(got[1]["csrf"], "")   # a background refresh takes no result
+        return await asyncio.to_thread(approvals_page, got[1], note, selected=request.query_params.get("item", ""))
 
     @mcp.custom_route("/dashboard/approvals/act", methods=["POST"])
     async def approvals_act(request: Request) -> Response:
@@ -916,21 +933,21 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         as_json = "application/json" in request.headers.get("accept", "")
         back = "/dashboard" if str(form.get("back", "")) == "/dashboard" else "/dashboard/approvals"
 
-        async def failed(note: str, status: int = 200) -> Response:
+        async def failed(note: str, json_status: int, page_status: int = 200) -> Response:
             if as_json:
-                return JSONResponse({"ok": False, "error": note, "waiting": d.waiting()}, status_code=status or 400, headers=_HEADERS)
-            return await asyncio.to_thread(approvals_page, rec, note, True, status)
+                return JSONResponse({"ok": False, "error": note}, status_code=json_status, headers=_HEADERS)
+            return await asyncio.to_thread(approvals_page, rec, note, True, page_status)
 
         def done(note: str) -> Response:
             if as_json:
-                return JSONResponse({"ok": True, "note": note, "waiting": d.waiting()}, headers=_HEADERS)
+                return JSONResponse({"ok": True, "note": note}, headers=_HEADERS)
             return after_action(rec, note, back)
 
         src = d.sources.get(str(form.get("kind", "")))
         action = str(form.get("action", ""))
         q = next((x for x in src.pending() if x.id == str(form.get("id", ""))), None) if src else None
         if q is None or action not in ("approve", "discard") or not hmac.compare_digest(str(form.get("sha", "")).encode(), q.sha256.encode()):
-            return await failed("That item is no longer waiting or has changed. Nothing was done.", 409)
+            return await failed("That item is no longer waiting or has changed. Nothing was done.", 409, 409)
         v = await asyncio.to_thread(src.describe, q, src.contexts([q]).get(q.id))
         who = {"actor": "owner", "via": rec.get("via", "")}
         if action == "discard":
@@ -938,13 +955,13 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
             audit.record("approval.discarded", **who, summary=f"Discarded {v['badge'].lower()} “{v['title']}”", kind=src.kind)
             return done("Discarded. Nothing was sent.")
         if v["needs_override"] and str(form.get("override", "")) != "1":
-            return await failed("Not sent: tick the box under the warning if you still want it sent.", 200 if not as_json else 422)
+            return await failed("Not sent: tick the box under the warning if you still want it sent.", 422)
         try:
             note = await asyncio.to_thread(src.release, q)
         except Exception as e:  # noqa: BLE001  -- release() puts the item back; the owner can retry or discard
             log.warning("Release of %s %s failed: %s", src.kind, q.id, e)
             audit.record("approval.failed", **who, ok=False, summary=f"Could not send {v['badge'].lower()} “{v['title']}”", kind=src.kind)
-            return await failed(f"Not sent (still waiting): {for_owner(str(e))}", 200 if not as_json else 502)
+            return await failed(f"Not sent (still waiting): {for_owner(str(e))}", 502)
         audit.record("approval.sent", **who, summary=f"Approved {v['badge'].lower()} “{v['title']}”", kind=src.kind,
                      recipients=[val for k, val in v["rows"] if k in ("To", "Guests", "Will be delivered to")])
         return done(note)

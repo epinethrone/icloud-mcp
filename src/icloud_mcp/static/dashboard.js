@@ -1,23 +1,27 @@
 // Live updates and actions without reloading for the icloud-mcp dashboard. Served from the server itself (CSP script-src 'self').
 // Every page works without this file; it only makes them quicker:
-//   - every 15 seconds while the page is visible it asks /dashboard/state.json what is waiting; when that changed, it loads
-//     the page again in the background and swaps in its content (Overview and Approvals) or only the counts (other pages)
+//   - every 15 seconds while the page is visible it asks /dashboard/state.json what is waiting; when that changed, it updates
+//     the counts, and on Overview and Approvals loads the page's own address (<main data-live>) again in the background and
+//     swaps in its content. It never reloads or re-requests the address a form was posted to.
 //   - Send posts the request at once and shows the result above the list
-//   - Discard waits 5 seconds with Undo before it is sent; leaving the page sends it right away
+//   - Discard waits 5 seconds with Undo before it is sent; hiding or leaving the page sends it right away
 //   - it registers a service worker (sw.js, caches nothing) so the dashboard can be installed as an app
 (function () {
   "use strict";
-  var POLL = 15000, UNDO = 5000, ACT = "/dashboard/approvals/act";
-  var version = null, lastOk = 0, timer = null, busyRetry = false;
+  var POLL = 15000, UNDO = 5000, HANDS_OFF = 4000, ACT = "/dashboard/approvals/act";
+  var wrap = document.querySelector(".wrap[data-v]");
+  var version = wrap ? wrap.getAttribute("data-v") : null;     // what the page was rendered with
+  var lastOk = 0, online = true, timer = null, busyRetry = false, flushed = false, lastPointer = 0;
   var notice = null;             // the result of the last Send, kept across content swaps
   var pending = null;            // a discard waiting for its 5 seconds: {data, row, timer}
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/dashboard/sw.js", { scope: "/dashboard" }).catch(function () {});
+    navigator.serviceWorker.register("/dashboard/sw.js", { scope: "/dashboard" }).catch(function () {});  // optional: the pages work without it
   }
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function home() { var m = $("main[data-live]"); return (m && m.getAttribute("data-live")) || "/dashboard"; }
 
   // -- “Live · updated just now” -----------------------------------------------------------------------------------
   function ago(t) {
@@ -27,33 +31,56 @@
     return m < 60 ? m + " min ago" : new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  function showStatus(ok) {
+  function showStatus() {
     var el = $("[data-live-status]");
     if (!el || !lastOk) return;
     el.hidden = false;
-    el.textContent = (ok ? "Live · updated " : "Offline · last updated ") + ago(lastOk);
-    el.classList.toggle("off", !ok);
+    el.textContent = (online ? "Live · updated " : "Offline · last updated ") + ago(lastOk);
+    el.classList.toggle("off", !online);
   }
 
-  // -- refreshing ----------------------------------------------------------------------------------------------------
-  function busy() {
+  // -- counts on every page ------------------------------------------------------------------------------------------
+  function badge(holder, cls, n) {
+    if (!holder) return;
+    var b = $("." + cls, holder);
+    if (!n) { if (b) b.remove(); return; }
+    if (!b) { b = document.createElement("span"); b.className = cls; holder.appendChild(b); }
+    b.textContent = String(n);
+    if (cls === "count") b.setAttribute("aria-label", n + " waiting");
+  }
+
+  function setCount(n) {
+    badge($('aside.side a[href="/dashboard/approvals"]'), "num", n);
+    badge($('nav.tabs a[href="/dashboard/approvals"] .ico'), "count", n);
+    document.title = (n ? "(" + n + ") " : "") + document.title.replace(/^\(\d+\) /, "");
+  }
+
+  // -- refreshing Overview and Approvals -----------------------------------------------------------------------------
+  // Not while the owner is typing, has a discard waiting, ticked “still send”, or has just pointed at the page:
+  // a request moving under the cursor could be sent by mistake.
+  function busy(force) {
     var a = document.activeElement, main = $("main");
     if (pending) return true;
     if (a && main && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== "submit") return true;
-    return !!$("main input[name=override]:checked");
+    if ($("main input[name=override]:checked")) return true;
+    return !force && Date.now() - lastPointer < HANDS_OFF;
   }
+  ["pointermove", "pointerdown", "touchstart", "wheel"].forEach(function (t) {
+    document.addEventListener(t, function (e) { if (e.target && e.target.closest && e.target.closest("main")) lastPointer = Date.now(); }, { passive: true });
+  });
 
   function keys(root) { return $$("[data-key]", root).map(function (n) { return n.getAttribute("data-key"); }); }
 
+  function focusMark() {                 // which control had focus, by its request and its role, to put focus back after a swap
+    var a = document.activeElement, holder = a && a.closest && a.closest("main [data-key]");
+    if (!holder) return null;
+    return { key: holder.getAttribute("data-key"), sel: a.tagName === "SUMMARY" ? "summary" : a.tagName === "BUTTON" ? 'button[value="' + a.value + '"]' : null };
+  }
+
   function swap(doc) {
     var main = $("main"), next = $("main", doc);
-    ["aside.side nav", "nav.tabs"].forEach(function (sel) {
-      var a = $(sel), b = $(sel, doc);
-      if (a && b) a.replaceWith(b);
-    });
-    document.title = doc.title;
     if (!main || !next || !main.hasAttribute("data-live")) return;
-    var before = keys(main), open = $$("details[open]", main).map(function (d) {
+    var before = keys(main), mark = focusMark(), open = $$("details[open]", main).map(function (d) {
       var row = d.closest("[data-key]");
       return row && row.getAttribute("data-key");
     });
@@ -66,33 +93,40 @@
         if (b && !$(".new", b)) { var tag = document.createElement("span"); tag.className = "new"; tag.textContent = "New"; b.appendChild(tag); }
       }
       if (open.indexOf(k) >= 0) { var d = $("details", n); if (d) d.open = true; }
+      if (mark && mark.sel && k === mark.key) { var f = $(mark.sel, n); if (f) f.focus(); }
     });
     putNotice();
     if (window.InstallHint) $$("[data-install-hint]", next).forEach(function (n) { window.InstallHint.mount(n); });
   }
 
-  function refresh() {
-    if (busy()) { busyRetry = true; return Promise.resolve(); }
+  function refresh(force) {
+    if (!$("main[data-live]")) return Promise.resolve();
+    if (busy(force)) { busyRetry = true; return Promise.resolve(); }
     busyRetry = false;
-    return fetch(location.href, { headers: { "x-live": "1" }, credentials: "same-origin", cache: "no-store" }).then(function (r) {
-      if (r.redirected || !r.ok) { location.reload(); return; }       // signed out or gone: let the server decide
-      return r.text().then(function (html) { swap(new DOMParser().parseFromString(html, "text/html")); });
-    });
+    return fetch(home(), { headers: { "x-live": "1" }, credentials: "same-origin", cache: "no-store" }).then(function (r) {
+      if (r.redirected || !r.ok) { location.assign(home()); return; }   // signed out: a plain GET of this page lets the server decide
+      return r.text().then(function (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        swap(doc);
+        document.title = doc.title;
+      });
+    }).catch(function () { online = false; showStatus(); });
   }
 
   function poll() {
     if (document.visibilityState !== "visible") return;
     fetch("/dashboard/state.json", { headers: { "x-live": "1" }, credentials: "same-origin", cache: "no-store" }).then(function (r) {
-      if (r.status === 401) { stop(); location.reload(); return; }
+      if (r.status === 401) { stop(); location.assign(home()); return; }
       if (!r.ok) throw new Error(String(r.status));
       return r.json().then(function (s) {
-        lastOk = Date.now();
-        var changed = version !== null && s.v !== version;
+        lastOk = Date.now(); online = true;
+        var changed = s.v !== version;
         version = s.v;
-        showStatus(true);
-        if (changed || busyRetry) return refresh();
+        showStatus();
+        if (changed) setCount(s.waiting);
+        if (changed || busyRetry || flushed) { var f = flushed; flushed = false; return refresh(f); }
       });
-    }).catch(function () { showStatus(false); });
+    }).catch(function () { online = false; showStatus(); });
   }
 
   function start() { if (!timer) { poll(); timer = setInterval(poll, POLL); } }
@@ -103,7 +137,7 @@
   });
   window.addEventListener("pagehide", flushDiscard);
   window.addEventListener("online", poll);
-  setInterval(function () { showStatus(true); }, 30000);
+  setInterval(showStatus, 30000);
 
   // -- results of an action ------------------------------------------------------------------------------------------
   function putNotice() {
@@ -125,12 +159,17 @@
     putNotice();
   }
 
+  // Resolves to the server's JSON answer, or to null when the server refused the form before acting on it (signed out,
+  // expired form): then nothing was done, the owner is told so and the page is loaded again.
   function post(data, keepalive) {
     return fetch(ACT, { method: "POST", body: new URLSearchParams(data), credentials: "same-origin", keepalive: !!keepalive,
                         headers: { "accept": "application/json" } }).then(function (r) {
-      var json = (r.headers.get("content-type") || "").indexOf("application/json") >= 0;
-      if (!json) { location.reload(); return null; }        // signed out or a refused form: the server's own page explains
-      return r.json();
+      if ((r.headers.get("content-type") || "").indexOf("application/json") >= 0) return r.json();
+      if (!keepalive) {
+        say("Nothing was done: this page has expired. Loading it again…", true);
+        setTimeout(function () { location.assign(home()); }, 2500);
+      }
+      return null;
     });
   }
 
@@ -164,6 +203,13 @@
     hideToast();
   }
 
+  function leave(key) {                  // after acting on the request open on Approvals, show the list, not “no longer waiting”
+    var m = $("main[data-live]");
+    if (!m || !$('form.card[data-key="' + key + '"]', m)) return;
+    m.setAttribute("data-live", "/dashboard/approvals");
+    if (history.replaceState) history.replaceState(null, "", "/dashboard/approvals");
+  }
+
   function setGone(key, gone) {          // the row on the Overview, or the list entry and the open request on Approvals
     $$("[data-key]").forEach(function (n) {
       if (n.getAttribute("data-key") !== key) return;
@@ -179,11 +225,12 @@
     pending = null;
     hideToast();
     var sent = post(p.data, keepalive);
-    if (keepalive) return;
+    if (keepalive) { flushed = true; return; }               // the next poll shows what the server did with it
     sent.then(function (res) {
       if (res && !res.ok) { setGone(p.row, false); say(res.error, true); }
-      return refresh();
-    }).catch(function () { setGone(p.row, false); say("Could not reach the server. Nothing was discarded.", true); });
+      if (res && res.ok) leave(p.row);
+      if (res) refresh(true);
+    }, function () { setGone(p.row, false); say("Could not reach the server. Nothing was discarded.", true); });
   }
 
   function flushDiscard() { if (pending) commitDiscard(true); }
@@ -205,15 +252,17 @@
       showToast(title);
       return;
     }
-    $$("button", form).forEach(function (b) { b.disabled = true; });
+    var buttons = $$("button", form), label = btn.textContent;
+    function again() { buttons.forEach(function (b) { b.disabled = false; }); btn.textContent = label; }
+    buttons.forEach(function (b) { b.disabled = true; });
     btn.textContent = "Sending…";
     post(data).then(function (res) {
       if (!res) return;
-      if (res.ok) { say(res.note, false); setGone(row, true); } else say(res.error, true);
-      return refresh();
-    }).catch(function () {
+      if (res.ok) { say(res.note, false); setGone(row, true); leave(row); } else { again(); say(res.error, true); }
+      refresh(true);
+    }, function () {
+      again();
       say("Could not reach the server. It may or may not have been sent: check Activity before you try again.", true);
-      return refresh();
     });
   }, true);
 

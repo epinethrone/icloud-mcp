@@ -357,8 +357,6 @@ async def test_a_request_is_approved_on_the_overview_and_the_result_shows_there(
         r = await c.post("/dashboard/approvals/act", data=form, headers=SAME)
         assert r.status_code == 303 and r.headers["location"] == "/dashboard" and len(sent) == 1
         assert "Sent to bob@example.org" in (await c.get("/dashboard")).text
-        r = await c.post("/dashboard/approvals/act", data={**form, "back": "https://evil.example.net/"}, headers=SAME)
-        assert r.status_code == 409                                                     # nothing waiting any more
 
 
 async def test_a_request_with_a_warning_is_not_approved_from_the_overview(web, monkeypatch):
@@ -382,10 +380,76 @@ async def test_the_page_script_gets_json_answers(web):
         form = {"csrf": token, "kind": "mail", "id": qid, "sha": sha, "action": "approve"}
         js = {**SAME, "accept": "application/json"}
         r = await c.post("/dashboard/approvals/act", data=form, headers=js)
-        assert r.status_code == 200 and r.json() == {"ok": True, "note": "Sent to bob@example.org.", "waiting": 0} and len(sent) == 1
+        assert r.status_code == 200 and r.json() == {"ok": True, "note": "Sent to bob@example.org."} and len(sent) == 1
         r = await c.post("/dashboard/approvals/act", data=form, headers=js)
         assert r.status_code == 409 and r.json()["ok"] is False and len(sent) == 1
         qid = queue(mcp)
         sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
         r = await c.post("/dashboard/approvals/act", data={**form, "id": qid, "sha": sha, "action": "discard"}, headers=js)
-        assert r.json() == {"ok": True, "note": "Discarded. Nothing was sent.", "waiting": 0} and len(sent) == 1
+        assert r.json() == {"ok": True, "note": "Discarded. Nothing was sent."} and len(sent) == 1
+
+
+async def test_after_an_action_only_the_overview_or_approvals_is_a_destination(web):
+    app, mcp, _, sent = web()
+    async with client(app) as c:
+        token = await signed_in(c)
+        for back in ("https://evil.example.net/", "//evil.example.net", "/dashboard/security"):
+            qid = queue(mcp)
+            sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
+            r = await c.post("/dashboard/approvals/act", headers=SAME,
+                             data={"csrf": token, "kind": "mail", "id": qid, "sha": sha, "action": "discard", "back": back})
+            assert r.status_code == 303 and r.headers["location"] == "/dashboard/approvals", back
+        assert sent == []
+
+
+async def test_the_page_script_gets_json_when_nothing_was_sent(web, monkeypatch):
+    from icloud_mcp.dashboard import MailApprovals
+    real = MailApprovals.describe
+    app, mcp, _, sent = web()
+    qid = queue(mcp)
+    js = {**SAME, "accept": "application/json"}
+    async with client(app) as c:
+        token = await signed_in(c)
+        src = mcp._icloud_dashboard.sources["mail"]
+        form = {"csrf": token, "kind": "mail", "id": qid, "sha": src.pending()[0].sha256, "action": "approve"}
+        monkeypatch.setattr(MailApprovals, "describe", lambda self, q, ctx=None: {**real(self, q, ctx), "needs_override": True})
+        r = await c.post("/dashboard/approvals/act", data=form, headers=js)
+        assert r.status_code == 422 and r.json()["ok"] is False and sent == [] and len(src.pending()) == 1
+        monkeypatch.setattr(MailApprovals, "describe", real)
+
+
+        def fail(self, q):
+            raise RuntimeError("SMTP said no")
+        monkeypatch.setattr(MailApprovals, "release", fail)
+        r = await c.post("/dashboard/approvals/act", data=form, headers=js)
+        assert r.status_code == 502 and r.json()["error"].startswith("Not sent (still waiting)") and sent == []
+
+
+async def test_live_pages_name_their_own_address_and_a_background_refresh_takes_no_result(web):
+    app, mcp, _, _ = web()
+    qid = queue(mcp)
+    async with client(app) as c:
+        token = await signed_in(c)
+        page = (await c.get(f"/dashboard/approvals?item=mail:{qid}")).text
+        assert f'data-live="/dashboard/approvals?item=mail%3A{qid}"' in page and re.search(r'data-v="[0-9a-f]{16}"', page)
+        assert f'<form class="card" data-key="mail:{qid}" data-title="Lunch &lt;b&gt;now&lt;/b&gt;"' in page
+        assert 'data-live=' not in (await c.get("/dashboard/security")).text        # counts only: never re-requested
+        sha = mcp._icloud_dashboard.sources["mail"].pending()[0].sha256
+        r = await c.post("/dashboard/approvals/act", headers=SAME,
+                         data={"csrf": token, "kind": "mail", "id": qid, "sha": "0" * 64, "action": "approve"})
+        assert r.status_code == 409 and 'data-live="/dashboard/approvals"' in r.text  # a page answering a post names a GET address
+        await c.post("/dashboard/approvals/act", headers=SAME,
+                     data={"csrf": token, "kind": "mail", "id": qid, "sha": sha, "action": "discard", "back": "/dashboard"})
+        assert "Discarded" not in (await c.get("/dashboard", headers={"x-live": "1"})).text
+        assert "Discarded" in (await c.get("/dashboard")).text                          # still there for the real visit
+
+
+async def test_a_request_that_has_gone_is_not_replaced_by_another(web):
+    app, mcp, _, _ = web()
+    gone = queue(mcp, subject="First")
+    queue(mcp, subject="Second")
+    mcp._icloud_dashboard.sources["mail"].discard(next(q for q in mcp._icloud_dashboard.sources["mail"].pending() if q.id == gone))
+    async with client(app) as c:
+        await signed_in(c)
+        page = (await c.get(f"/dashboard/approvals?item=mail:{gone}")).text
+        assert "No longer waiting" in page and 'value="approve"' not in page and "Second" in page
