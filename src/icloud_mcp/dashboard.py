@@ -346,6 +346,7 @@ class Dashboard:
         self.last_health: dict[str, Any] | None = None
         self.pause_file = os.path.join(s.data_dir, "paused")
         self.extra_nav: list[tuple[str, str, str]] = []        # (key, label, path) added by other parts (settings)
+        self.flush_failure_lines: Callable[..., None] = lambda now=None: None   # set by register_dashboard
         self.has_icon = (_STATIC / "icon-32.png").is_file()
 
     def _tz(self):
@@ -499,21 +500,36 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         log.warning("MCP_PUBLIC_URL is plain http on %s: the dashboard cookie cannot be Secure or __Host-. Use https.", host)
     failures: dict[str, list[float]] = {}               # action -> [window start, recorded, not recorded]
     flashes: dict[str, str] = {}      # one-shot result of an approval, keyed by session, so the result page is a plain GET
+    window = 600
+
+    def flush_failure_lines(now: float | None = None) -> None:
+        """Close every window that has ended: one line counts what was not recorded, also when the flood has stopped."""
+        now = time.time() if now is None else now
+        for action, (start, _written, dropped) in list(failures.items()):
+            if now - start >= window:
+                if dropped:
+                    audit.record(action, actor="unknown", ok=False,
+                                 summary=f"{int(dropped)} more like this in {window // 60} minutes were not recorded")
+                del failures[action]
 
     def record_failure_line(action: str, summary: str, **details: Any) -> None:
         """Failed sign-ins from anyone: at most 5 lines per kind and 10 minutes, then one line that counts the rest."""
         now = time.time()
+        flush_failure_lines(now)
         start, written, dropped = failures.get(action, [now, 0, 0])
-        if now - start > 600:
-            if dropped:
-                audit.record(action, actor="unknown", ok=False, summary=f"{int(dropped)} more like this were not recorded")
-            start, written, dropped = now, 0, 0
         if written < 5:
             audit.record(action, actor="unknown", ok=False, summary=summary, **details)
             written += 1
         else:
+            if not dropped:                                  # the first one held back: close the window on time
+                try:
+                    asyncio.get_running_loop().call_later(max(0.0, start + window - now) + 1, flush_failure_lines)
+                except RuntimeError:                         # no event loop (called outside a request): the next call flushes
+                    pass
             dropped += 1
         failures[action] = [start, written, dropped]
+
+    d.flush_failure_lines = flush_failure_lines
 
     # -- guards --------------------------------------------------------------------------------------------------------
     def signed_in(request: Request) -> tuple[str, dict[str, Any]] | None:
