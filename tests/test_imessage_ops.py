@@ -270,3 +270,26 @@ def test_a_one_to_one_chat_without_a_known_participant_never_falls_back(run, tmp
     run.mode.write_text("unknown_guid")
     with pytest.raises(RuntimeError, match="does not know that conversation"):
         run("imessage_send", {"chat_id": "ghost@example.org", "text": "Hi"})
+
+
+def test_the_fallback_is_only_the_conversations_own_address(run, tmp_path):
+    # The server allowed this chat_id. A participant chat.db lists under another address is never sent to instead.
+    db = sqlite3.connect(tmp_path / "chat.db")
+    db.execute("INSERT INTO chat VALUES (7, 'any;-;alias@example.org', 'alias@example.org', '', 'iMessage', 45, 0)")
+    db.execute("INSERT INTO chat_handle_join VALUES (7, 2)")                       # anna@example.org, not alias@
+    db.commit()
+    run("imessage_send", {"chat_id": "alias@example.org", "text": "Hi"})
+    assert run.payload() == {"text": "Hi", "guid": "any;-;alias@example.org"}
+    run.mode.write_text("unknown_guid")
+    with pytest.raises(RuntimeError, match="does not know that conversation"):
+        run("imessage_send", {"chat_id": "alias@example.org", "text": "Hi"})
+
+
+def test_the_fallback_matches_a_phone_number_however_it_is_written(run, tmp_path):
+    db = sqlite3.connect(tmp_path / "chat.db")
+    db.execute("INSERT INTO chat VALUES (8, 'any;-;0031600000004', '0031600000004', '', 'iMessage', 45, 0)")
+    db.execute("INSERT INTO handle VALUES (4, '+31600000004')")
+    db.execute("INSERT INTO chat_handle_join VALUES (8, 4)")
+    db.commit()
+    run("imessage_send", {"chat_id": "0031600000004", "text": "Hi"})
+    assert run.payload()["handle"] == "+31600000004"

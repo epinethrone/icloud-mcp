@@ -379,10 +379,13 @@ def op_send(a):
                                % placeholders(len(imessage_rows)), imessage_rows).fetchall())
         payload["guid"] = g["guids"][max(imessage_rows, key=lambda r: last.get(r) or 0)]
         # Messages only scripts the conversations it currently shows, not every one in chat.db. For a 1:1 conversation the
-        # script may fall back to its one participant over iMessage: the same person, never another service or a group, and
-        # only when chat.db names exactly one participant (never the chat id as a stand-in).
+        # script may fall back to its one participant over iMessage, never another service or a group. Only when chat.db
+        # names exactly one participant and it is the conversation's own address: the server allowed this chat_id, so the
+        # fallback can never reach anyone else.
         if not g["group"] and len(g["participants"]) == 1:
-            payload["handle"] = handle or next(iter(g["participants"]))
+            only = next(iter(g["participants"]))
+            if key(only) == key(g["chat_id"]):
+                payload["handle"] = handle or only
     else:
         payload["handle"] = handle
     before = db.execute("SELECT coalesce(max(ROWID), 0) FROM message").fetchone()[0]
