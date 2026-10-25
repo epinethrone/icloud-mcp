@@ -158,7 +158,7 @@ async def test_view_only_and_the_server_page(web):  # noqa: F811
         r = await c.post("/dashboard/settings/mail", headers=SAME, data={"csrf": token, "MAX_RECIPIENTS": "3"})
         assert r.status_code == 403
         page = (await c.get("/dashboard/settings/server")).text
-        assert "https://mcp.example.com" in page and "<form" not in page.split("<main>")[1].split("</main>")[0]
+        assert '<span class="row-value">https://mcp.example.com</span>' in page and "<form" not in page.split("<main>")[1].split("</main>")[0]
 
 
 async def test_settings_can_be_left_out(web):  # noqa: F811
