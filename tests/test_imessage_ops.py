@@ -83,8 +83,13 @@ payload = json.loads(sys.argv[-1])
 mode = open({mode!r}).read().strip()
 if mode == "deny":
     sys.stderr.write("execution error: Not authorized to send Apple events to Messages. (-1743)"); sys.exit(1)
+open({rec!r}, "w").write(json.dumps(payload))
+if mode == "unknown_guid" and payload.get("guid"):         # Messages does not show this chat: -1728, or the 1:1 handle instead
+    if not payload.get("handle"):
+        sys.stderr.write("execution error: Error: Can't get object. (-1728)"); sys.exit(1)
+    payload = {{"text": payload["text"], "handle": payload["handle"]}}
 db = sqlite3.connect({db!r})
-chat = {{"any;-;+31600000001": 1, "any;+;chat900": 3}}.get(payload.get("guid"), 5)
+chat = {{"any;-;+31600000001": 1, "any;+;chat900": 3, "+31600000001": 1}}.get(payload.get("guid") or payload.get("handle"), 5)
 if chat == 5 and not db.execute("select 1 from chat where ROWID=5").fetchone():
     db.execute("insert into chat values (5, 'any;-;new@example.org', 'new@example.org', '', 'iMessage', 45, 0)")
 if mode != "silent":
@@ -107,7 +112,8 @@ def run(tmp_path):
     mode = tmp_path / "mode"
     mode.write_text("ok")
     fake = tmp_path / "osascript"
-    fake.write_text(FAKE_OSASCRIPT.format(python=sys.executable, db=str(path), mode=str(mode)))
+    rec = tmp_path / "payload.json"
+    fake.write_text(FAKE_OSASCRIPT.format(python=sys.executable, db=str(path), mode=str(mode), rec=str(rec)))
     fake.chmod(0o755)
     never = tmp_path / "never.txt"
     never.write_text("# the owner's assistant\nBot@Example.org\n")
@@ -121,6 +127,7 @@ def run(tmp_path):
         return json.loads(p.stdout)
     go.long_text = long_text
     go.mode = mode
+    go.payload = lambda: json.loads(rec.read_text())
     return go
 
 
@@ -235,3 +242,19 @@ def test_the_mac_matches_handles_however_they_are_written(run, tmp_path):
         run("imessage_send", {"chat_id": "+31600000001", "text": "x"})
     with pytest.raises(RuntimeError, match="never sends to"):
         run("imessage_send", {"handle": "BOT@Example.ORG", "text": "x"})
+
+
+def test_a_one_to_one_chat_messages_does_not_show_goes_to_its_participant(run):
+    # Messages scripts only the chats it shows; chat.db keeps the rest. A 1:1 chat carries its one participant along.
+    assert run("imessage_send", {"chat_id": "+31600000001", "text": "See you at 10"})["status"] == "sent"
+    assert run.payload() == {"text": "See you at 10", "guid": "any;-;+31600000001", "handle": "+31600000001"}
+    run.mode.write_text("unknown_guid")
+    assert run("imessage_send", {"chat_id": "+31600000001", "text": "Still there?"})["status"] == "sent"
+
+
+def test_a_group_never_falls_back_to_a_single_person(run):
+    run("imessage_send", {"chat_id": "chat900", "text": "Hi all"})
+    assert "handle" not in run.payload()
+    run.mode.write_text("unknown_guid")
+    with pytest.raises(RuntimeError, match="does not know that conversation"):
+        run("imessage_send", {"chat_id": "chat900", "text": "Hi all"})

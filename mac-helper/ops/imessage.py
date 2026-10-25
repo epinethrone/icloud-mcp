@@ -378,6 +378,12 @@ def op_send(a):
         last = dict(db.execute("SELECT chat_id, max(message_date) FROM chat_message_join WHERE chat_id IN (%s) GROUP BY chat_id"
                                % placeholders(len(imessage_rows)), imessage_rows).fetchall())
         payload["guid"] = g["guids"][max(imessage_rows, key=lambda r: last.get(r) or 0)]
+        # Messages only scripts the conversations it currently shows, not every one in chat.db. For a 1:1 conversation the
+        # script may fall back to its one participant over iMessage: the same person, never another service or a group.
+        if not g["group"]:
+            people = sorted(g["participants"]) or [g["chat_id"]]
+            if len(people) == 1:
+                payload["handle"] = handle or people[0]
     else:
         payload["handle"] = handle
     before = db.execute("SELECT coalesce(max(ROWID), 0) FROM message").fetchone()[0]
