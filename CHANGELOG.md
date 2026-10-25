@@ -5,6 +5,13 @@ Update the Mac helper before the server whenever its version changes.
 
 ## Unreleased
 
+- **Mac helper 0.8.1: iMessage to a conversation Messages no longer shows.** Messages scripts only the conversations it
+  currently shows, while chat.db keeps all of them, so a send to an older 1:1 conversation (and
+  `--selftest-imessage-send` to your own address) failed with 'Messages does not know that conversation or handle'. For
+  a 1:1 conversation the helper now falls back to its one participant over iMessage; a group never does.
+- **SMS-only conversations are refused before they are queued.** `imessage_send_message` used to queue a message to a
+  conversation that exists only as SMS, and the Mac refused it only after the owner approved it. Now the tool refuses at
+  once and names the same person's 1:1 iMessage conversation that the allowlist permits, so the agent can send there.
 - **A refresh sent twice keeps the app signed in.** A client that sends the same refresh token again within
   `REFRESH_TOKEN_GRACE_SECONDS` (default 60, 0 = off) gets the pair it was just exchanged for instead of `invalid_grant`,
   only while that pair is valid. Parallel refreshes and retries after a lost response no longer sign an app out. Kept in

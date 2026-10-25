@@ -378,6 +378,14 @@ def op_send(a):
         last = dict(db.execute("SELECT chat_id, max(message_date) FROM chat_message_join WHERE chat_id IN (%s) GROUP BY chat_id"
                                % placeholders(len(imessage_rows)), imessage_rows).fetchall())
         payload["guid"] = g["guids"][max(imessage_rows, key=lambda r: last.get(r) or 0)]
+        # Messages only scripts the conversations it currently shows, not every one in chat.db. For a 1:1 conversation the
+        # script may fall back to its one participant over iMessage, never another service or a group. Only when chat.db
+        # names exactly one participant and it is the conversation's own address: the server allowed this chat_id, so the
+        # fallback can never reach anyone else.
+        if not g["group"] and len(g["participants"]) == 1:
+            only = next(iter(g["participants"]))
+            if key(only) == key(g["chat_id"]):
+                payload["handle"] = handle or only
     else:
         payload["handle"] = handle
     before = db.execute("SELECT coalesce(max(ROWID), 0) FROM message").fetchone()[0]
