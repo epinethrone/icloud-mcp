@@ -133,7 +133,11 @@ async def test_full_flow(app):
         old = await c.post("/mcp", headers=h, json={})
         assert old.status_code == 401  # old access token dropped on rotation
         again = await c.post("/token", data={"grant_type": "refresh_token", "refresh_token": tok["refresh_token"], "client_id": cid})
-        assert again.status_code == 400  # old refresh token dead
+        assert again.status_code == 200 and again.json()["refresh_token"] == tok2["refresh_token"]  # repeated at once: same pair
+        for g in provider._grace.values():
+            g["rotated_at"] -= 3600
+        again = await c.post("/token", data={"grant_type": "refresh_token", "refresh_token": tok["refresh_token"], "client_id": cid})
+        assert again.status_code == 400  # once the grace period is over the old refresh token is dead
 
         # revoke
         rv = await c.post("/revoke", data={"token": tok2["access_token"], "client_id": cid, "client_secret": ""})

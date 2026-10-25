@@ -56,6 +56,8 @@ async def test_reusing_an_already_rotated_refresh_token_says_it_was_rotated(setu
     async with T.client_for(app) as c:
         cid, _, rt = await sign_in(c)
         assert (await refresh(c, cid, rt)).status_code == 200                    # first user of this token wins and rotates it
+        for g in provider._grace.values():
+            g["rotated_at"] -= 3600                                                # long after the grace period
         r = await refresh(c, cid, rt)                                              # a second holder of the same copy
         assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
     msgs = warnings(caplog)

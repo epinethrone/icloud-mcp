@@ -191,6 +191,7 @@ class Settings:
     allowed_redirect_hosts: tuple[str, ...]
     access_token_ttl: int
     refresh_token_ttl: int
+    refresh_grace_seconds: int = 60   # REFRESH_TOKEN_GRACE_SECONDS: a just-rotated refresh token still returns its replacement (0 = off)
     bridge_host: str = "127.0.0.1"  # address the bridge port binds to inside this process (0.0.0.0 only inside Docker, set by the image)
     local_mode: bool = False      # stdio for a desktop client on this computer: no OAuth, no public URL, no browser outbox
     tools: tuple[str, ...] = ()   # TOOLS: 'essential' and/or tool names to expose; empty = every tool of the enabled areas
@@ -308,6 +309,7 @@ class Settings:
             ),
             access_token_ttl=_int("ACCESS_TOKEN_TTL", 3600),
             refresh_token_ttl=_int("REFRESH_TOKEN_TTL", 60 * 60 * 24 * 30),
+            refresh_grace_seconds=max(0, min(_int("REFRESH_TOKEN_GRACE_SECONDS", 60), 300)),
             bridge_host=_str("BRIDGE_HOST", "127.0.0.1"),
             tools=tuple(_list("TOOLS")),
             imap_pool_size=max(0, min(_int("IMAP_POOL_SIZE", 3), 8)),

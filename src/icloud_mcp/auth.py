@@ -13,6 +13,7 @@ import hmac
 import html
 import json
 import logging
+import math
 import os
 import secrets
 import tempfile
@@ -74,6 +75,11 @@ class OwnerOAuthProvider:
         self.audit: Any = None                        # the activity log, set by create_server
         # Diagnostics only, never persisted: fingerprints (hashes) of tokens that were rotated, and log rate limiting.
         self._rotated: dict[str, float] = {}
+        # Memory only, never persisted: sha256(just-rotated refresh token) -> the pair it was exchanged for, so a client that
+        # sends the same refresh twice in quick succession (parallel requests, a retry after a lost response) gets that pair
+        # again instead of losing its sign-in. Dropped after refresh_grace_seconds, and as soon as that pair is rotated again,
+        # revoked or signed out.
+        self._grace: dict[str, dict[str, Any]] = {}
         self._last_used: dict[str, float] = {}         # client_id -> last accepted access token (memory only)
         self._last_logged: dict[str, tuple[float, int]] = {}
         self._load()
@@ -140,6 +146,7 @@ class OwnerOAuthProvider:
             known = client_id in self.clients or any(r["client_id"] == client_id for r in (*self.access.values(), *self.refresh.values()))
             self.access = {k: v for k, v in self.access.items() if v["client_id"] != client_id}
             self.refresh = {k: v for k, v in self.refresh.items() if v["client_id"] != client_id}
+            self._grace = {k: v for k, v in self._grace.items() if v["client_id"] != client_id}
             self.clients.pop(client_id, None)
             self._last_used.pop(client_id, None)
             if known:
@@ -155,6 +162,7 @@ class OwnerOAuthProvider:
             n = self.connected_clients()
             self.access.clear()
             self.refresh.clear()
+            self._grace.clear()
             self.codes.clear()
             self.pending.clear()
             self.clients.clear()
@@ -169,6 +177,7 @@ class OwnerOAuthProvider:
         self.refresh = {k: v for k, v in self.refresh.items() if v["expires_at"] > now}
         self.codes = {k: v for k, v in self.codes.items() if v.expires_at > now}
         self.pending = {k: v for k, v in self.pending.items() if v["expires_at"] > now}
+        self._grace = {k: v for k, v in self._grace.items() if now - v["rotated_at"] < self.s.refresh_grace_seconds}
 
     # -- diagnostics (never log token values; only short client ids, reasons and ages) ---------
     @staticmethod
@@ -186,6 +195,22 @@ class OwnerOAuthProvider:
     def _rotated_ago(self, token_hash: str) -> float | None:
         when = self._rotated.get(token_hash)
         return None if when is None else time.time() - when
+
+    def _in_grace(self, token_hash: str, client_id: str) -> dict[str, Any] | None:
+        """The pair a refresh token was just exchanged for, while the grace period runs and that pair is still valid."""
+        with self._lock:
+            now = time.time()
+            g = self._grace.get(token_hash)
+            if not g or now - g["rotated_at"] >= self.s.refresh_grace_seconds:
+                self._grace.pop(token_hash, None)
+                return None
+            if g["client_id"] != client_id:
+                return None
+            new = self.refresh.get(_h(g["token"].refresh_token or ""))
+            if not new or new["expires_at"] <= now:   # revoked, signed out or rotated again: the old token gets nothing
+                self._grace.pop(token_hash, None)
+                return None
+            return g
 
     def _log_limited(self, key: str, level: int, msg: str, *args: Any) -> None:
         """Log at most once a minute per key (unauthenticated callers must not be able to flood the log)."""
@@ -310,6 +335,10 @@ class OwnerOAuthProvider:
         rec = self.refresh.get(h)
         if not rec or rec["client_id"] != client.client_id or rec["expires_at"] <= time.time():
             cid = self._cid(client.client_id)
+            if not rec and (g := self._in_grace(h, client.client_id)):
+                return RefreshToken(token=refresh_token, client_id=client.client_id, scopes=g["scopes"],
+                                    expires_at=math.ceil(g["rotated_at"] + self.s.refresh_grace_seconds), resource=g["resource"],
+                                    subject="owner")
             if not rec:
                 ago = self._rotated_ago(h)
                 if ago is not None:
@@ -328,15 +357,30 @@ class OwnerOAuthProvider:
 
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token: RefreshToken, scopes: list[str]) -> OAuthToken:
         with self._lock:
-            rec = self.refresh.get(_h(refresh_token.token))
+            h = _h(refresh_token.token)
+            rec = self.refresh.get(h)
             if not rec:
-                raise TokenError("invalid_grant", "refresh token revoked or expired")
+                g = self._in_grace(h, client.client_id)
+                t: OAuthToken | None = g["token"] if g else None
+                access = self.access.get(_h(t.access_token)) if t else None
+                if not t or not access or access["expires_at"] <= time.time():
+                    raise TokenError("invalid_grant", "refresh token revoked or expired")
+                if scopes and set(scopes) != set(g["scopes"]):   # the repeat gets exactly the same pair, or nothing
+                    raise TokenError("invalid_grant", "refresh token revoked or expired")
+                log.info("oauth: client %s repeated a refresh %.0fs after rotating it; returning the pair it was exchanged for",
+                         self._cid(client.client_id), time.time() - g["rotated_at"])
+                return t.model_copy(update={"expires_in": max(1, int(access["expires_at"] - time.time()))})
             granted = scopes or rec["scopes"]
             if not set(granted) <= set(rec["scopes"]):
                 raise TokenError("invalid_scope", "requested scope exceeds original grant")
-            self._note_rotated([_h(refresh_token.token)] + [k for k, v in self.access.items() if v["pair"] == rec["pair"]])
+            self._note_rotated([h] + [k for k, v in self.access.items() if v["pair"] == rec["pair"]])
             self._drop_pair(rec["pair"])  # rotate
-            return self._issue(client.client_id, granted, rec.get("resource"), "refresh_token")
+            token = self._issue(client.client_id, granted, rec.get("resource"), "refresh_token")
+            if self.s.refresh_grace_seconds > 0:
+                self._grace[h] = {"client_id": client.client_id, "scopes": granted, "resource": rec.get("resource"),
+                                  "token": token, "pair": self.refresh[_h(token.refresh_token or "")]["pair"],
+                                  "rotated_at": time.time()}
+            return token
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         h = _h(token)
@@ -359,6 +403,7 @@ class OwnerOAuthProvider:
     def _drop_pair(self, pair: str) -> None:
         self.access = {k: v for k, v in self.access.items() if v["pair"] != pair}
         self.refresh = {k: v for k, v in self.refresh.items() if v["pair"] != pair}
+        self._grace = {k: v for k, v in self._grace.items() if v["pair"] != pair}
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         with self._lock:
