@@ -21,17 +21,16 @@
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  // The page's own address, from a fixed list of paths: the data-live attribute only chooses among them, and its
+  // optional item is re-encoded, so nothing read from the page is ever used as a URL.
+  var PAGES = { "/dashboard": "/dashboard", "/dashboard/approvals": "/dashboard/approvals" };
   function home() {
     var m = $("main[data-live]");
-    var raw = (m && m.getAttribute("data-live")) || "/dashboard";
-    try {
-      var u = new URL(raw, location.origin);
-      if (u.origin !== location.origin) return "/dashboard";
-      if (u.pathname.indexOf("/dashboard") !== 0) return "/dashboard";
-      return u.pathname + u.search + u.hash;
-    } catch (_) {
-      return "/dashboard";
-    }
+    var u;
+    try { u = new URL((m && m.getAttribute("data-live")) || "/dashboard", location.origin); } catch (e) { return "/dashboard"; }
+    var path = Object.prototype.hasOwnProperty.call(PAGES, u.pathname) ? PAGES[u.pathname] : "/dashboard";
+    var item = u.searchParams.get("item");
+    return path + (item ? "?item=" + encodeURIComponent(item) : "");
   }
 
   // -- “Live · updated just now” -----------------------------------------------------------------------------------
