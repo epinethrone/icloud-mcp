@@ -216,6 +216,11 @@ def _apply_structured_location(ev: icalendar.Event, location: str | None, geo: s
 
     existing = ev.get(_STRUCTURED_LOCATION)
     if existing is not None and not geo:
+        # The caller did not touch the place: whatever is there stays. Apple's own (a place picked in Calendar or Maps)
+        # carries no X-ADDRESS equal to LOCATION, which is "name\naddress", so the check below would rebuild it from the
+        # flattened text and drop the place handle and the coordinates.
+        if location is None:
+            return
         # Same place, already enriched by Apple. Leave its coordinates and place handle alone.
         if (_param(existing, "X-ADDRESS") or "") == flat:
             return
