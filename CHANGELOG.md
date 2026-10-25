@@ -5,6 +5,10 @@ Update the Mac helper before the server whenever its version changes.
 
 ## Unreleased
 
+- **A refresh sent twice keeps the app signed in.** A client that sends the same refresh token again within
+  `REFRESH_TOKEN_GRACE_SECONDS` (default 60, 0 = off) gets the pair it was just exchanged for instead of `invalid_grant`,
+  only while that pair is valid. Parallel refreshes and retries after a lost response no longer sign an app out. Kept in
+  memory only.
 - **The owner's dashboard.** `/dashboard` shows what is waiting for approval, what agents changed, the connected apps and
   whether each service answers, on a phone or a computer. It signs in with a passkey (WebAuthn, optional extra `[passkey]`,
   in the Docker image) or the owner password, which `OWNER_PASSWORD_LOGIN=false` turns off once a passkey exists. Sessions

@@ -582,6 +582,7 @@ Everything is an environment variable. [`.env.example`](https://github.com/epine
 | `DASHBOARD_SETTINGS` | edit | `view` = settings are shown on the dashboard but not changed there; `off` = `DATA_DIR/settings.json` is ignored |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com,chatgpt.com,chat.openai.com,localhost,127.0.0.1` | Where sign-in may return a client: Claude, ChatGPT, and local clients such as Codex. Every sign-in still needs the owner password |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | 3600, 30 days | Token lifetimes (refresh tokens rotate) |
+| `REFRESH_TOKEN_GRACE_SECONDS` | 60 | A refresh token sent again this soon after rotating returns the same new pair instead of signing the app out (memory only; 0 = off, at most 300) |
 | `LOG_LEVEL` | INFO | |
 
 </details>
