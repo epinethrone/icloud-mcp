@@ -21,7 +21,18 @@
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function home() { var m = $("main[data-live]"); return (m && m.getAttribute("data-live")) || "/dashboard"; }
+  function home() {
+    var m = $("main[data-live]");
+    var raw = (m && m.getAttribute("data-live")) || "/dashboard";
+    try {
+      var u = new URL(raw, location.origin);
+      if (u.origin !== location.origin) return "/dashboard";
+      if (u.pathname.indexOf("/dashboard") !== 0) return "/dashboard";
+      return u.pathname + u.search + u.hash;
+    } catch (_) {
+      return "/dashboard";
+    }
+  }
 
   // -- “Live · updated just now” -----------------------------------------------------------------------------------
   function ago(t) {
