@@ -241,19 +241,19 @@ class IMessageService:
 
     def _sms_only(self, t: dict[str, Any], people: list[dict[str, Any]]) -> str:
         """Why an SMS-only conversation is refused before it is queued (the Mac would refuse it on approval), naming the same
-        person's iMessage conversations that may be sent to, so the agent can send there instead of asking the owner."""
+        person's iMessage conversations that may be sent to, so the agent can send there instead of asking the owner.
+        Matched by contact uid only: no text from the address book is searched for or repeated."""
         uids = {p["contact_uid"] for p in people if p.get("contact_uid")}
-        name = next((p["name"] for p in people if p.get("name")), "")
         alts: list[str] = []
-        if uids and name and not t.get("group"):
+        if uids and not t.get("group"):
             try:
-                chats = self.list_chats(query=name, limit=50).get("chats", [])
+                chats = self.list_chats(limit=200).get("chats", [])
             except Exception:  # noqa: BLE001 - the hint is a courtesy; the refusal stands without it
                 chats = []
             for c in chats:
                 handles = [p.get("handle", "") for p in c.get("participants", [])]
                 if (c.get("group") or c.get("assistant_thread") or "iMessage" not in c.get("services", [])
-                        or not {p.get("contact_uid") for p in c.get("participants", [])} <= uids):
+                        or not c.get("participants") or not {p.get("contact_uid") for p in c["participants"]} <= uids):
                     continue
                 try:
                     self._permit({"chat_id": c["chat_id"], "handle": None, "participants": handles})
@@ -263,7 +263,7 @@ class IMessageService:
         msg = (f"Conversation '{t['chat_id']}' exists only as SMS, and only iMessage is sent from here. Nothing was sent or "
                "queued. ")
         if alts:
-            return msg + f"Send to {name}'s iMessage conversation instead: chat_id " + ", ".join(f"'{a}'" for a in alts) + "."
+            return msg + "Send to the same person's iMessage conversation instead: chat_id " + ", ".join(f"'{a}'" for a in alts) + "."
         return msg + ("Pick a conversation of this person whose services include iMessage (imessage_list_chats), or ask the "
                       "owner for their Apple ID address.")
 

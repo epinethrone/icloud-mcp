@@ -379,11 +379,10 @@ def op_send(a):
                                % placeholders(len(imessage_rows)), imessage_rows).fetchall())
         payload["guid"] = g["guids"][max(imessage_rows, key=lambda r: last.get(r) or 0)]
         # Messages only scripts the conversations it currently shows, not every one in chat.db. For a 1:1 conversation the
-        # script may fall back to its one participant over iMessage: the same person, never another service or a group.
-        if not g["group"]:
-            people = sorted(g["participants"]) or [g["chat_id"]]
-            if len(people) == 1:
-                payload["handle"] = handle or people[0]
+        # script may fall back to its one participant over iMessage: the same person, never another service or a group, and
+        # only when chat.db names exactly one participant (never the chat id as a stand-in).
+        if not g["group"] and len(g["participants"]) == 1:
+            payload["handle"] = handle or next(iter(g["participants"]))
     else:
         payload["handle"] = handle
     before = db.execute("SELECT coalesce(max(ROWID), 0) FROM message").fetchone()[0]

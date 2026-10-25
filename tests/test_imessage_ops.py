@@ -258,3 +258,15 @@ def test_a_group_never_falls_back_to_a_single_person(run):
     run.mode.write_text("unknown_guid")
     with pytest.raises(RuntimeError, match="does not know that conversation"):
         run("imessage_send", {"chat_id": "chat900", "text": "Hi all"})
+
+
+def test_a_one_to_one_chat_without_a_known_participant_never_falls_back(run, tmp_path):
+    # chat.db names nobody for this chat: its chat id is not taken as a handle to send to instead.
+    db = sqlite3.connect(tmp_path / "chat.db")
+    db.execute("INSERT INTO chat VALUES (6, 'any;-;ghost@example.org', 'ghost@example.org', '', 'iMessage', 45, 0)")
+    db.commit()
+    run("imessage_send", {"chat_id": "ghost@example.org", "text": "Hi"})
+    assert run.payload() == {"text": "Hi", "guid": "any;-;ghost@example.org"}
+    run.mode.write_text("unknown_guid")
+    with pytest.raises(RuntimeError, match="does not know that conversation"):
+        run("imessage_send", {"chat_id": "ghost@example.org", "text": "Hi"})
