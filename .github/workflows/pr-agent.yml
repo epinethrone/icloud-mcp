@@ -1,7 +1,7 @@
 name: PR-Agent review
 
 # AI review of every pull request from this repository (PR-Agent, https://github.com/The-PR-Agent/pr-agent), using a
-# Google AI Studio (Gemini) key stored as the GEMINI_API_KEY repository secret. Reviews run automatically; it also answers /review, /improve,
+# free NVIDIA NIM key (build.nvidia.com) stored as the NVIDIA_API_KEY repository secret. Reviews run automatically; it also answers /review, /improve,
 # /describe and /ask comments, but only from the owner and collaborators, so strangers cannot spend the key.
 on:
   pull_request:
@@ -38,14 +38,13 @@ jobs:
         uses: The-PR-Agent/pr-agent@981344be2755e303df501e18e3f60b848a188a80  # v0.48.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GOOGLE_AI_STUDIO__GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # Free-tier models only. Each has its own quota, so a rate-limited model falls through to the next.
-          # (2.5 Pro is closed to new users since September 2026; GitHub Models was retired in July 2026.)
-          CONFIG__MODEL: gemini/gemini-3.8-flash
-          CONFIG__FALLBACK_MODELS: >-
-            ["gemini/gemini-3.7-flash", "gemini/gemini-3.6-flash", "gemini/gemini-3.5-flash",
-             "gemini/gemini-3.5-flash-lite", "gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash"]
-          CONFIG__CUSTOM_MODEL_MAX_TOKENS: "1000000"
+          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_NIM_API_BASE: https://integrate.api.nvidia.com/v1
+          # Free NVIDIA NIM endpoint; the largest Nemotron that answers on it. No fallback list: the other large
+          # models on the free tier were unreachable or timed out when tested (October 2026).
+          CONFIG__MODEL: nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b
+          CONFIG__FALLBACK_MODELS: "[]"
+          CONFIG__CUSTOM_MODEL_MAX_TOKENS: "131072"
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
           GITHUB_ACTION_CONFIG__AUTO_IMPROVE: "false"   # code suggestions only on request: comment /improve
           GITHUB_ACTION_CONFIG__AUTO_DESCRIBE: "false"   # keep the human-written PR description
