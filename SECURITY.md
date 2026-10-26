@@ -62,7 +62,7 @@ An agent that obeys every instruction it reads can only get data out through the
 
 | Channel | Gate |
 |---|---|
-| Mail (`mail_send_message`, `mail_reply_to_message`, `mail_forward_message`, `mail_unsubscribe_from_list` by mail) | Queued for the owner on `/outbox` (`SEND_REQUIRES_APPROVAL`), `SEND_ALLOWLIST`, `MAX_RECIPIENTS`; re-checked at release |
+| Mail (`mail_send_message`, `mail_reply_to_message`, `mail_forward_message`, `mail_unsubscribe_from_list` by mail) | Queued for the owner on `/dashboard/approvals`, or `/outbox` with `DASHBOARD=false` (`SEND_REQUIRES_APPROVAL`), `SEND_ALLOWLIST`, `MAX_RECIPIENTS`; re-checked at release |
 | iMessage (`imessage_send_message`) | Off by default; queued for the owner; `IMESSAGE_SEND_ALLOWLIST` (empty = nobody), `IMESSAGE_NEVER_SEND` |
 | Calendar invitations, updates, cancellations and RSVPs | Off by default (`ALLOW_CALENDAR_INVITES`); when on, `INVITE_ALLOWLIST` and `MAX_ATTENDEES`. No approval page yet: an allowed guest receives the event's text |
 | One-click unsubscribe (`mail_unsubscribe_from_list`) | A POST with a fixed body to the URL in the sender's own header, public HTTPS only; it tells the sender the mail was processed and reveals the server's address, nothing else |
@@ -75,7 +75,7 @@ An agent that obeys every instruction it reads can only get data out through the
 
 By default the server:
 
-- Queues outgoing mail for approval in a browser (`/outbox`), blocks calendar invitations, moves deleted mail to Trash, and caps recipients per message.
+- Queues outgoing mail for approval in a browser (`/dashboard/approvals`, or `/outbox` without the dashboard), blocks calendar invitations, moves deleted mail to Trash, and caps recipients per message.
 - Stores OAuth tokens only as SHA-256 hashes (file mode 600), rotates refresh tokens, caps open client registrations, and locks the approval and outbox pages after 10 wrong passwords in 15 minutes. The bridge port locks out an address after 20 wrong tokens, never the correct token.
 - Masks passwords and tokens in every tool error and cuts URLs to their host; refuses IMAP search strings that contain control characters; refuses repeat rules finer than hourly and never expands one it finds in a stranger's invitation; binds to loopback unless told otherwise (the Docker image binds all interfaces inside the container).
 - Validates `Host` and `Origin` on the MCP endpoint, labels every piece of iCloud content as untrusted, and keeps account identifiers out of HTTP client logs.
@@ -107,7 +107,7 @@ By default the server:
   many items an agent queued in the last hour.
 
 - Reads iMessage only from the helper user's own Messages database, read-only, and never another macOS user's. Sending an iMessage
-  is off by default (`IMESSAGE_ALLOW_SEND`); when on, it waits for the owner on `/outbox` by default whatever the mail setting
+  is off by default (`IMESSAGE_ALLOW_SEND`); when on, it waits for the owner's approval by default whatever the mail setting
   (`IMESSAGE_SEND_REQUIRES_APPROVAL`), reaches only `IMESSAGE_SEND_ALLOWLIST` (empty means nobody), and never reaches a handle in
   `IMESSAGE_NEVER_SEND` or in the Mac's own `imessage-never-send.txt`. That last list exists for an owner who runs an assistant
   on its own Apple ID: a message to it would read as the owner's command. The lists are checked again when the owner approves, against the conversation's participants as they are then. Handles are

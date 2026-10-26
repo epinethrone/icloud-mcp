@@ -133,6 +133,7 @@ def test_the_tool_exists_only_when_sending_is_allowed_and_writable(s):
 
 
 async def test_the_outbox_page_shows_and_sends_a_queued_imessage(s, monkeypatch):
+    s = dataclasses.replace(s, dashboard=False)                     # the /outbox pages exist only without the dashboard
     mcp, provider = create_server(s)
     sent = []
     mcp._icloud_bridge.call = lambda op, a=None: read_one(CHATS, a) if op == "imessage_read" else (sent.append((op, a)) or {"status": "sent"})

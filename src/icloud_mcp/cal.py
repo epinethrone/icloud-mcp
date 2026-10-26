@@ -1691,7 +1691,7 @@ class CalendarService:
         try:
             q = self.outbox.add(raw, guests if op != "reply" else [a for a in [meta["organizer"]] if a], meta)
         except OutboxFull as e:
-            raise CalendarError(str(e).replace("/outbox page", "dashboard's Approvals page")) from e
+            raise CalendarError(str(e).replace(" (/outbox when the dashboard is off)", "")) from e   # calendar approvals exist only there
         who = meta["organizer"] if op == "reply" else ", ".join(guests) or "the attendees"
         return {"status": "queued_for_owner_approval", "written": False, "outbox_id": q.id,
                 "approve_at": f"{self.s.public_url}/dashboard/approvals", "would_email": who,

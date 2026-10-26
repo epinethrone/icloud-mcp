@@ -314,8 +314,8 @@ class IMessageService:
             except OutboxFull as e:
                 raise IMessageError(str(e)) from e
             return {"status": "queued_for_owner_approval", "sent": False, "outbox_id": q.id, "to": to,
-                    "approve_at": f"{public_url}/outbox", "notice": "Queued, NOT sent: it goes out only when the owner approves it on "
-                                                                     "the outbox page. Say so; do not send it again."}
+                    "approve_at": self.s.approvals_url, "notice": "Queued, NOT sent: it goes out only when the owner approves it on "
+                                                                   "the approval page (approve_at). Say so; do not send it again."}
         got = self.bridge.call("imessage_send", {k: v for k, v in {"chat_id": t["chat_id"], "handle": t["handle"], "text": text}.items() if v})
         return {**got, "to": to}
 

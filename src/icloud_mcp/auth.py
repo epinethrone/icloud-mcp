@@ -457,17 +457,52 @@ _HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
 }
 
+# With the dashboard on, the consent page is one card in the dashboard's look, from the dashboard's own stylesheet.
+_DASHBOARD_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
+<title>Authorize · iCloud connector</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/dashboard/dashboard.css?v={v}">
+</head><body><main class="auth"><section class="card">
+<div class="card-head"><div class="brand"><span class="brand-text"><span class="brand-name">iCloud connector</span><span class="brand-host">{host}</span></span></div></div>
+<div class="card-body">{body}</div></section></main></body></html>"""
+
+_DASHBOARD_BODY = """<div style="display:flex;flex-direction:column;gap:4px"><h1>Authorize access to your iCloud</h1>
+<p class="lede"><b>{client}</b> is requesting read and write access to your iCloud Mail and Calendar through this server.</p></div>
+<p class="hint">After you approve, it is sent back to <b>{redirect}</b> (client id {cid}). Approve only if you started this
+connection yourself a moment ago; anyone can ask for this page, and the password is what decides.</p>
+{error}<form method="post" action="/login" style="display:flex;flex-direction:column;gap:12px">
+<input type="hidden" name="p" value="{pid}">
+<div class="field"><label for="pw">Owner password</label>
+<input id="pw" type="password" name="password" autocomplete="current-password" autofocus required></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" name="action" value="approve" type="submit">Approve</button>
+<button class="btn" name="action" value="deny" type="submit" formnovalidate>Deny</button></div>
+</form>"""
+
+_DASHBOARD_HEADERS = {**_HEADERS, "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; "
+                                                                 "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")}
+
+
+def _dashboard_doc(host: str, body: str, status: int) -> Response:
+    from .dashboard import _ASSET_VERSION   # not at the top: dashboard imports approvals, which imports this module
+    return HTMLResponse(_DASHBOARD_PAGE.format(v=_ASSET_VERSION, host=html.escape(host), body=body), status_code=status,
+                        headers=_DASHBOARD_HEADERS)
+
 
 def _page(provider: OwnerOAuthProvider, pid: str, error: str = "", status: int = 200) -> Response:
+    styled = provider.s.dashboard and not provider.s.local_mode
     pend = provider.pending.get(pid)
     if not pend or pend["expires_at"] < time.time():
-        return HTMLResponse("<p>This authorization request has expired. Return to the app and try connecting again.</p>",
-                            status_code=400, headers=_HEADERS)
+        gone = "This authorization request has expired. Return to the app and try connecting again."
+        if styled:
+            return _dashboard_doc(provider.s.public_host, f'<h1>Request expired</h1><p class="lede">{gone}</p>', 400)
+        return HTMLResponse(f"<p>{gone}</p>", status_code=400, headers=_HEADERS)
     name = pend.get("client_name") or "An application"
     redirect = urlsplit(str(pend["params"].redirect_uri)).hostname or "?"
-    body = _PAGE.format(client=html.escape(name), pid=html.escape(pid), redirect=html.escape(redirect),
-                        cid=html.escape(OwnerOAuthProvider._cid(pend.get("client_id"))),
-                        error=f'<p class="err">{html.escape(error)}</p>' if error else "")
+    values = dict(client=html.escape(name), pid=html.escape(pid), redirect=html.escape(redirect),
+                  cid=html.escape(OwnerOAuthProvider._cid(pend.get("client_id"))))
+    if styled:
+        err = f'<p class="banner bad" role="alert">{html.escape(error)}</p>' if error else ""
+        return _dashboard_doc(provider.s.public_host, _DASHBOARD_BODY.format(**values, error=err), status)
+    body = _PAGE.format(**values, error=f'<p class="err">{html.escape(error)}</p>' if error else "")
     return HTMLResponse(body, status_code=status, headers=_HEADERS)
 
 
