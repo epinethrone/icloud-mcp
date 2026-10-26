@@ -88,7 +88,8 @@ class Outbox:
         self._items = {k: v for k, v in self._items.items() if v.expires_at > now}
 
     # -- operations ------------------------------------------------------------
-    def add(self, raw: bytes, recipients: list[str], followup: dict[str, Any] | None = None, key: str | None = None) -> QueuedMessage:
+    def add(self, raw: bytes, recipients: list[str], followup: dict[str, Any] | None = None, key: str | None = None,
+            approval_page: str = "the dashboard's Approvals page (/outbox when the dashboard is off)") -> QueuedMessage:
         """Queue a message, or return the entry already waiting for the same bytes or the same key. A key names what the message
         was built from (one saved draft), for when rebuilding it gives different bytes (a fresh Date or Message-ID)."""
         with self._lock:
@@ -99,9 +100,8 @@ class Outbox:
                 return same
             if len(self._items) >= self.max_items:
                 raise OutboxFull(f"{len(self._items)} messages are already waiting for owner approval (OUTBOX_MAX={self.max_items}). "
-                                 "Nothing was queued. Do not retry: tell the owner to review the queue on the dashboard's Approvals page "
-                                 "(/outbox when the dashboard is off), "
-                                 "where they can send or discard what is waiting.")
+                                 "Nothing was queued. Do not retry: tell the owner to review the queue on "
+                                 f"{approval_page}, where they can send or discard what is waiting.")
             now = time.time()
             q = QueuedMessage(secrets.token_urlsafe(12), now, now + self.ttl, raw, recipients, followup, sha, key)
             self._items[q.id] = q
