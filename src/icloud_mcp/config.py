@@ -176,7 +176,7 @@ class Settings:
     carddav_username: str
     read_only: bool
     allow_send: bool
-    require_approval: bool        # outgoing mail is queued until the owner approves it on /outbox
+    require_approval: bool        # outgoing mail is queued until the owner approves it (Settings.approvals_url)
     outbox_ttl: int               # seconds a queued message stays approvable
     outbox_max: int               # max messages waiting for approval
     allow_calendar_invites: bool  # calendar writes that make iCloud email other people (attendees); also true for 'approve'
@@ -367,6 +367,11 @@ class Settings:
     def bridge_enabled(self) -> bool:
         return (self.enable_reminders or self.enable_notes or self.enable_drive or self.enable_maps or self.enable_imessage
                 or self.enable_health or bool(self.shortcuts_allow))
+
+    @property
+    def approvals_url(self) -> str:
+        """Where the owner approves what agents queued: the dashboard's Approvals page, or /outbox when the dashboard is off."""
+        return f"{self.public_url}/dashboard/approvals" if self.dashboard else f"{self.public_url}/outbox"
 
     @property
     def public_host(self) -> str:

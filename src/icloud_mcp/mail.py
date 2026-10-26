@@ -1819,7 +1819,7 @@ class MailService:
         queued = email.message_from_bytes(q.raw, policy=policy.default) if again else msg
         return {"status": "queued_for_owner_approval", "sent": False, "outbox_id": q.id, "recipients": q.recipients,
                 "expires_in_seconds": max(0, int(q.expires_at - time.time())) if again else self.s.outbox_ttl,
-                "approve_at": f"{self.s.public_url}/outbox", **({"already_queued": True} if again else {}),
+                "approve_at": self.s.approvals_url, **({"already_queued": True} if again else {}),
                 "notice": OWNER_APPROVAL_NOTICE, **self._summary_of(queued)}
 
     def _deliver(self, c: IMAPClient, msg: EmailMessage, *, draft: bool, followup: dict[str, Any] | None = None,

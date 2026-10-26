@@ -3,11 +3,14 @@
 An MCP client (possibly steered by injected text in an email) can only *queue* a message. It is delivered only after the
 owner opens /outbox in a browser, types the owner password, reviews the exact message and presses Approve. No page here
 is reachable by, or returns anything useful to, a caller who lacks the password.
+
+With the dashboard on (the default) these pages are not served: every /outbox address answers with a redirect to
+/dashboard/approvals, which shows the same queue and follows the dashboard's sign-in rules (OWNER_PASSWORD_LOGIN=false
+then means passkey only for approvals too, instead of the owner password still releasing messages here).
 """
 from __future__ import annotations
 
 import asyncio
-import functools
 import hashlib
 import hmac
 import html
@@ -17,7 +20,7 @@ import time
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from .auth import OwnerOAuthProvider
 from .config import Settings
@@ -58,15 +61,14 @@ def _page(title: str, inner: str, status: int = 200) -> Response:
     return HTMLResponse(body, status_code=status, headers=_HEADERS)
 
 
-def _login_form(error: str = "", status: int = 200, dashboard: bool = False) -> Response:
+def _login_form(error: str = "", status: int = 200) -> Response:
     err = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return _page("Outgoing message approval", f"""<div class="card"><h1>Outgoing message approval</h1>
 <p>Enter the owner password to review messages your agents have queued. Nothing is sent until you approve it here.</p>{err}
 <form method="post" action="/outbox"><label for="pw">Owner password</label>
 <input id="pw" type="password" name="password" autocomplete="current-password" autofocus required>
 <button class="ok" type="submit">Review queue</button></form>
-""" + ('<p class="muted">The <a href="/dashboard/approvals">dashboard</a> shows the same queue and signs in with a passkey.</p>' if dashboard else "")
-                 + "</div>", status)
+</div>""", status)
 
 
 def _row(label: str, value: str) -> str:
@@ -86,7 +88,13 @@ def flagged(d: dict[str, Any]) -> str:
 
 def register_outbox_routes(mcp: Any, provider: OwnerOAuthProvider, settings: Settings, mail: MailService | None,
                            imessage: Any = None, imessage_outbox: Any = None, audit: Any = None) -> None:
-    login = functools.partial(_login_form, dashboard=settings.dashboard)
+    if settings.dashboard:
+        async def to_dashboard(_: Request) -> Response:
+            return RedirectResponse("/dashboard/approvals", status_code=303, headers=_HEADERS)
+        mcp.custom_route("/outbox", methods=["GET", "POST"])(to_dashboard)
+        mcp.custom_route("/outbox/act", methods=["POST"])(to_dashboard)
+        return
+    login = _login_form
     key = secrets.token_bytes(32)  # per-process: buttons issued before a restart simply stop working
     outboxes = {k: o for k, o in (("mail", mail.outbox if mail is not None else None), ("imessage", imessage_outbox)) if o is not None}
 

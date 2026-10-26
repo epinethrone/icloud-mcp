@@ -39,7 +39,8 @@ class FakeIMAP:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     for k, v in dict(ICLOUD_USERNAME="me@icloud.com", ICLOUD_APP_PASSWORD="aaaa-bbbb-cccc-dddd", MCP_PUBLIC_URL=BASE,
-                     MCP_OWNER_PASSWORD=PASSWORD, DATA_DIR=str(tmp_path), ALLOW_SEND="true", ICLOUD_DISPLAY_NAME="Me").items():
+                     MCP_OWNER_PASSWORD=PASSWORD, DATA_DIR=str(tmp_path), ALLOW_SEND="true", ICLOUD_DISPLAY_NAME="Me",
+                     DASHBOARD="false").items():                             # the /outbox pages exist only without the dashboard
         monkeypatch.setenv(k, v)
     s = Settings.from_env()
     fake, sent = FakeIMAP(), []

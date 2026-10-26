@@ -5,6 +5,11 @@ Update the Mac helper before the server whenever its version changes.
 
 ## Unreleased
 
+- **One interface for the owner.** With the dashboard on (the default) every `/outbox` address redirects to
+  `/dashboard/approvals`, and tools return that page as `approve_at`. Approving now always follows the dashboard's sign-in
+  rules: with `OWNER_PASSWORD_LOGIN=false` the owner password no longer releases messages on `/outbox`. The page that
+  approves a new app connection uses the dashboard's look, and the site root links the dashboard. With `DASHBOARD=false`
+  `/outbox` and the old pages stay as they were.
 - **Mac helper 0.8.1: iMessage to a conversation Messages no longer shows.** Messages scripts only the conversations it
   currently shows, while chat.db keeps all of them, so a send to an older 1:1 conversation (and
   `--selftest-imessage-send` to your own address) failed with 'Messages does not know that conversation or handle'. For

@@ -1,4 +1,4 @@
-"""Outbox: outgoing messages wait here until the owner releases them on /outbox.
+"""Outbox: outgoing messages wait here until the owner releases them on the dashboard (or /outbox without it).
 
 The MCP token cannot tell the owner from an injected instruction, so sending is split in two: an agent can only
 *queue* a message; releasing it needs the owner password, typed in a browser. Queued items are stored as the exact
@@ -99,7 +99,8 @@ class Outbox:
                 return same
             if len(self._items) >= self.max_items:
                 raise OutboxFull(f"{len(self._items)} messages are already waiting for owner approval (OUTBOX_MAX={self.max_items}). "
-                                 "Nothing was queued. Do not retry: tell the owner to review the queue on the /outbox page, "
+                                 "Nothing was queued. Do not retry: tell the owner to review the queue on the dashboard's Approvals page "
+                                 "(/outbox when the dashboard is off), "
                                  "where they can send or discard what is waiting.")
             now = time.time()
             q = QueuedMessage(secrets.token_urlsafe(12), now, now + self.ttl, raw, recipients, followup, sha, key)
