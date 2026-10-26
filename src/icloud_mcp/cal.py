@@ -1689,14 +1689,15 @@ class CalendarService:
                 "organizer": org if org and org not in own else None}
         raw = ics.encode() if isinstance(ics, str) else bytes(ics)
         try:
-            q = self.outbox.add(raw, guests if op != "reply" else [a for a in [meta["organizer"]] if a], meta)
+            q = self.outbox.add(raw, guests if op != "reply" else [a for a in [meta["organizer"]] if a], meta,
+                                approval_page="the dashboard's Approvals page")   # calendar approvals exist only there
         except OutboxFull as e:
-            raise CalendarError(str(e).replace(" (/outbox when the dashboard is off)", "")) from e   # calendar approvals exist only there
+            raise CalendarError(str(e)) from e
         who = meta["organizer"] if op == "reply" else ", ".join(guests) or "the attendees"
         return {"status": "queued_for_owner_approval", "written": False, "outbox_id": q.id,
-                "approve_at": f"{self.s.public_url}/dashboard/approvals", "would_email": who,
-                "notice": f"NOT WRITTEN YET. This change makes iCloud email {who}, so it waits for the owner's approval on the dashboard. "
-                          "Tell the owner it is waiting; do not repeat the call."}
+                "approve_at": self.s.approvals_url, "would_email": who,
+                "notice": f"NOT WRITTEN YET. This change makes iCloud email {who}, so it waits for the owner's approval on "
+                          "the approval page (approve_at). Tell the owner it is waiting; do not repeat the call."}
 
     def release(self, q: Any) -> str:
         """The owner approved a held change: write exactly what was stored, conditional on the version it was based on."""

@@ -119,3 +119,19 @@ def test_a_full_calendar_queue_names_only_the_dashboard(settings):
     with pytest.raises(CalendarError) as e:
         svc._queue("create", cal=cal, ics=b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n", uid="u1", ev=ev)
     assert "Approvals page" in str(e.value) and "/outbox" not in str(e.value) and "Do not retry" in str(e.value)
+
+
+def test_a_queued_calendar_change_points_to_the_dashboard(settings):
+    import icalendar
+
+    s = settings(ALLOW_CALENDAR_INVITES="approve")
+    mcp, _ = create_server(s)
+    svc = mcp._icloud_dashboard.sources["calendar"].cal
+    ev = icalendar.Event()
+    ev.add("uid", "u1")
+    ev.add("summary", "Autumn fair")
+    ev.add("attendee", "mailto:jana@example.org")
+    cal = type("Cal", (), {"url": "https://caldav.example.com/cal/", "name": "Club"})()
+    r = svc._queue("create", cal=cal, ics=b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n", uid="u1", ev=ev)
+    assert r["approve_at"] == f"{BASE}/dashboard/approvals" and r["notice"].count("dashboard") == 0
+    assert "approve_at" in r["notice"] and "/outbox" not in r["notice"]
