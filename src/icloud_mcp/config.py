@@ -373,6 +373,10 @@ class Settings:
         """Where the owner approves what agents queued: the dashboard's Approvals page, or /outbox when the dashboard is off."""
         return f"{self.public_url}/dashboard/approvals" if self.dashboard else f"{self.public_url}/outbox"
 
+    def approval_link(self, kind: str, item_id: str) -> str:
+        """The page that opens one queued item, so the owner lands on it from a chat or a notification; /outbox shows all."""
+        return f"{self.approvals_url}?item={kind}:{item_id}" if self.dashboard else self.approvals_url
+
     @property
     def public_host(self) -> str:
         return urlparse(self.public_url).netloc

@@ -615,7 +615,9 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         return (token, rec) if rec is not None else None
 
     def to_signin(request: Request) -> Response:
-        nxt = request.url.path if request.url.path.startswith("/dashboard") else "/dashboard"
+        # the query too, so a link to one queued item (?item=) still opens it after signing in
+        here = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        nxt = here if request.url.path.startswith("/dashboard") else "/dashboard"
         return RedirectResponse(f"/dashboard/signin?next={quote(nxt)}", status_code=303, headers=_HEADERS)
 
     async def checked_form(request: Request) -> tuple[str, dict[str, Any], Any] | Response:

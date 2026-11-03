@@ -3,6 +3,7 @@ import contextlib
 import json
 import re
 import time
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -546,3 +547,19 @@ async def test_the_count_of_unrecorded_failures_is_written_when_the_window_ends(
     d.flush_failure_lines(time.time() + 601)                                         # what the timer does at the window's end
     lines = [e for e in d.audit.entries(limit=1000) if e["action"] == "signin.passkey"]
     assert len(lines) == 6 and lines[0]["summary"] == "7 more like this in 10 minutes were not recorded"
+
+
+async def test_approve_at_opens_the_queued_item_also_after_signing_in(web):
+    app, mcp, *_ = web()
+    mail = mcp._icloud_dashboard.sources["mail"].mail
+    queue(mcp, subject="First")
+    r = mail.send(to=["bob@example.org"], subject="Second", body="Hi")
+    link = r["approve_at"].removeprefix(BASE)
+    assert link == f"/dashboard/approvals?item=mail:{r['outbox_id']}"
+    async with client(app) as c:
+        r = await c.get(link)
+        assert r.status_code == 303 and r.headers["location"] == "/dashboard/signin?next=" + quote(link)
+        r = await c.post("/dashboard/signin", data={"password": PASSWORD, "next": link}, headers=SAME)
+        assert r.status_code == 303 and r.headers["location"] == link
+        page = (await c.get(link)).text
+        assert re.search(r'data-key="mail:[^"]+" aria-current="true"><span class="q1">.*?<b>Second</b>', page)
