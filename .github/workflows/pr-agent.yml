@@ -40,10 +40,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NVIDIA_NIM_API_BASE: https://integrate.api.nvidia.com/v1
-          # Free NVIDIA NIM endpoint; the largest Nemotron that answers on it. No fallback list: the other large
-          # models on the free tier were unreachable or timed out when tested (October 2026).
-          CONFIG__MODEL: nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b
-          CONFIG__FALLBACK_MODELS: "[]"
+          # Free NVIDIA NIM endpoint, models proven by a direct /chat/completions call on 11 Nov 2026.
+          # nemotron-3-ultra (the previous pick) answered 503 "Service temporarily overloaded", then an empty
+          # response, which is what broke the reviewer. The models below really answer:
+          #  - super-vl-120b-a12b: best quality, but it thinks by default and spends the whole max_tokens budget on
+          #    reasoning, returning empty content. reasoning_effort=none turns that off and it answers in seconds.
+          #  - bolt-e4b: small, answers immediately with no special parameters; the safety net.
+          CONFIG__MODEL: nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b
+          CONFIG__FALLBACK_MODELS: '["nvidia_nim/nvidia/nemotron-3.5-bolt-e4b"]'
+          CONFIG__REASONING_EFFORT: "none"
+          CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS: '["nvidia/nemotron-3.5-super-vl-120b-a12b"]'
           CONFIG__CUSTOM_MODEL_MAX_TOKENS: "131072"
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
           GITHUB_ACTION_CONFIG__AUTO_IMPROVE: "false"   # code suggestions only on request: comment /improve
