@@ -42,8 +42,9 @@ jobs:
           cache: pip
       - name: Install
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q dovecot-imapd
+          # the runner's mirrors fail DNS now and then; retry instead of failing the required check
+          sudo apt-get -o Acquire::Retries=5 update -q
+          sudo apt-get -o Acquire::Retries=5 install -y -q dovecot-imapd
           pip install -e ".[test]"
       - name: Start the local stack
         run: sudo env "PATH=$PATH" bash dev/start_local_stack.sh
