@@ -176,13 +176,20 @@ MESSAGE_COLUMNS = ("m.ROWID, m.guid, m.text, m.attributedBody, m.date, m.date_de
 _NEWER_COLUMNS = ("associated_message_emoji",)
 
 
+_columns_cache = None
+
+
 def message_columns(db):
-    have = {r[1] for r in db.execute("PRAGMA table_info(message)")}
-    out = MESSAGE_COLUMNS
-    for col in _NEWER_COLUMNS:
-        if col not in have:
-            out = out.replace("m.%s" % col, "NULL AS %s" % col)
-    return out
+    """The column list for this chat.db, worked out once per run (the schema cannot change while the helper runs)."""
+    global _columns_cache
+    if _columns_cache is None:
+        have = {r[1] for r in db.execute("PRAGMA table_info(message)")}
+        out = MESSAGE_COLUMNS
+        for col in _NEWER_COLUMNS:
+            if col not in have:
+                out = out.replace("m.%s" % col, "NULL AS %s" % col)
+        _columns_cache = out
+    return _columns_cache
 
 
 def message_rows(db, where, params, order="m.ROWID DESC", limit=None):
