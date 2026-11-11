@@ -171,11 +171,30 @@ def placeholders(n):
 MESSAGE_COLUMNS = ("m.ROWID, m.guid, m.text, m.attributedBody, m.date, m.date_delivered, m.date_read, m.is_from_me, h.id, m.service, "
                    "m.date_edited, m.cache_has_attachments, m.reply_to_guid, m.thread_originator_guid, m.associated_message_type, "
                    "m.associated_message_guid, m.associated_message_emoji, m.item_type, m.is_spam, m.date_retracted, m.error")
+# Columns newer macOS versions added to chat.db. An older Messages database lacks them; select NULL in their place so the
+# row layout stays the same (the emoji column arrived in macOS 15, so macOS 14 has no custom-emoji reactions to lose).
+_NEWER_COLUMNS = ("associated_message_emoji",)
+
+
+_columns_cache = None
+
+
+def message_columns(db):
+    """The column list for this chat.db, worked out once per run (the schema cannot change while the helper runs)."""
+    global _columns_cache
+    if _columns_cache is None:
+        have = {r[1] for r in db.execute("PRAGMA table_info(message)")}
+        out = MESSAGE_COLUMNS
+        for col in _NEWER_COLUMNS:
+            if col not in have:
+                out = out.replace("m.%s" % col, "NULL AS %s" % col)
+        _columns_cache = out
+    return _columns_cache
 
 
 def message_rows(db, where, params, order="m.ROWID DESC", limit=None):
     sql = ("SELECT %s, j.chat_id FROM message m JOIN chat_message_join j ON j.message_id = m.ROWID "
-           "LEFT JOIN handle h ON h.ROWID = m.handle_id WHERE %s ORDER BY %s" % (MESSAGE_COLUMNS, where, order))
+           "LEFT JOIN handle h ON h.ROWID = m.handle_id WHERE %s ORDER BY %s" % (message_columns(db), where, order))
     if limit:
         sql += " LIMIT %d" % int(limit)
     return db.execute(sql, params)

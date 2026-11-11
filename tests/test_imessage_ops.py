@@ -153,6 +153,17 @@ def test_reading_decodes_text_folds_reactions_and_leaves_noise_out(run):
     assert r["messages"][0]["sender"] == "+31600000001" and r["complete"] is True
 
 
+def test_macos_14_chat_db_without_the_emoji_column_still_reads(run, tmp_path):
+    """macOS 14 has no message.associated_message_emoji (added in 15): listing, reading and searching must not fail on it."""
+    db = sqlite3.connect(tmp_path / "chat.db")
+    db.execute("ALTER TABLE message DROP COLUMN associated_message_emoji")
+    db.commit()
+    db.close()
+    assert run("imessage_chats", {})["chats"]
+    assert run("imessage_read", {"chat_id": "chat900"})["messages"]
+    assert run("imessage_search", {"query": "koffie"})["matches"]
+
+
 def test_long_messages_and_paging(run):
     r = run("imessage_read", {"chat_id": "chat900", "limit": 1})
     assert [m["text"] for m in r["messages"]] == ["See you at the station"] and r["complete"] is False
