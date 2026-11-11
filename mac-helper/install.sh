@@ -48,7 +48,7 @@ PYEOF
   unset TOKEN
 fi
 
-mkdir -p "$DEST/ops" "$DEST/bin" "$LOGDIR"
+mkdir -p "$DEST/ops" "$DEST/bin" "$LOGDIR" "$(dirname "$PLIST")"   # ~/Library/LaunchAgents does not exist on a fresh account
 cp "$HERE/icloud_mac_helper.py" "$DEST/"
 cp "$HERE/ops/"*.js "$HERE/ops/"*.py "$DEST/ops/"
 chmod 700 "$DEST/icloud_mac_helper.py"
@@ -131,7 +131,6 @@ if ! ICLOUD_MAC_HELPER_PYTHON="$PY" "$PY" "$DEST/icloud_mac_helper.py" --selftes
   [[ "$GO" =~ ^[Yy]$ ]] || { echo "Stopped. Fix the problem and run install.sh again."; exit 1; }
 fi
 
-mkdir -p "$(dirname "$PLIST")"   # ~/Library/LaunchAgents does not exist on a fresh account
 cat > "$PLIST" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
