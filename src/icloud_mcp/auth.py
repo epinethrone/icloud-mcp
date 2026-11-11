@@ -492,9 +492,6 @@ def _dashboard_headers(redirect_uri: str = "") -> dict[str, str]:
                                                     f"form-action {sources}; frame-ancestors 'none'; base-uri 'none'")}
 
 
-_DASHBOARD_HEADERS = _dashboard_headers()
-
-
 def _dashboard_doc(host: str, body: str, status: int, redirect_uri: str = "") -> Response:
     from .dashboard import _ASSET_VERSION   # not at the top: dashboard imports approvals, which imports this module
     return HTMLResponse(_DASHBOARD_PAGE.format(v=_ASSET_VERSION, host=html.escape(host), body=body), status_code=status,
