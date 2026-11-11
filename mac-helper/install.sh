@@ -48,7 +48,7 @@ PYEOF
   unset TOKEN
 fi
 
-mkdir -p "$DEST/ops" "$DEST/bin" "$LOGDIR"
+mkdir -p "$DEST/ops" "$DEST/bin" "$LOGDIR" "$(dirname "$PLIST")"   # ~/Library/LaunchAgents does not exist on a fresh account
 cp "$HERE/icloud_mac_helper.py" "$DEST/"
 cp "$HERE/ops/"*.js "$HERE/ops/"*.py "$DEST/ops/"
 chmod 700 "$DEST/icloud_mac_helper.py"
@@ -109,12 +109,14 @@ else
   echo "Building the Maps program (MapKit)..."
   TMP_DIR="$(mktemp -d "$DEST/bin/.build.XXXXXX")"
   if ! xcrun --sdk macosx swiftc -O "$MAPS_SRC" -o "$TMP_DIR/maps-cli" || ! codesign --force --sign - "$TMP_DIR/maps-cli"; then
-    rm -rf "$TMP_DIR"; echo "Building the Maps program failed (see above)." >&2; exit 1
+    # Maps is optional (ENABLE_MAPS) and nothing else depends on it: warn and carry on so Reminders, Notes and Drive still install.
+    rm -rf "$TMP_DIR"; echo "Warning: building the Maps program failed (see above); Maps tools will not work. Continuing without it." >&2
+  else
+    chmod 755 "$TMP_DIR/maps-cli"
+    mv -f "$TMP_DIR/maps-cli" "$MAPS_BIN"
+    rm -rf "$TMP_DIR"
+    echo "$MAPS_STAMP" > "$DEST/bin/.maps-build-stamp"
   fi
-  chmod 755 "$TMP_DIR/maps-cli"
-  mv -f "$TMP_DIR/maps-cli" "$MAPS_BIN"
-  rm -rf "$TMP_DIR"
-  echo "$MAPS_STAMP" > "$DEST/bin/.maps-build-stamp"
 fi
 
 echo

@@ -122,10 +122,13 @@ func isoLocal(_ d: Date) -> String {
 switch op {
 case "maps_travel_time":
     guard let o = args["origin"] as? String, let d = args["destination"] as? String else { fail("origin and destination are required") }
-    let modes: [String: (MKDirectionsTransportType, String)] = [
-        "walking": (.walking, "WALKING"), "cycling": (.cycling, "BICYCLE"), "driving": (.automobile, "AUTOMOBILE"), "transit": (.transit, "TRANSIT")]
-    let modeName = (args["mode"] as? String) ?? "cycling"
-    guard let (transport, routing) = modes[modeName] else { fail("mode must be walking, cycling, driving or transit") }
+    var modes: [String: (MKDirectionsTransportType, String)] = [
+        "walking": (.walking, "WALKING"), "driving": (.automobile, "AUTOMOBILE"), "transit": (.transit, "TRANSIT")]
+    // Cycling directions arrived in macOS 15. `.cycling` does not exist in older SDKs (the build fails), so use its raw value (1 << 3)
+    // and offer the mode only where the system has it.
+    if #available(macOS 15, *) { modes["cycling"] = (MKDirectionsTransportType(rawValue: 1 << 3), "BICYCLE") }
+    let modeName = (args["mode"] as? String) ?? (modes["cycling"] != nil ? "cycling" : "walking")
+    guard let (transport, routing) = modes[modeName] else { fail("mode must be walking, \(modes["cycling"] != nil ? "cycling, " : "")driving or transit (cycling needs macOS 15)") }
     let departAt = (args["depart_at"] as? String).map(parseTime)
     let arriveAt = (args["arrive_at"] as? String).map(parseTime)
     if departAt != nil && arriveAt != nil { fail("give depart_at or arrive_at, not both") }
