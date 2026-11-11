@@ -109,12 +109,14 @@ else
   echo "Building the Maps program (MapKit)..."
   TMP_DIR="$(mktemp -d "$DEST/bin/.build.XXXXXX")"
   if ! xcrun --sdk macosx swiftc -O "$MAPS_SRC" -o "$TMP_DIR/maps-cli" || ! codesign --force --sign - "$TMP_DIR/maps-cli"; then
-    rm -rf "$TMP_DIR"; echo "Building the Maps program failed (see above)." >&2; exit 1
+    # Maps is optional (ENABLE_MAPS) and nothing else depends on it: warn and carry on so Reminders, Notes and Drive still install.
+    rm -rf "$TMP_DIR"; echo "Warning: building the Maps program failed (see above); Maps tools will not work. Continuing without it." >&2
+  else
+    chmod 755 "$TMP_DIR/maps-cli"
+    mv -f "$TMP_DIR/maps-cli" "$MAPS_BIN"
+    rm -rf "$TMP_DIR"
+    echo "$MAPS_STAMP" > "$DEST/bin/.maps-build-stamp"
   fi
-  chmod 755 "$TMP_DIR/maps-cli"
-  mv -f "$TMP_DIR/maps-cli" "$MAPS_BIN"
-  rm -rf "$TMP_DIR"
-  echo "$MAPS_STAMP" > "$DEST/bin/.maps-build-stamp"
 fi
 
 echo
@@ -129,6 +131,7 @@ if ! ICLOUD_MAC_HELPER_PYTHON="$PY" "$PY" "$DEST/icloud_mac_helper.py" --selftes
   [[ "$GO" =~ ^[Yy]$ ]] || { echo "Stopped. Fix the problem and run install.sh again."; exit 1; }
 fi
 
+mkdir -p "$(dirname "$PLIST")"   # ~/Library/LaunchAgents does not exist on a fresh account
 cat > "$PLIST" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

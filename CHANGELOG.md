@@ -5,6 +5,9 @@ Update the Mac helper before the server whenever its version changes.
 
 ## Unreleased
 
+- **Mac helper installs on macOS 14.** `install.sh` no longer stops when the Maps program cannot be built (the macOS 14 SDK has no
+  `.cycling`; cycling is offered only on macOS 15 and later) and carries on with Reminders, Notes and Drive, and it creates
+  `~/Library/LaunchAgents` when it is missing on a fresh account.
 - **One interface for the owner.** With the dashboard on (the default) every `/outbox` address redirects to
   `/dashboard/approvals`, and tools return that page as `approve_at`. Approving now always follows the dashboard's sign-in
   rules: with `OWNER_PASSWORD_LOGIN=false` the owner password no longer releases messages on `/outbox`. The page that
