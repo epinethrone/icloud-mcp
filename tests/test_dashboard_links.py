@@ -2,6 +2,7 @@
 there, tools point there, and the connect page and the site root share the dashboard's look and link to it."""
 import contextlib
 import re
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -87,6 +88,23 @@ async def test_the_connect_page_wears_the_dashboard_look(settings):
         assert bad.status_code == 401 and 'class="banner bad"' in bad.text and "Incorrect password." in bad.text
         gone = await c.get("/login?p=nope")
         assert gone.status_code == 400 and "expired" in gone.text and 'class="auth"' in gone.text
+
+
+async def test_the_connect_page_lets_the_approval_redirect_reach_the_client(settings):
+    async with client(settings()) as c:
+        page = await _consent_page(c)
+        csp = page.headers["content-security-policy"]
+        origin = "{0.scheme}://{0.netloc}".format(urlsplit(REDIRECT))
+        # browsers apply form-action to the redirect that answers the POST, so the client's origin must be listed
+        assert re.search(r"form-action 'self' " + re.escape(origin) + r";", csp)
+
+
+def test_the_form_action_source_is_built_only_from_a_clean_redirect():
+    from icloud_mcp.auth import _dashboard_headers
+    assert "form-action 'self';" in _dashboard_headers("")["Content-Security-Policy"]
+    assert "form-action 'self' cursor:;" in _dashboard_headers("cursor://anysphere/cb")["Content-Security-Policy"]
+    bad = _dashboard_headers("https://x.example;script-src *")["Content-Security-Policy"]
+    assert "script-src" not in bad and "form-action 'self';" in bad
 
 
 async def test_without_the_dashboard_the_connect_page_keeps_its_own_style(settings):

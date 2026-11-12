@@ -5,6 +5,9 @@ Update the Mac helper before the server whenever its version changes.
 
 ## Unreleased
 
+- **Connecting an app works again with the dashboard on.** The styled connect page's `form-action` now lists the
+  requesting client's callback origin, so the browser follows the approval redirect instead of silently blocking it
+  (clients showed "Request expired"). Only the pending request's own redirect origin is added; an invalid one adds nothing.
 - **Mac helper: iMessage works on macOS 14.** The reader no longer fails with `no such column: m.associated_message_emoji`: it checks
   which columns `chat.db` has and reads the emoji column as empty where macOS 14 lacks it (custom-emoji reactions arrived in macOS 15).
 - **Mac helper installs on macOS 14.** `install.sh` no longer stops when the Maps program cannot be built (the macOS 14 SDK has no

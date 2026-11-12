@@ -15,6 +15,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import tempfile
 import threading
@@ -477,14 +478,24 @@ connection yourself a moment ago; anyone can ask for this page, and the password
 <button class="btn" name="action" value="deny" type="submit" formnovalidate>Deny</button></div>
 </form>"""
 
-_DASHBOARD_HEADERS = {**_HEADERS, "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; "
-                                                                 "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")}
+def _dashboard_headers(redirect_uri: str = "") -> dict[str, str]:
+    """Headers for the styled connect page. Browsers apply ``form-action`` to the redirect that answers the
+    form POST, so the approving redirect to the client's callback is blocked unless that origin is listed."""
+    sources = "'self'"
+    parts = urlsplit(redirect_uri)
+    if parts.scheme in ("http", "https"):
+        if parts.netloc and re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", parts.netloc):
+            sources += f" {parts.scheme}://{parts.netloc}"
+    elif parts.scheme and re.fullmatch(r"[a-z][a-z0-9+.\-]*", parts.scheme):
+        sources += f" {parts.scheme}:"   # native-app callback such as cursor://
+    return {**_HEADERS, "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; "
+                                                    f"form-action {sources}; frame-ancestors 'none'; base-uri 'none'")}
 
 
-def _dashboard_doc(host: str, body: str, status: int) -> Response:
+def _dashboard_doc(host: str, body: str, status: int, redirect_uri: str = "") -> Response:
     from .dashboard import _ASSET_VERSION   # not at the top: dashboard imports approvals, which imports this module
     return HTMLResponse(_DASHBOARD_PAGE.format(v=_ASSET_VERSION, host=html.escape(host), body=body), status_code=status,
-                        headers=_DASHBOARD_HEADERS)
+                        headers=_dashboard_headers(redirect_uri))
 
 
 def _page(provider: OwnerOAuthProvider, pid: str, error: str = "", status: int = 200) -> Response:
@@ -501,7 +512,8 @@ def _page(provider: OwnerOAuthProvider, pid: str, error: str = "", status: int =
                   cid=html.escape(OwnerOAuthProvider._cid(pend.get("client_id"))))
     if styled:
         err = f'<p class="banner bad" role="alert">{html.escape(error)}</p>' if error else ""
-        return _dashboard_doc(provider.s.public_host, _DASHBOARD_BODY.format(**values, error=err), status)
+        return _dashboard_doc(provider.s.public_host, _DASHBOARD_BODY.format(**values, error=err), status,
+                              str(pend["params"].redirect_uri))
     body = _PAGE.format(**values, error=f'<p class="err">{html.escape(error)}</p>' if error else "")
     return HTMLResponse(body, status_code=status, headers=_HEADERS)
 
