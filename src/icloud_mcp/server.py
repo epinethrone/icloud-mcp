@@ -185,7 +185,9 @@ def _audit_call(name: str, kwargs: dict[str, Any], ok: bool, out: Any = None, er
     area, _, rest = name.partition("_")
     verb, _, noun = rest.partition("_")
     label = next((str(kwargs[k]) for k in _AUDIT_LABELS if kwargs.get(k)), "")
-    details: dict[str, Any] = {k: kwargs[k] for k in _AUDIT_KEEP if isinstance(kwargs.get(k), (str, int)) and k != "to"}
+    # a tool parameter called `action` (mail_run_bulk_action) is kept as tool_action: `action` is the line's own
+    details: dict[str, Any] = {("tool_action" if k == "action" else k): kwargs[k] for k in _AUDIT_KEEP
+                               if isinstance(kwargs.get(k), (str, int)) and k != "to"}
     for k in _AUDIT_ADDRS:
         if kwargs.get(k):
             details[k] = _addresses(kwargs[k])
