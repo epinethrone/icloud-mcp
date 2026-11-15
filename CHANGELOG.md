@@ -3,7 +3,7 @@
 What changed in each release, newest first. The GitHub release notes carry the full detail and the upgrade steps.
 Update the Mac helper before the server whenever its version changes.
 
-## Unreleased
+## 0.13.0
 
 - **Connecting an app works again with the dashboard on.** The styled connect page's `form-action` now lists the
   requesting client's callback origin, so the browser follows the approval redirect instead of silently blocking it
