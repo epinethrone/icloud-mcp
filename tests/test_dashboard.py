@@ -376,7 +376,8 @@ async def test_the_app_files_are_served_to_anyone_and_the_pages_link_them(web):
         r = await c.get("/dashboard")
         csp = r.headers["content-security-policy"]
         assert "manifest-src 'self'" in csp and "worker-src 'self'" in csp and "style-src 'self'" in csp
-        assert '<link rel="manifest" href="/dashboard/manifest.webmanifest">' in r.text and "<style>" not in r.text
+        assert re.search(r'<link rel="manifest" href="/dashboard/manifest.webmanifest\?v=[0-9a-f]{10}" crossorigin="use-credentials">', r.text)
+        assert "<style>" not in r.text
         assert re.search(r'href="/dashboard/dashboard.css\?v=[0-9a-f]{10}"', r.text) and 'src="/dashboard/dashboard.js?v=' in r.text
 
 
@@ -391,6 +392,26 @@ async def test_the_home_screen_icon_rides_in_the_page_so_a_sign_in_proxy_cannot_
         assert embedded and base64.b64decode(embedded.group(1)).startswith(b"\x89PNG")
         assert "/apple-touch-icon.png" not in r.text                            # nothing left for a proxy to intercept
         assert "img-src 'self' data:" in r.headers["content-security-policy"]   # and the page is allowed to show it
+
+
+async def test_the_favicon_and_the_app_icons_ride_along_too(web):
+    """Browsers fetch the favicon and the manifest's icons without the cookie: behind a proxy they would be its login page."""
+    app, *_ = web()
+    async with client(app) as c:
+        manifest = await c.get("/dashboard/manifest.webmanifest")
+        icons = {i["sizes"]: i["src"] for i in manifest.json()["icons"]}
+        for size in ("192x192", "512x512"):
+            head, _, data = icons[size].partition(",")
+            assert head == "data:image/png;base64" and base64.b64decode(data).startswith(b"\x89PNG"), size
+        assert manifest.headers["cache-control"] == "public, max-age=86400"     # the pages link it by its version
+        assert (await c.get("/icon-192.png")).status_code == (await c.get("/favicon.ico")).status_code == 200
+        await signed_in(c)
+        r = await c.get("/dashboard")
+        icon = re.search(r'<link rel="icon" href="data:image/x-icon;base64,([A-Za-z0-9+/=]+)">', r.text)
+        assert icon and base64.b64decode(icon.group(1))[:4] == b"\x00\x00\x01\x00"     # an .ico file
+        assert 'href="/favicon.ico"' not in r.text and "/icon-192.png" not in r.text
+        csp = r.headers["content-security-policy"]
+        assert "img-src 'self' data:" in csp and "manifest-src 'self'" in csp   # data: images allowed; the manifest is our own file
 
 
 async def test_the_live_state_changes_when_a_request_arrives_and_does_not_keep_the_session_alive(web):

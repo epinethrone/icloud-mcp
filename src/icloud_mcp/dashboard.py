@@ -344,14 +344,33 @@ _ASSETS = {     # served under /dashboard/ to anyone (the manifest and the worke
     "dashboard.css": "text/css", "dashboard.js": "text/javascript", "install-hint.js": "text/javascript",
     "manifest.webmanifest": "application/manifest+json", "sw.js": "text/javascript",
 }
-_ASSET_VERSION = hashlib.sha256(b"".join((_STATIC / name).read_bytes() for name in sorted(_ASSETS))).hexdigest()[:10]
 
-# The home-screen icon travels in the page, not as a second request. iOS fetches /apple-touch-icon.png without the
-# session cookie, so behind a sign-in proxy (Cloudflare Access, an SSO gateway, a Tailscale serve) it is answered with
-# the proxy's login page and the iPhone falls back to a grey letter. Costs ~42 KB a page; the route stays for everyone
-# else. Replacing icon-180.png in static/ is still all it takes to use your own artwork.
-_APPLE_ICON = (f"data:image/png;base64,{base64.b64encode((_STATIC / 'icon-180.png').read_bytes()).decode()}"
-               if (_STATIC / "icon-180.png").is_file() else "/apple-touch-icon.png")
+# The icons travel in the page and in the manifest, not as requests of their own. iOS fetches /apple-touch-icon.png and
+# browsers fetch the favicon and the manifest's icons without the session cookie, so behind a sign-in proxy (Cloudflare
+# Access, an SSO gateway, a Tailscale serve) they are answered with the proxy's login page and the phone falls back to a
+# grey letter. Costs ~55 KB a page (the manifest is cached by its version); the routes stay for everyone else. Replacing
+# the files in static/ is still all it takes to use your own artwork.
+def _data_uri(name: str, ctype: str, fallback: str) -> str:
+    f = _STATIC / name
+    return f"data:{ctype};base64,{base64.b64encode(f.read_bytes()).decode()}" if f.is_file() else fallback
+
+
+_APPLE_ICON = _data_uri("icon-180.png", "image/png", "/apple-touch-icon.png")
+_FAVICON = _data_uri("favicon.ico", "image/x-icon", "/favicon.ico")
+
+
+def _manifest() -> bytes:
+    m = json.loads((_STATIC / "manifest.webmanifest").read_text())
+    for icon in m.get("icons", []):
+        src = icon.get("src", "")
+        if src.startswith("/") and "/" not in src[1:]:          # one of ours, e.g. /icon-192.png
+            icon["src"] = _data_uri(src[1:], icon.get("type") or "image/png", src)
+    return json.dumps(m, indent=2).encode()
+
+
+_MANIFEST = _manifest()
+_ASSET_VERSION = hashlib.sha256(b"".join(_MANIFEST if name == "manifest.webmanifest" else (_STATIC / name).read_bytes()
+                                         for name in sorted(_ASSETS))).hexdigest()[:10]
 
 _SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{}</svg>'
 _ICONS = {
@@ -534,8 +553,10 @@ class Dashboard:
         doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
                f'<meta name="color-scheme" content="light dark"><meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)">'
                f'<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)"><title>{_esc(title)} · iCloud connector</title>'
-               f'<link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" href="{_APPLE_ICON}">'
-               f'<link rel="manifest" href="/dashboard/manifest.webmanifest"><link rel="stylesheet" href="/dashboard/dashboard.css?v={v}">'
+               f'<link rel="icon" href="{_FAVICON}"><link rel="apple-touch-icon" href="{_APPLE_ICON}">'
+               # use-credentials: the manifest request carries the proxy's cookie too, so a sign-in proxy lets it through
+               f'<link rel="manifest" href="/dashboard/manifest.webmanifest?v={v}" crossorigin="use-credentials">'
+               f'<link rel="stylesheet" href="/dashboard/dashboard.css?v={v}">'
                f'</head><body>{body}{scripts}</body></html>')
         return HTMLResponse(doc, status_code=status, headers=_HEADERS)
 
@@ -677,9 +698,9 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         return Response(js, media_type="text/javascript", headers={**_HEADERS, "Cache-Control": "public, max-age=3600"})
 
     def _asset_route(name: str, ctype: str) -> None:
-        body = (_STATIC / name).read_bytes()
+        body = _MANIFEST if name == "manifest.webmanifest" else (_STATIC / name).read_bytes()
         # Pages link the others with ?v=<content hash>, so they can be kept a day; the worker is always checked for changes.
-        headers = {**_HEADERS, "Cache-Control": "no-cache" if name in ("sw.js", "manifest.webmanifest") else "public, max-age=86400"}
+        headers = {**_HEADERS, "Cache-Control": "no-cache" if name == "sw.js" else "public, max-age=86400"}
         if name == "sw.js":
             headers["Service-Worker-Allowed"] = "/dashboard"        # its scope includes /dashboard itself, not only /dashboard/…
 
