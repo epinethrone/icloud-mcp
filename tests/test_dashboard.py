@@ -414,6 +414,27 @@ async def test_the_favicon_and_the_app_icons_ride_along_too(web):
         assert "img-src 'self' data:" in csp and "manifest-src 'self'" in csp   # data: images allowed; the manifest is our own file
 
 
+async def test_a_live_refresh_leaves_the_embedded_icons_out(web):
+    """dashboard.js swaps in only <main>, so the background refresh does not download the icons again each time."""
+    app, mcp, *_ = web()
+    queue(mcp)
+    async with client(app) as c:
+        await signed_in(c)
+        for path in ("/dashboard", "/dashboard/approvals"):
+            full, live = await c.get(path), await c.get(path, headers={"x-live": "1"})
+            assert "data:image/" in full.text and "data:image/" not in live.text, path
+            assert 'data-live="' in live.text and 'rel="manifest"' in live.text
+
+
+def test_without_the_icon_files_the_page_and_the_manifest_point_to_the_routes(tmp_path, monkeypatch):
+    import icloud_mcp.dashboard as dash
+    (tmp_path / "manifest.webmanifest").write_text(json.dumps({"icons": [{"src": "/icon-192.png", "type": "image/png"},
+                                                                         {"src": "https://cdn.example.org/x.png"}]}))
+    monkeypatch.setattr(dash, "_STATIC", tmp_path)
+    assert dash._data_uri("icon-180.png", "image/png", "/apple-touch-icon.png") == "/apple-touch-icon.png"
+    assert [i["src"] for i in json.loads(dash._manifest())["icons"]] == ["/icon-192.png", "https://cdn.example.org/x.png"]
+
+
 async def test_the_live_state_changes_when_a_request_arrives_and_does_not_keep_the_session_alive(web):
     app, mcp, _, _ = web()
     d = mcp._icloud_dashboard
