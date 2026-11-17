@@ -20,6 +20,7 @@ the Overview's tip on how to install it. The worker caches nothing: every page c
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import html
@@ -58,7 +59,7 @@ _HEADERS = {
     "Referrer-Policy": "same-origin",       # browsers then send our own Origin on form posts (no-referrer makes it "null")
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self'; "
+    "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "
                                 "manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
 _LIVE = "x-live"               # header of the page's own background refresh; it does not count as using the dashboard
@@ -339,11 +340,37 @@ class IMessageApprovals(ApprovalSource):
 #   row actions (remove a passkey, sign out an app) sit at the right end of their row, all the same size
 # ---------------------------------------------------------------------------------------------------------------------
 _CSS = (_STATIC / "dashboard.css").read_text()
-_ASSETS = {     # served under /dashboard/ to anyone (the manifest and the worker are fetched without the session cookie)
+_ASSETS = {     # served under /dashboard/ to anyone (the worker, and the manifest where a browser ignores crossorigin, come without the cookie)
     "dashboard.css": "text/css", "dashboard.js": "text/javascript", "install-hint.js": "text/javascript",
     "manifest.webmanifest": "application/manifest+json", "sw.js": "text/javascript",
 }
-_ASSET_VERSION = hashlib.sha256(b"".join((_STATIC / name).read_bytes() for name in sorted(_ASSETS))).hexdigest()[:10]
+
+# The icons travel in the page and in the manifest, not as requests of their own. iOS fetches /apple-touch-icon.png and
+# browsers fetch the favicon and the manifest's icons without the session cookie, so behind a sign-in proxy (Cloudflare
+# Access, an SSO gateway, a Tailscale serve) they are answered with the proxy's login page and the phone falls back to a
+# grey letter. Costs ~55 KB a page (the manifest is cached by its version); the routes stay for everyone else. Replacing
+# the files in static/ is still all it takes to use your own artwork.
+def _data_uri(name: str, ctype: str, fallback: str) -> str:
+    f = _STATIC / name
+    return f"data:{ctype};base64,{base64.b64encode(f.read_bytes()).decode()}" if f.is_file() else fallback
+
+
+_APPLE_ICON = _data_uri("icon-180.png", "image/png", "/apple-touch-icon.png")
+_FAVICON = _data_uri("favicon.ico", "image/x-icon", "/favicon.ico")
+
+
+def _manifest() -> bytes:
+    m = json.loads((_STATIC / "manifest.webmanifest").read_text())
+    for icon in m.get("icons", []):
+        src = icon.get("src", "")
+        if src.startswith("/") and "/" not in src[1:]:          # one of ours, e.g. /icon-192.png
+            icon["src"] = _data_uri(src[1:], icon.get("type") or "image/png", src)
+    return json.dumps(m, indent=2).encode()
+
+
+_MANIFEST = _manifest()
+_ASSET_VERSION = hashlib.sha256(b"".join(_MANIFEST if name == "manifest.webmanifest" else (_STATIC / name).read_bytes()
+                                         for name in sorted(_ASSETS))).hexdigest()[:10]
 
 _SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{}</svg>'
 _ICONS = {
@@ -483,11 +510,13 @@ class Dashboard:
                 f'<form method="post" action="/dashboard/logout">{self.csrf_input(rec)}{button("Sign out", "text")}</form></header>')
 
     def page(self, title: str, active: str, inner: str, rec: dict[str, Any], status: int = 200, flash: str = "",
-             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "", live: str = "") -> Response:
+             bad: bool = False, lede: str = "", wide: bool = False, actions: str = "", lede_html: str = "", live: str = "",
+             refresh: bool = False) -> Response:
         """A signed-in page: top bar or the frame, the page head (title, one line of context, the page's one primary
         action), a banner for the last action, then the cards. lede_html is an already escaped lede. live is the page's own
         address: dashboard.js loads it again and swaps in the content when what is waiting changes (also after a form post,
-        whose address must not be requested again). Other pages only get their counts updated."""
+        whose address must not be requested again). Other pages only get their counts updated. refresh=True answers that
+        background load: it reads only <main>, so the page leaves out the ~55 KB of embedded icons."""
         n, v = self.fingerprint()
         items = [("overview", "Overview", "/dashboard"), ("approvals", "Approvals", "/dashboard/approvals"),
                  ("activity", "Activity", "/dashboard/activity"), *self.extra_nav, ("security", "Security", "/dashboard/security")]
@@ -508,7 +537,7 @@ class Dashboard:
         return self._doc(f"({n}) {title}" if n else title,
                          f'<div class="wrap" data-v="{v}">{sidebar}<div class="frame">{topbar}{self.deskbar(rec)}<div class="sheet">{main}{head}'
                          f'<div class="stack">{banner}{inner}</div></main></div></div></div><nav class="tabs" aria-label="Sections">{tabs}</nav>',
-                         status, app=True)
+                         status, app=True, icons=not refresh)
 
     def auth_page(self, title: str, body_html: str, foot_html: str = "", status: int = 200) -> Response:
         """Sign-in and confirm: one card in the middle of the screen, nothing outside it."""
@@ -517,7 +546,7 @@ class Dashboard:
                  + "</section></main>")
         return self._doc(title, inner, status)
 
-    def _doc(self, title: str, body: str, status: int, app: bool = False) -> Response:
+    def _doc(self, title: str, body: str, status: int, app: bool = False, icons: bool = True) -> Response:
         """app=True (signed-in pages) adds the script for live updates, actions without reloading and the install tip."""
         v = _ASSET_VERSION
         scripts = '<script src="/dashboard/passkey.js" defer></script>'
@@ -526,8 +555,10 @@ class Dashboard:
         doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
                f'<meta name="color-scheme" content="light dark"><meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)">'
                f'<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)"><title>{_esc(title)} · iCloud connector</title>'
-               f'<link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png">'
-               f'<link rel="manifest" href="/dashboard/manifest.webmanifest"><link rel="stylesheet" href="/dashboard/dashboard.css?v={v}">'
+               + (f'<link rel="icon" href="{_FAVICON}"><link rel="apple-touch-icon" href="{_APPLE_ICON}">' if icons else "") +
+               # use-credentials: the manifest request carries the proxy's cookie too, so a sign-in proxy lets it through
+               f'<link rel="manifest" href="/dashboard/manifest.webmanifest?v={v}" crossorigin="use-credentials">'
+               f'<link rel="stylesheet" href="/dashboard/dashboard.css?v={v}">'
                f'</head><body>{body}{scripts}</body></html>')
         return HTMLResponse(doc, status_code=status, headers=_HEADERS)
 
@@ -669,9 +700,9 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         return Response(js, media_type="text/javascript", headers={**_HEADERS, "Cache-Control": "public, max-age=3600"})
 
     def _asset_route(name: str, ctype: str) -> None:
-        body = (_STATIC / name).read_bytes()
+        body = _MANIFEST if name == "manifest.webmanifest" else (_STATIC / name).read_bytes()
         # Pages link the others with ?v=<content hash>, so they can be kept a day; the worker is always checked for changes.
-        headers = {**_HEADERS, "Cache-Control": "no-cache" if name in ("sw.js", "manifest.webmanifest") else "public, max-age=86400"}
+        headers = {**_HEADERS, "Cache-Control": "no-cache" if name == "sw.js" else "public, max-age=86400"}
         if name == "sw.js":
             headers["Service-Worker-Allowed"] = "/dashboard"        # its scope includes /dashboard itself, not only /dashboard/…
 
@@ -915,7 +946,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
                 f'<div class="overview-grid"><div class="overview-col">{"".join(left)}</div>'
                 f'<div class="overview-col">{"".join(right)}</div></div>')
         note = "" if request.headers.get(_LIVE) == "1" else flashes.pop(rec["csrf"], "")     # a background refresh takes no result
-        return d.page("Overview", "overview", grid, rec, flash=note or _flash(request), wide=True, lede_html=lede, live="/dashboard")
+        return d.page("Overview", "overview", grid, rec, flash=note or _flash(request), wide=True, lede_html=lede, live="/dashboard",
+                      refresh=request.headers.get(_LIVE) == "1")
 
     @mcp.custom_route("/dashboard/check", methods=["POST"])
     async def check(request: Request) -> Response:
@@ -948,7 +980,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         return RedirectResponse("/dashboard?m=" + ("paused" if want else "resumed"), status_code=303, headers=_HEADERS)
 
     # -- approvals -----------------------------------------------------------------------------------------------------
-    def approvals_page(rec: dict[str, Any], flash: str = "", bad: bool = False, status: int = 200, selected: str = "") -> Response:
+    def approvals_page(rec: dict[str, Any], flash: str = "", bad: bool = False, status: int = 200, selected: str = "",
+                       refresh: bool = False) -> Response:
         """The waiting requests as a list, and the chosen one (or the one dropped soonest) exactly as it will be sent."""
         waiting = []
         for src in d.sources.values():
@@ -1004,7 +1037,7 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         # the request shown, also when none was picked: a refresh never puts another one in its place unasked
         shown = selected or (f"{src.kind}:{q.id}" if total and q is not None else "")
         live = "/dashboard/approvals" + (f"?item={quote(shown)}" if shown else "")
-        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True, live=live)
+        return d.page("Approvals", "approvals", "".join(cards), rec, status, flash, bad, lede, wide=True, live=live, refresh=refresh)
 
     def after_action(rec: dict[str, Any], note: str, back: str) -> Response:
         while len(flashes) > 200:
@@ -1018,7 +1051,8 @@ def register_dashboard(mcp: Any, provider: Any, s: Settings, audit: AuditLog, so
         if got is None:
             return to_signin(request)
         note = "" if request.headers.get(_LIVE) == "1" else flashes.pop(got[1]["csrf"], "")   # a background refresh takes no result
-        return await asyncio.to_thread(approvals_page, got[1], note, selected=request.query_params.get("item", ""))
+        return await asyncio.to_thread(approvals_page, got[1], note, selected=request.query_params.get("item", ""),
+                                       refresh=request.headers.get(_LIVE) == "1")
 
     @mcp.custom_route("/dashboard/approvals/act", methods=["POST"])
     async def approvals_act(request: Request) -> Response:
