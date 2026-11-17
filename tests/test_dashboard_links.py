@@ -41,6 +41,11 @@ def test_tools_point_to_the_dashboard_or_to_outbox_without_it(settings):
     assert settings(DASHBOARD="false").approvals_url == f"{BASE}/outbox"
 
 
+def test_an_approval_link_opens_the_one_item_and_outbox_shows_all(settings):
+    assert settings().approval_link("mail", "abc") == f"{BASE}/dashboard/approvals?item=mail:abc"
+    assert settings(DASHBOARD="false").approval_link("mail", "abc") == f"{BASE}/outbox"
+
+
 def test_a_queued_imessage_points_to_the_dashboard(settings, tmp_path):
     s = settings(ENABLE_IMESSAGE="true", IMESSAGE_ALLOW_SEND="true", IMESSAGE_SEND_ALLOWLIST="anna@example.org", BRIDGE_TOKEN="t" * 40)
 
@@ -50,7 +55,7 @@ def test_a_queued_imessage_points_to_the_dashboard(settings, tmp_path):
                     "messages": [], "complete": True}
     box = Outbox(str(tmp_path), 3600, 20, filename="imessage-outbox.json")
     r = IMessageService(s, Bridge(), None).send("Hi", chat_id="anna@example.org", outbox=box, public_url=s.public_url)
-    assert r["status"] == "queued_for_owner_approval" and r["approve_at"] == f"{BASE}/dashboard/approvals"
+    assert r["status"] == "queued_for_owner_approval" and r["approve_at"] == f"{BASE}/dashboard/approvals?item=imessage:{r['outbox_id']}"
 
 
 @pytest.mark.parametrize("method, path", [("GET", "/outbox"), ("POST", "/outbox"), ("POST", "/outbox/act")])
@@ -151,5 +156,5 @@ def test_a_queued_calendar_change_points_to_the_dashboard(settings):
     ev.add("attendee", "mailto:jana@example.org")
     cal = type("Cal", (), {"url": "https://caldav.example.com/cal/", "name": "Club"})()
     r = svc._queue("create", cal=cal, ics=b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n", uid="u1", ev=ev)
-    assert r["approve_at"] == f"{BASE}/dashboard/approvals" and r["notice"].count("dashboard") == 0
+    assert r["approve_at"] == f"{BASE}/dashboard/approvals?item=calendar:{r['outbox_id']}" and r["notice"].count("dashboard") == 0
     assert "approve_at" in r["notice"] and "/outbox" not in r["notice"]

@@ -1695,7 +1695,7 @@ class CalendarService:
             raise CalendarError(str(e)) from e
         who = meta["organizer"] if op == "reply" else ", ".join(guests) or "the attendees"
         return {"status": "queued_for_owner_approval", "written": False, "outbox_id": q.id,
-                "approve_at": self.s.approvals_url, "would_email": who,
+                "approve_at": self.s.approval_link("calendar", q.id), "would_email": who,
                 "notice": f"NOT WRITTEN YET. This change makes iCloud email {who}, so it waits for the owner's approval on "
                           "the approval page (approve_at). Tell the owner it is waiting; do not repeat the call."}
 
