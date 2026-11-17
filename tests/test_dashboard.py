@@ -1,4 +1,5 @@
 """The owner's dashboard: sessions, CSRF and origin checks, passkey sign-in, approvals, activity and security steps."""
+import base64
 import contextlib
 import json
 import re
@@ -377,6 +378,19 @@ async def test_the_app_files_are_served_to_anyone_and_the_pages_link_them(web):
         assert "manifest-src 'self'" in csp and "worker-src 'self'" in csp and "style-src 'self'" in csp
         assert '<link rel="manifest" href="/dashboard/manifest.webmanifest">' in r.text and "<style>" not in r.text
         assert re.search(r'href="/dashboard/dashboard.css\?v=[0-9a-f]{10}"', r.text) and 'src="/dashboard/dashboard.js?v=' in r.text
+
+
+async def test_the_home_screen_icon_rides_in_the_page_so_a_sign_in_proxy_cannot_swallow_it(web):
+    """iOS asks for the icon without the session cookie, and a proxy in front answers that with its own login page."""
+    app, *_ = web()
+    async with client(app) as c:
+        assert (await c.get("/apple-touch-icon.png")).status_code == 200        # the route stays for everything else
+        await signed_in(c)
+        r = await c.get("/dashboard")
+        embedded = re.search(r'<link rel="apple-touch-icon" href="data:image/png;base64,([A-Za-z0-9+/=]+)">', r.text)
+        assert embedded and base64.b64decode(embedded.group(1)).startswith(b"\x89PNG")
+        assert "/apple-touch-icon.png" not in r.text                            # nothing left for a proxy to intercept
+        assert "img-src 'self' data:" in r.headers["content-security-policy"]   # and the page is allowed to show it
 
 
 async def test_the_live_state_changes_when_a_request_arrives_and_does_not_keep_the_session_alive(web):

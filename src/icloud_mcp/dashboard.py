@@ -20,6 +20,7 @@ the Overview's tip on how to install it. The worker caches nothing: every page c
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import html
@@ -58,7 +59,7 @@ _HEADERS = {
     "Referrer-Policy": "same-origin",       # browsers then send our own Origin on form posts (no-referrer makes it "null")
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self'; "
+    "Content-Security-Policy": ("default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "
                                 "manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
 _LIVE = "x-live"               # header of the page's own background refresh; it does not count as using the dashboard
@@ -345,6 +346,13 @@ _ASSETS = {     # served under /dashboard/ to anyone (the manifest and the worke
 }
 _ASSET_VERSION = hashlib.sha256(b"".join((_STATIC / name).read_bytes() for name in sorted(_ASSETS))).hexdigest()[:10]
 
+# The home-screen icon travels in the page, not as a second request. iOS fetches /apple-touch-icon.png without the
+# session cookie, so behind a sign-in proxy (Cloudflare Access, an SSO gateway, a Tailscale serve) it is answered with
+# the proxy's login page and the iPhone falls back to a grey letter. Costs ~42 KB a page; the route stays for everyone
+# else. Replacing icon-180.png in static/ is still all it takes to use your own artwork.
+_APPLE_ICON = (f"data:image/png;base64,{base64.b64encode((_STATIC / 'icon-180.png').read_bytes()).decode()}"
+               if (_STATIC / "icon-180.png").is_file() else "/apple-touch-icon.png")
+
 _SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{}</svg>'
 _ICONS = {
     "overview": '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect>',
@@ -526,7 +534,7 @@ class Dashboard:
         doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
                f'<meta name="color-scheme" content="light dark"><meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)">'
                f'<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)"><title>{_esc(title)} · iCloud connector</title>'
-               f'<link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png">'
+               f'<link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" href="{_APPLE_ICON}">'
                f'<link rel="manifest" href="/dashboard/manifest.webmanifest"><link rel="stylesheet" href="/dashboard/dashboard.css?v={v}">'
                f'</head><body>{body}{scripts}</body></html>')
         return HTMLResponse(doc, status_code=status, headers=_HEADERS)
