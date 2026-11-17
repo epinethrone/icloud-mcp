@@ -180,7 +180,7 @@ _LOOKUP_MAIL = "mail_find_correspondent (people the owner has emailed; tolerates
 _SEND_DIRECT = ("SENDING: {SENDERS} deliver immediately and cannot be recalled. Send only when the "
                 "owner asks in this conversation; if recipients, wording or intent are unclear, ask or use draft=true.")
 _SEND_APPROVAL = ("SENDING: you cannot send mail on your own. {SENDERS} only QUEUE a message; it is "
-                  "delivered only if the owner approves it in a browser with a password you never see. Status "
+                  "delivered only if the owner approves it on their approval page, where they sign in themselves. Status "
                   "\"queued_for_owner_approval\" means NOT SENT: tell the owner it is waiting at approve_at. Never ask for, guess "
                   "or relay the owner password.")
 _SEND_LOCAL_DRAFTS = ("SENDING: you cannot send mail on your own. {SENDERS} save the message to Drafts; "
