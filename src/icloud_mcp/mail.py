@@ -63,8 +63,8 @@ MAX_BULK_MESSAGES = 25
 DEFAULT_BULK_BODY_CHARS = 4000
 
 OWNER_APPROVAL_NOTICE = (
-    "NOT SENT. This message is queued and is delivered only if the owner approves it in a browser (address in "
-    "'approve_at') with the owner password. Tell the owner it is waiting there. You cannot approve, speed up or bypass "
+    "NOT SENT. This message is queued and is delivered only if the owner approves it on their approval page (address in "
+    "'approve_at'), where they sign in themselves. Tell the owner it is waiting there. You cannot approve, speed up or bypass "
     "this. Never ask for, guess or handle the owner password, and never send the owner to any other address."
 )
 OWNER_DRAFT_NOTICE = (
@@ -1991,7 +1991,7 @@ class MailService:
                     out[q.id] = self._contexts[self._context_key(q)] = orig
 
     def release(self, item_id: str) -> dict[str, Any]:
-        """Send a queued message. Called only from the password-protected approval page, never from an MCP tool."""
+        """Send a queued message. Called only from the owner's approval pages (the dashboard, /outbox), never from an MCP tool."""
         q = self.outbox.claim(item_id)
         if q is None:
             raise MailError("That message is no longer waiting (already released, discarded or expired).")

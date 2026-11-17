@@ -328,7 +328,7 @@ class IMessageService:
                 "group": to.get("group", False), "text": d.get("text", "")}
 
     def release(self, outbox: Any, item_id: str) -> dict[str, Any]:
-        """Send a queued iMessage. Called only from the password-protected approval page, never from a tool. Both lists are
+        """Send a queued iMessage. Called only from the owner's approval pages, never from a tool. Both lists are
         checked again, as they are now. Put back in the queue only when the Mac never got it (offline); a send the Mac tried is
         never repeated from here, since that could deliver it twice."""
         import json
